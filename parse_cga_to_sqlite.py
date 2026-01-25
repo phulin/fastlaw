@@ -523,6 +523,14 @@ def _natural_key(value):
     return key
 
 
+def _padded_key(value, width=6):
+    if not value:
+        return ""
+    def pad(match):
+        return match.group(0).zfill(width)
+    return re.sub(r"\d+", pad, value.lower())
+
+
 def update_prev_next(conn):
     cursor = conn.execute(
         """
@@ -535,17 +543,19 @@ def update_prev_next(conn):
     by_title = {}
     by_chapter = {}
     for section_id, section_number, range_start, chapter_id, title_id in rows:
-        sort_value = range_start or section_number
+        raw_id = section_id.replace("secs_", "").replace("sec_", "")
+        sort_value = range_start or section_number or raw_id
+        sort_key = _padded_key(sort_value if "-" in sort_value else raw_id)
         if title_id:
             by_title.setdefault(title_id, []).append(
-                (section_id, sort_value, chapter_id)
+                (section_id, sort_key, chapter_id)
             )
-        by_chapter.setdefault(chapter_id, []).append((section_id, sort_value, title_id))
+        by_chapter.setdefault(chapter_id, []).append((section_id, sort_key, title_id))
 
     prev_title = {}
     next_title = {}
     for title_id, items in by_title.items():
-        items.sort(key=lambda item: _natural_key(item[1]))
+        items.sort(key=lambda item: item[1])
         for index, (section_id, _, _) in enumerate(items):
             if index > 0:
                 prev_title[section_id] = items[index - 1][0]
@@ -555,7 +565,7 @@ def update_prev_next(conn):
     prev_chapter = {}
     next_chapter = {}
     for chapter_id, items in by_chapter.items():
-        items.sort(key=lambda item: _natural_key(item[1]))
+        items.sort(key=lambda item: item[1])
         for index, (section_id, _, _) in enumerate(items):
             if index > 0:
                 prev_chapter[section_id] = items[index - 1][0]

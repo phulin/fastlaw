@@ -15,8 +15,6 @@ export async function getStaticPaths() {
 }
 
 const { section } = Astro.props;
-const subtitle =
-  section.section_title?.replace(/\s+/g, " ").trim() ?? null;
 const bodyParagraphs = section.body ? section.body.split("\n\n").filter(Boolean) : [];
 const historyShort = section.history_short
   ? section.history_short.split("\n").filter(Boolean)
