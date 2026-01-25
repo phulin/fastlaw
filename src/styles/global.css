@@ -520,6 +520,10 @@ body {
   font-weight: 500;
 }
 
+.search-shell .button {
+  justify-self: start;
+}
+
 .muted {
   grid-column: 1 / -1;
   font-size: 0.9rem;
@@ -530,6 +534,234 @@ body {
   padding: 32px 0 8px;
   color: var(--ink-soft);
   font-size: 0.9rem;
+}
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 28px;
+  align-items: start;
+  padding: 18px 0 56px;
+}
+
+.chat-panel {
+  display: grid;
+  gap: 20px;
+}
+
+.chat-header h1 {
+  font-family: "Newsreader", serif;
+  font-size: clamp(2.1rem, 4vw, 3.2rem);
+  line-height: 1.1;
+  margin: 12px 0 10px;
+}
+
+.chat-thread {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border-radius: 24px;
+  background: rgba(255, 253, 250, 0.8);
+  border: 1px solid var(--line);
+  min-height: 320px;
+  box-shadow: var(--shadow);
+}
+
+.message {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.message.user {
+  background: rgba(203, 95, 44, 0.12);
+  border-color: rgba(203, 95, 44, 0.25);
+  justify-self: end;
+}
+
+.message.assistant {
+  border-color: rgba(20, 18, 16, 0.1);
+}
+
+.message-role {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.7rem;
+  color: var(--accent-dark);
+}
+
+.message-body {
+  color: var(--ink-soft);
+  line-height: 1.6;
+  display: grid;
+  gap: 12px;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  font-family: "Newsreader", serif;
+  color: var(--ink);
+}
+
+.markdown h1 {
+  font-size: 1.6rem;
+}
+
+.markdown h2 {
+  font-size: 1.3rem;
+}
+
+.markdown h3 {
+  font-size: 1.1rem;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 6px;
+}
+
+.markdown p + p {
+  margin-top: 10px;
+}
+
+.message-sources {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-steps {
+  list-style: none;
+  padding-left: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.chat-form {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 250, 0.8);
+}
+
+.chat-label {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.7rem;
+  color: var(--accent-dark);
+}
+
+.chat-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.chat-input-row textarea {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  font-size: 1rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 72px;
+}
+
+.chat-input-row button {
+  border: none;
+  border-radius: 12px;
+  padding: 12px 18px;
+  background: var(--ink);
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+  align-self: stretch;
+}
+
+.chat-hint {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.chat-aside {
+  display: grid;
+  gap: 18px;
+  position: sticky;
+  top: 24px;
+}
+
+.chat-aside-card {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 253, 250, 0.8);
+  display: grid;
+  gap: 12px;
+}
+
+.chat-aside-card h2 {
+  font-family: "Newsreader", serif;
+  font-size: 1.3rem;
+}
+
+.source-list {
+  display: grid;
+  gap: 12px;
+}
+
+.source-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: white;
+  display: grid;
+  gap: 8px;
+}
+
+.source-title {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.source-snippet {
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.source-link {
+  text-decoration: none;
+  color: var(--accent-dark);
+  font-size: 0.85rem;
+}
+
+.workflow-list {
+  list-style: none;
+  padding-left: 0;
+  display: grid;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.workflow-list pre {
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+  background: rgba(255, 253, 250, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: var(--ink-soft);
 }
 
 .reveal {
@@ -590,5 +822,17 @@ body {
   .toc {
     position: static;
     max-height: none;
+  }
+
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-aside {
+    position: static;
   }
 }

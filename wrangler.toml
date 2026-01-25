@@ -1,0 +1,12 @@
+name = "authority-search"
+main = "workers/search.ts"
+compatibility_date = "2024-10-28"
+
+[vars]
+PINECONE_INDEX_NAME = "cgs"
+PINECONE_EMBED_ENDPOINT = "https://api.pinecone.io/embed"
+PINECONE_EMBED_MODEL = "llama-text-embed-v2"
+PINECONE_EMBED_DIMENSION = "2048"
+PINECONE_API_VERSION = "2025-04"
+READ_MAX_TOKENS = "600"
+AGENT_MAX_STEPS = "6"
