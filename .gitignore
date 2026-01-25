@@ -1,0 +1,28 @@
+.DS_Store
+
+# Node/Yarn
+node_modules/
+dist/
+.astro/
+*.log
+
+# Yarn (Berry) artifacts
+.yarn/*
+!.yarn/releases
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+
+# Env files
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Data/artifacts
+cga_mirror/
+*.sqlite3

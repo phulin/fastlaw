@@ -1,0 +1,301 @@
+---
+import Base from "../../../layouts/Base.astro";
+import { getAllSections, getChapterById, getSectionsByChapterId } from "../../../lib/sections";
+
+export async function getStaticPaths() {
+  const sections = getAllSections();
+  return sections.map((section) => {
+    const number = section.section_number ?? "";
+    const [titleSlug, suffix] = number.split("-", 2);
+    return {
+      params: { title: titleSlug, section: suffix },
+      props: { section }
+    };
+  });
+}
+
+const { section } = Astro.props;
+const subtitle =
+  section.section_title?.replace(/\s+/g, " ").trim() ?? null;
+const bodyParagraphs = section.body ? section.body.split("\n\n").filter(Boolean) : [];
+const historyShort = section.history_short
+  ? section.history_short.split("\n").filter(Boolean)
+  : [];
+const historyLong = section.history_long
+  ? section.history_long.split("\n").filter(Boolean)
+  : [];
+const citationsRaw = section.citations ? section.citations.split("\n").filter(Boolean) : [];
+const seeAlso = section.see_also ? section.see_also.split("\n").filter(Boolean) : [];
+const chapter = getChapterById(section.chapter_id);
+const chapterSections = getSectionsByChapterId(section.chapter_id).slice().sort((a, b) => {
+  const left = a.section_number ?? "";
+  const right = b.section_number ?? "";
+  return left.localeCompare(right, undefined, { numeric: true });
+});
+const chapterLabel = section.chapter_id
+  ? section.chapter_id.replace(/^chap_/, "").toUpperCase()
+  : null;
+const chapterSlug = section.chapter_id ? section.chapter_id.replace(/^chap_/, "") : null;
+const titleSlug = section.title_id ?? section.section_number?.split("-", 1)[0] ?? null;
+const chapterTitle =
+  chapter?.chapter_title?.replace(/^Chapter\s+[^-]+-\s+/i, "").trim() ?? null;
+
+const collapseColonLines = (items) => {
+  const merged = [];
+  for (let i = 0; i < items.length; i += 1) {
+    const current = items[i];
+    if (current.endsWith(":") && i + 1 < items.length) {
+      merged.push(`${current} ${items[i + 1]}`.replace(/\s+/g, " ").trim());
+      i += 1;
+      continue;
+    }
+    merged.push(current);
+  }
+  return merged;
+};
+
+const citations = collapseColonLines(citationsRaw);
+
+const markerPattern =
+  /^\((?:\d+|[a-z]|[A-Z]|[ivx]+|[IVX]+)\)/;
+
+const getIndentLevel = (marker) => {
+  if (/^\([a-z]\)/.test(marker)) return 1;
+  if (/^\(\d+\)/.test(marker)) return 2;
+  if (/^\([A-Z]\)/.test(marker)) return 3;
+  if (/^\([ivx]+\)/.test(marker)) return 4;
+  if (/^\([IVX]+\)/.test(marker)) return 5;
+  return 0;
+};
+
+const splitParagraph = (paragraph) => {
+  let remaining = paragraph.trim();
+  const parts = [];
+  const markers = [];
+
+  while (markerPattern.test(remaining)) {
+    const match = remaining.match(markerPattern);
+    if (!match) break;
+    markers.push(match[0]);
+    remaining = remaining.slice(match[0].length).trimStart();
+  }
+
+  if (markers.length === 0) {
+    return [{ marker: null, text: paragraph, level: 0 }];
+  }
+
+  markers.forEach((marker, index) => {
+    const isLast = index === markers.length - 1;
+    parts.push({
+      marker,
+      text: isLast ? remaining : "",
+      level: getIndentLevel(marker)
+    });
+  });
+
+  return parts;
+};
+
+const bodyLines = bodyParagraphs.flatMap(splitParagraph);
+
+const statuteTokenRegex =
+  /\b\d+[a-z]?-?\d+[0-9a-z-]*\b/gi;
+
+const buildSectionHref = (sectionNumber) => {
+  if (!sectionNumber || !sectionNumber.includes("-")) return null;
+  const [title, suffix] = sectionNumber.split("-", 2);
+  if (!title || !suffix) return null;
+  return `/sections/${title}/${suffix}/`;
+};
+
+const buildSectionIdHref = (sectionId) => {
+  if (!sectionId) return null;
+  return buildSectionHref(sectionId.replace(/^sec_/, ""));
+};
+
+const shouldLinkToken = (text, index, token) => {
+  if (!token.includes("-")) return false;
+  const prefix = text.slice(Math.max(0, index - 20), index).toLowerCase();
+  if (/(public|special)\s+act\s*$/.test(prefix)) return false;
+  if (/p\.a\.\s*$/.test(prefix)) return false;
+  return true;
+};
+
+const linkifySections = (text) => {
+  const output = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(statuteTokenRegex)) {
+    const [full] = match;
+    const startIndex = match.index ?? 0;
+    if (startIndex > lastIndex) {
+      output.push(text.slice(lastIndex, startIndex));
+    }
+    if (shouldLinkToken(text, startIndex, full)) {
+      const href = buildSectionHref(full);
+      if (href) {
+        output.push({ type: "link", href, text: full });
+      } else {
+        output.push(full);
+      }
+    } else {
+      output.push(full);
+    }
+    lastIndex = startIndex + full.length;
+  }
+  if (lastIndex < text.length) {
+    output.push(text.slice(lastIndex));
+  }
+  return output;
+};
+
+---
+
+<Base title={`Authority · ${section.section_label}`} description={section.section_label}>
+  <main class="section-page with-toc">
+    <aside class="toc">
+      <details class="toc-panel" open>
+        <summary class="toc-summary">
+          {chapterLabel ? `Chapter ${chapterLabel} Contents` : "Chapter Contents"}
+        </summary>
+        <div class="toc-list">
+          {chapterSections.map((item) =>
+            item.section_id === section.section_id ? (
+              <div
+                class="toc-item active"
+                data-active="true"
+              >
+                <span>{item.section_number}</span>
+                <span class="toc-title">
+                  {item.section_title ?? item.section_label}
+                </span>
+              </div>
+            ) : (
+              <a
+                class="toc-item"
+                data-active="false"
+                href={buildSectionHref(item.section_number)}
+              >
+                <span>{item.section_number}</span>
+                <span class="toc-title">
+                  {item.section_title ?? item.section_label}
+                </span>
+              </a>
+            )
+          )}
+        </div>
+      </details>
+    </aside>
+    <article class="statute">
+      <header class="statute-header">
+        <p class="eyebrow">
+          {chapterLabel ? `CHAPTER ${chapterLabel}` : section.chapter_id}
+          {chapterTitle ? ` · ${chapterTitle}` : ""}
+        </p>
+        <h1>{section.section_label}</h1>
+        {subtitle && <p class="lead">{subtitle}</p>}
+      </header>
+
+      <div class="statute-body">
+        {bodyLines.map((line) => (
+          <p class={`indent-${line.level}`}>
+            {line.marker && <strong class="level-marker">{line.marker}</strong>}
+            {line.marker && line.text ? " " : ""}
+            {linkifySections(line.text).map((part) =>
+              typeof part === "string" ? part : <a href={part.href}>{part.text}</a>
+            )}
+          </p>
+        ))}
+      </div>
+
+      {historyShort.length > 0 && (
+        <section class="statute-meta">
+          <h2>History</h2>
+          {historyShort.map((line) => (
+            <p>
+              {linkifySections(line).map((part) =>
+                typeof part === "string" ? part : <a href={part.href}>{part.text}</a>
+              )}
+            </p>
+          ))}
+        </section>
+      )}
+
+      {historyLong.length > 0 && (
+        <section class="statute-meta">
+          <h2>History Notes</h2>
+          {historyLong.map((line) => (
+            <p>
+              {linkifySections(line).map((part) =>
+                typeof part === "string" ? part : <a href={part.href}>{part.text}</a>
+              )}
+            </p>
+          ))}
+        </section>
+      )}
+
+      {citations.length > 0 && (
+        <section class="statute-meta">
+          <h2>Citations</h2>
+          <ul>
+            {citations.map((item) => (
+              <li>
+                {linkifySections(item).map((part) =>
+                  typeof part === "string" ? part : <a href={part.href}>{part.text}</a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {seeAlso.length > 0 && (
+        <section class="statute-meta">
+          <h2>See also</h2>
+          <ul>
+            {seeAlso.map((item) => (
+              <li>
+                {linkifySections(item).map((part) =>
+                  typeof part === "string" ? part : <a href={part.href}>{part.text}</a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {(section.prev_section_id || section.next_section_id) && (
+        <nav class="statute-nav">
+          {section.prev_section_id && (
+            <a
+              class="statute-nav-link"
+              href={`/sections/21a/${section.prev_section_id.replace(/^sec_21a-/, "")}/`}
+            >
+              <span class="statute-nav-label">Previous</span>
+              <span>{section.prev_section_label ?? section.prev_section_id}</span>
+            </a>
+          )}
+          {section.next_section_id && (
+            <a
+              class="statute-nav-link"
+              href={`/sections/21a/${section.next_section_id.replace(/^sec_21a-/, "")}/`}
+            >
+              <span class="statute-nav-label">Next</span>
+              <span>{section.next_section_label ?? section.next_section_id}</span>
+            </a>
+          )}
+        </nav>
+      )}
+    </article>
+  </main>
+  <script is:inline>
+    const tocList = document.querySelector(".toc-list");
+    const activeItem = document.querySelector(".toc-item[data-active='true']");
+    if (tocList && activeItem) {
+      window.addEventListener("load", () => {
+        activeItem.scrollIntoView({ block: "center" });
+        const offset =
+          activeItem.offsetTop - tocList.clientHeight / 2 + activeItem.clientHeight / 2;
+        tocList.scrollTop = Math.max(0, offset);
+      });
+    }
+  </script>
+</Base>
