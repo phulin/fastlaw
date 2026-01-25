@@ -1,0 +1,60 @@
+---
+import Base from "../../layouts/Base.astro";
+import { getChaptersByTitleId, getTitles } from "../../lib/sections";
+
+export async function getStaticPaths() {
+  const titles = getTitles();
+  return titles.map((title) => ({
+    params: { title: (title.title_id_display ?? title.title_id)?.toLowerCase() }
+  }));
+}
+
+const { title } = Astro.params;
+const chapters = getChaptersByTitleId(title);
+const titleDisplay = chapters[0]?.title_id_display ?? title;
+const titleLabel = titleDisplay.toUpperCase();
+
+const normalizeChapterTitle = (chapterTitle) =>
+  chapterTitle.replace(/^Chapter\s+[^-]+-\s+/i, "").trim();
+
+const formatRange = (start, end) => {
+  if (!start && !end) return null;
+  if (!start) return end;
+  if (!end || start === end) return start;
+  return `${start}–${end}`;
+};
+---
+
+<Base title={`Authority · Title ${titleLabel}`} description={`Browse Title ${titleLabel} chapters.`}>
+  <main class="title-page">
+    <section class="section-heading">
+      <p class="eyebrow">Title {titleLabel}</p>
+      <h1>Chapters in Title {titleLabel}</h1>
+      <p class="lead">Open a chapter to explore its sections.</p>
+    </section>
+
+    <section class="section-block">
+      <div class="section-title">
+        <h2>Chapters</h2>
+      </div>
+      <div class="section-list">
+        {chapters.map((chapter) => {
+          const chapterSlug = (chapter.chapter_id_display ?? chapter.chapter_id.replace(/^chap_/, "")).toLowerCase();
+          const chapterLabel =
+            chapter.chapter_id_display ?? chapter.chapter_id.replace(/^chap_/, "").toUpperCase();
+          const range = formatRange(chapter.section_start, chapter.section_end);
+          return (
+            <a class="section-row" href={`/chapters/${chapterSlug}/`}>
+              <span class="section-number">Chapter {chapterLabel}</span>
+              <span class="section-title-text">
+                {normalizeChapterTitle(chapter.chapter_title)}
+                {range ? ` · ${range}` : ""}
+                {` · ${chapter.section_count} sections`}
+              </span>
+            </a>
+          );
+        })}
+      </div>
+    </section>
+  </main>
+</Base>

@@ -25,18 +25,44 @@ export type SectionRecord = {
 export type ChapterRecord = {
   chapter_id: string;
   chapter_title: string;
+  title_id?: string | null;
+  section_count?: number | null;
+  section_start?: string | null;
+  section_end?: string | null;
+  title_id_padded?: string | null;
+  title_id_display?: string | null;
+  chapter_id_padded?: string | null;
+  chapter_id_display?: string | null;
 };
 
 export type ChapterSummary = {
   chapter_id: string;
   chapter_title: string;
   section_count: number;
+  section_start: string | null;
+  section_end: string | null;
+  title_id_padded?: string | null;
+  title_id_display?: string | null;
+  chapter_id_padded?: string | null;
+  chapter_id_display?: string | null;
 };
 
 export type TitleSummary = {
   title_id: string;
+  title_id_padded?: string | null;
+  title_id_display?: string | null;
+  title_name: string | null;
   chapter_count: number;
   section_count: number;
+};
+
+const formatDesignatorPadded = (value: string | null, width = 4) => {
+  if (!value) return value;
+  const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
+  if (!match) return value.toLowerCase();
+  const number = match[1].padStart(width, "0");
+  const suffix = match[2].toLowerCase();
+  return `${number}${suffix}`;
 };
 
 const dbPath = path.resolve("cga_sections.sqlite3");
@@ -152,20 +178,34 @@ export function getSectionsByChapterId(chapterId: string): SectionRecord[] {
 export function getChaptersByTitleId(titleId: string): ChapterSummary[] {
   const db = openDb();
   try {
+    const paddedTitleId = formatDesignatorPadded(titleId) ?? titleId;
     const stmt = db.prepare(
       `
       SELECT
-        chapters.chapter_id,
-        chapters.chapter_title,
-        COUNT(sections.section_id) AS section_count
+        chapter_id,
+        chapter_title,
+        section_count,
+        section_start,
+        section_end,
+        title_id_padded,
+        title_id_display,
+        chapter_id_padded,
+        chapter_id_display
       FROM chapters
-      JOIN sections ON sections.chapter_id = chapters.chapter_id
-      WHERE sections.title_id = ?
-      GROUP BY chapters.chapter_id, chapters.chapter_title
-      ORDER BY chapters.chapter_id
+      WHERE title_id_padded = ?
       `
     );
-    return stmt.all(titleId) as ChapterSummary[];
+    const chapters = stmt.all(paddedTitleId) as ChapterSummary[];
+    return chapters.sort((a, b) => {
+      if (a.chapter_id_padded && b.chapter_id_padded) {
+        const idCompare = a.chapter_id_padded.localeCompare(b.chapter_id_padded);
+        if (idCompare !== 0) return idCompare;
+      }
+      return a.chapter_id.localeCompare(b.chapter_id, undefined, {
+        numeric: true,
+        sensitivity: "base"
+      });
+    });
   } finally {
     db.close();
   }
@@ -176,9 +216,16 @@ export function getChapters(): ChapterRecord[] {
   try {
     const stmt = db.prepare(
       `
-      SELECT chapter_id, chapter_title
+      SELECT
+        chapter_id,
+        chapter_title,
+        title_id,
+        title_id_padded,
+        title_id_display,
+        chapter_id_padded,
+        chapter_id_display
       FROM chapters
-      ORDER BY chapter_id
+      ORDER BY chapter_id_padded
       `
     );
     return stmt.all() as ChapterRecord[];
@@ -193,13 +240,16 @@ export function getTitles(): TitleSummary[] {
     const stmt = db.prepare(
       `
       SELECT
-        title_id,
-        COUNT(DISTINCT chapter_id) AS chapter_count,
-        COUNT(section_id) AS section_count
+        sections.title_id AS title_id,
+        titles.title_name AS title_name,
+        titles.title_id_padded AS title_id_padded,
+        titles.title_id_display AS title_id_display,
+        COUNT(DISTINCT sections.chapter_id) AS chapter_count,
+        COUNT(sections.section_id) AS section_count
       FROM sections
-      WHERE title_id IS NOT NULL AND title_id != ''
-      GROUP BY title_id
-      ORDER BY title_id
+      LEFT JOIN titles ON titles.title_id = sections.title_id
+      WHERE sections.title_id IS NOT NULL AND sections.title_id != ''
+      GROUP BY sections.title_id, titles.title_name, titles.title_id_padded, titles.title_id_display
       `
     );
     return stmt.all() as TitleSummary[];
@@ -283,7 +333,14 @@ export function getChapterById(chapterId: string): ChapterRecord | null {
   try {
     const stmt = db.prepare(
       `
-      SELECT chapter_id, chapter_title
+      SELECT
+        chapter_id,
+        chapter_title,
+        title_id,
+        title_id_padded,
+        title_id_display,
+        chapter_id_padded,
+        chapter_id_display
       FROM chapters
       WHERE chapter_id = ?
       LIMIT 1

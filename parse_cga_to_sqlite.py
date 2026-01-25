@@ -211,11 +211,14 @@ def parse_label(label):
     return number, title, range_start, range_end
 
 
-def extract_title_id(section_number, range_start):
+def extract_title_id(section_id, section_number, range_start):
     candidate = range_start or section_number
     if not candidate:
         return None
     if "-" not in candidate:
+        cleaned_id = section_id.replace("secs_", "").replace("sec_", "")
+        if "-" in cleaned_id:
+            return cleaned_id.split("-", 1)[0].strip()
         return candidate.strip()
     return candidate.split("-", 1)[0].strip()
 
@@ -287,7 +290,7 @@ def extract_sections_from_html(html_text):
         number, title, range_start, range_end = parse_label(label)
         text_blocks = extract_text_blocks(section_html)
         body = trim_trailing_headings(text_blocks["body"])
-        title_id = extract_title_id(number, range_start)
+        title_id = extract_title_id(section_id, number, range_start)
         sections.append(
             {
                 "section_id": section_id,
@@ -336,7 +339,25 @@ def init_db(conn):
         """
         CREATE TABLE IF NOT EXISTS chapters (
             chapter_id TEXT PRIMARY KEY,
-            chapter_title TEXT NOT NULL
+            chapter_title TEXT NOT NULL,
+            title_id TEXT,
+            title_id_padded TEXT,
+            title_id_display TEXT,
+            chapter_id_padded TEXT,
+            chapter_id_display TEXT,
+            section_count INTEGER,
+            section_start TEXT,
+            section_end TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS titles (
+            title_id TEXT PRIMARY KEY,
+            title_id_padded TEXT,
+            title_id_display TEXT,
+            title_name TEXT
         )
         """
     )
@@ -352,6 +373,17 @@ def init_db(conn):
     _ensure_column(conn, "sections", "next_section_id", "TEXT")
     _ensure_column(conn, "sections", "prev_section_label", "TEXT")
     _ensure_column(conn, "sections", "next_section_label", "TEXT")
+    _ensure_column(conn, "chapters", "title_id", "TEXT")
+    _ensure_column(conn, "chapters", "title_id_padded", "TEXT")
+    _ensure_column(conn, "chapters", "title_id_display", "TEXT")
+    _ensure_column(conn, "chapters", "chapter_id_padded", "TEXT")
+    _ensure_column(conn, "chapters", "chapter_id_display", "TEXT")
+    _ensure_column(conn, "chapters", "section_count", "INTEGER")
+    _ensure_column(conn, "chapters", "section_start", "TEXT")
+    _ensure_column(conn, "chapters", "section_end", "TEXT")
+    _ensure_column(conn, "titles", "title_id_padded", "TEXT")
+    _ensure_column(conn, "titles", "title_id_display", "TEXT")
+    _ensure_column(conn, "titles", "title_name", "TEXT")
 
 
 def _ensure_column(conn, table, column, column_type):
@@ -408,6 +440,76 @@ def ingest_chapter(conn, chapter_id, chapter_title):
         """,
         (chapter_id, chapter_title),
     )
+
+
+def normalize_designator(value):
+    if not value:
+        return value
+    match = re.match(r"^0*([0-9]+)([a-z]*)$", value, re.IGNORECASE)
+    if not match:
+        return value.lower()
+    number = str(int(match.group(1)))
+    suffix = match.group(2).lower()
+    return f"{number}{suffix}"
+
+
+def format_designator_display(value):
+    if not value:
+        return value
+    match = re.match(r"^0*([0-9]+)([a-z]*)$", value, re.IGNORECASE)
+    if not match:
+        return value.upper()
+    number = str(int(match.group(1)))
+    suffix = match.group(2).upper()
+    return f"{number}{suffix}"
+
+
+def format_designator_padded(value, width=4):
+    if not value:
+        return value
+    match = re.match(r"^0*([0-9]+)([a-z]*)$", value, re.IGNORECASE)
+    if not match:
+        return value.lower()
+    number = match.group(1).zfill(width)
+    suffix = match.group(2).lower()
+    return f"{number}{suffix}"
+
+
+def extract_title_name(html_text):
+    title_match = re.search(r"<title>(.*?)</title>", html_text, re.IGNORECASE | re.DOTALL)
+    if not title_match:
+        return None
+    title_text = re.sub(r"<[^>]+>", "", title_match.group(1))
+    title_text = html.unescape(title_text).strip()
+    match = re.match(r"^Title\s+[\w]+?\s*-\s*(.+)$", title_text, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).strip() or None
+
+
+def ingest_titles(conn, root):
+    for dirpath, _, filenames in os.walk(root):
+        for name in filenames:
+            if not name.lower().startswith("title_") or not name.lower().endswith(".htm"):
+                continue
+            raw_id = name[len("title_") : -len(".htm")]
+            title_id = normalize_designator(raw_id)
+            path = os.path.join(dirpath, name)
+            with open(path, "rb") as f:
+                html_text = f.read().decode("utf-8", errors="ignore")
+            title_name = extract_title_name(html_text)
+            if not title_id:
+                continue
+            title_display = format_designator_display(title_id)
+            title_padded = format_designator_padded(title_id)
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO titles
+                    (title_id, title_id_padded, title_id_display, title_name)
+                VALUES (?, ?, ?, ?)
+                """,
+                (title_id, title_padded, title_display, title_name),
+            )
 
 
 def _natural_key(value):
@@ -488,6 +590,89 @@ def update_prev_next(conn):
     )
 
 
+def update_chapter_summaries(conn):
+    cursor = conn.execute(
+        """
+        SELECT chapter_id, title_id, section_number, section_range_start, section_range_end
+        FROM sections
+        WHERE chapter_id IS NOT NULL AND chapter_id != ''
+        """
+    )
+    summaries = {}
+
+    def split_range(value):
+        parts = value.split(" to ")
+        if len(parts) == 2:
+            return parts[0].strip(), parts[1].strip()
+        return value, value
+
+    for chapter_id, title_id, section_number, range_start, range_end in cursor.fetchall():
+        start_source = range_start or section_number or ""
+        end_source = range_end or section_number or ""
+        start, _ = split_range(start_source)
+        _, end = split_range(end_source)
+        summary = summaries.get(
+            chapter_id,
+            {
+                "chapter_id": chapter_id,
+                "title_id": title_id,
+                "title_id_padded": None,
+                "title_id_display": None,
+                "chapter_id_padded": None,
+                "chapter_id_display": None,
+                "section_count": 0,
+                "section_start": None,
+                "section_end": None,
+            },
+        )
+        if title_id and not summary["title_id"]:
+            summary["title_id"] = title_id
+        if title_id and not summary["title_id_padded"]:
+            summary["title_id_padded"] = format_designator_padded(title_id)
+            summary["title_id_display"] = format_designator_display(title_id)
+        if not summary["chapter_id_padded"]:
+            chapter_raw = chapter_id.replace("chap_", "")
+            summary["chapter_id_padded"] = format_designator_padded(chapter_raw)
+            summary["chapter_id_display"] = format_designator_display(chapter_raw)
+        summary["section_count"] += 1
+        if start:
+            if not summary["section_start"] or _natural_key(start) < _natural_key(
+                summary["section_start"]
+            ):
+                summary["section_start"] = start
+        if end:
+            if not summary["section_end"] or _natural_key(end) > _natural_key(
+                summary["section_end"]
+            ):
+                summary["section_end"] = end
+        summaries[chapter_id] = summary
+
+    updates = [
+        (
+            summary["title_id"],
+            summary["title_id_padded"],
+            summary["title_id_display"],
+            summary["chapter_id_padded"],
+            summary["chapter_id_display"],
+            summary["section_count"],
+            summary["section_start"],
+            summary["section_end"],
+            summary["chapter_id"],
+        )
+        for summary in summaries.values()
+    ]
+    conn.executemany(
+        """
+        UPDATE chapters
+        SET title_id = ?, title_id_padded = ?, title_id_display = ?,
+            chapter_id_padded = ?, chapter_id_display = ?,
+            section_count = ?, section_start = ?, section_end = ?
+        WHERE chapter_id = ?
+        """,
+        updates,
+    )
+
+
 def walk_html_files(root):
     for dirpath, _, filenames in os.walk(root):
         for name in filenames:
@@ -515,6 +700,7 @@ def main():
     conn = sqlite3.connect(args.db)
     try:
         init_db(conn)
+        ingest_titles(conn, args.root)
         total_sections = 0
         for path in walk_html_files(args.root):
             with open(path, "rb") as f:
@@ -529,6 +715,7 @@ def main():
             ingest_sections(conn, sections, rel_path, chapter_id)
             total_sections += len(sections)
         update_prev_next(conn)
+        update_chapter_summaries(conn)
         conn.commit()
     finally:
         conn.close()

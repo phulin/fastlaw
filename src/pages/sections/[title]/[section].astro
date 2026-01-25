@@ -5,8 +5,8 @@ import { getAllSections, getChapterById, getSectionsByChapterId } from "../../..
 export async function getStaticPaths() {
   const sections = getAllSections();
   return sections.map((section) => {
-    const number = section.section_number ?? "";
-    const [titleSlug, suffix] = number.split("-", 2);
+    const rawId = section.section_id.replace(/^secs?_/, "");
+    const [titleSlug, suffix] = rawId.split("-", 2);
     return {
       params: { title: titleSlug, section: suffix },
       props: { section }
@@ -32,11 +32,27 @@ const chapterSections = getSectionsByChapterId(section.chapter_id).slice().sort(
   const right = b.section_number ?? "";
   return left.localeCompare(right, undefined, { numeric: true });
 });
-const chapterLabel = section.chapter_id
-  ? section.chapter_id.replace(/^chap_/, "").toUpperCase()
-  : null;
-const chapterSlug = section.chapter_id ? section.chapter_id.replace(/^chap_/, "") : null;
-const titleSlug = section.title_id ?? section.section_number?.split("-", 1)[0] ?? null;
+const formatDesignator = (value) => {
+  if (!value) return value;
+  const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
+  if (!match) return value.toUpperCase();
+  const number = String(Number(match[1]));
+  const suffix = match[2] ? match[2].toUpperCase() : "";
+  return `${number}${suffix}`;
+};
+const normalizeSlug = (value) => value?.toLowerCase();
+
+const chapterSlug = chapter?.chapter_id_display ?? section.chapter_id.replace(/^chap_/, "");
+const chapterLabel = chapter?.chapter_id_display
+  ? chapter.chapter_id_display.toUpperCase()
+  : formatDesignator(chapterSlug);
+const titleSlug =
+  chapter?.title_id_display ??
+  section.title_id ??
+  section.section_id.replace(/^secs?_/, "").split("-", 1)[0];
+const titleLabel = chapter?.title_id_display
+  ? chapter.title_id_display.toUpperCase()
+  : formatDesignator(titleSlug);
 const chapterTitle =
   chapter?.chapter_title?.replace(/^Chapter\s+[^-]+-\s+/i, "").trim() ?? null;
 
@@ -110,7 +126,10 @@ const buildSectionHref = (sectionNumber) => {
 
 const buildSectionIdHref = (sectionId) => {
   if (!sectionId) return null;
-  return buildSectionHref(sectionId.replace(/^sec_/, ""));
+  const rawId = sectionId.replace(/^secs?_/, "");
+  const [title, suffix] = rawId.split("-", 2);
+  if (!title || !suffix) return null;
+  return `/sections/${title}/${suffix}/`;
 };
 
 const shouldLinkToken = (text, index, token) => {
@@ -173,7 +192,7 @@ const linkifySections = (text) => {
               <a
                 class="toc-item"
                 data-active="false"
-                href={buildSectionHref(item.section_number)}
+                href={buildSectionIdHref(item.section_id)}
               >
                 <span>{item.section_number}</span>
                 <span class="toc-title">
@@ -187,12 +206,20 @@ const linkifySections = (text) => {
     </aside>
     <article class="statute">
       <header class="statute-header">
-        <p class="eyebrow">
-          {chapterLabel ? `CHAPTER ${chapterLabel}` : section.chapter_id}
-          {chapterTitle ? ` · ${chapterTitle}` : ""}
-        </p>
+        <div class="statute-breadcrumbs">
+          {titleSlug && (
+            <a href={`/titles/${normalizeSlug(titleSlug)}/`}>Title {titleLabel}</a>
+          )}
+          {chapterSlug && titleSlug && <span class="crumb-sep">•</span>}
+          {chapterSlug && (
+            <a href={`/chapters/${normalizeSlug(chapterSlug)}/`}>
+              {chapterTitle
+                ? `Chapter ${chapterLabel} • ${chapterTitle}`
+                : `Chapter ${chapterLabel}`}
+            </a>
+          )}
+        </div>
         <h1>{section.section_label}</h1>
-        {subtitle && <p class="lead">{subtitle}</p>}
       </header>
 
       <div class="statute-body">
@@ -267,7 +294,7 @@ const linkifySections = (text) => {
           {section.prev_section_id && (
             <a
               class="statute-nav-link"
-              href={`/sections/21a/${section.prev_section_id.replace(/^sec_21a-/, "")}/`}
+              href={buildSectionIdHref(section.prev_section_id)}
             >
               <span class="statute-nav-label">Previous</span>
               <span>{section.prev_section_label ?? section.prev_section_id}</span>
@@ -276,7 +303,7 @@ const linkifySections = (text) => {
           {section.next_section_id && (
             <a
               class="statute-nav-link"
-              href={`/sections/21a/${section.next_section_id.replace(/^sec_21a-/, "")}/`}
+              href={buildSectionIdHref(section.next_section_id)}
             >
               <span class="statute-nav-label">Next</span>
               <span>{section.next_section_label ?? section.next_section_id}</span>
@@ -291,10 +318,10 @@ const linkifySections = (text) => {
     const activeItem = document.querySelector(".toc-item[data-active='true']");
     if (tocList && activeItem) {
       window.addEventListener("load", () => {
-        activeItem.scrollIntoView({ block: "center" });
+        const scrollContainer = tocList.closest(".toc-panel") ?? tocList;
         const offset =
-          activeItem.offsetTop - tocList.clientHeight / 2 + activeItem.clientHeight / 2;
-        tocList.scrollTop = Math.max(0, offset);
+          activeItem.offsetTop - scrollContainer.clientHeight / 2 + activeItem.clientHeight / 2;
+        scrollContainer.scrollTop = Math.max(0, offset);
       });
     }
   </script>

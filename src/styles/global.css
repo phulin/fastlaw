@@ -90,7 +90,6 @@ body {
 .lead {
   font-size: 1.1rem;
   color: var(--ink-soft);
-  max-width: 34ch;
 }
 
 .hero-actions {
@@ -178,7 +177,6 @@ body {
 
 .section-title p {
   color: var(--ink-soft);
-  max-width: 60ch;
 }
 
 .section .button {
@@ -187,7 +185,8 @@ body {
 }
 
 .section-heading {
-  padding: 24px 0 36px;
+  padding: 24px 0 18px;
+  margin-bottom: 18px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -285,8 +284,32 @@ body {
 
 .statute-header h1 {
   font-family: "Newsreader", serif;
-  font-size: clamp(2.2rem, 4vw, 3.1rem);
+  font-size: clamp(1.9rem, 3.2vw, 2.6rem);
   margin: 12px 0 8px;
+}
+
+.statute-breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.statute-breadcrumbs a {
+  color: var(--accent-dark);
+  text-decoration: none;
+}
+
+.statute-breadcrumbs a:hover {
+  color: var(--accent);
+}
+
+.statute-breadcrumbs .crumb-sep {
+  color: var(--ink-soft);
+  letter-spacing: 0;
 }
 
 .statute-header .lead {
@@ -295,7 +318,7 @@ body {
 }
 
 .statute-body {
-  margin-top: 28px;
+  margin-top: 16px;
   line-height: 1.7;
   font-size: 1.05rem;
   color: var(--ink-soft);
@@ -396,7 +419,7 @@ body {
 }
 
 .section-list {
-  margin-top: 20px;
+  margin-top: 12px;
   display: grid;
   gap: 12px;
 }
