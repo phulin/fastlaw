@@ -690,6 +690,149 @@ def walk_html_files(root):
                 continue
             yield os.path.join(dirpath, name)
 
+def _escape_sql(value):
+    if value is None:
+        return "NULL"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _clean_chapter_title(title):
+    if not title:
+        return title
+    return re.sub(r"^Chapter\s+[^-]+-\s+", "", title, flags=re.IGNORECASE).strip()
+
+
+def _section_slug(title_id, section_number):
+    prefix = f"{title_id}-"
+    suffix = section_number[len(prefix) :] if section_number.startswith(prefix) else section_number
+    return f"statutes/cgs/section/{title_id}/{suffix}"
+
+
+def dump_import_sql(conn, output_path):
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    sql_lines = []
+
+    # Sources
+    sql_lines.append("-- Sources")
+    sql_lines.append(
+        "INSERT INTO sources (id, name, jurisdiction, region, doc_type, edition, "
+        "citation_prefix, slug, sort_order) VALUES ('cgs', "
+        "'Connecticut General Statutes', 'state', 'CT', 'statute', NULL, "
+        "'Conn. Gen. Stat.', 'cgs', 0);"
+    )
+
+    # Levels: Titles
+    sql_lines.append("\n-- Levels (Titles)")
+    titles = conn.execute(
+        """
+        SELECT title_id, title_id_padded, title_id_display, title_name
+        FROM titles
+        ORDER BY title_id_padded
+        """
+    ).fetchall()
+
+    for idx, (title_id, title_id_padded, title_id_display, title_name) in enumerate(
+        titles
+    ):
+        sql_lines.append(
+            "INSERT INTO levels (id, source_id, doc_type, level_index, level_name, "
+            "label, identifier, identifier_sort, name, parent_id, doc_id, sort_order) "
+            f"VALUES ({_escape_sql('lvl_cgs_title_' + title_id)}, 'cgs', 'statute', 0, "
+            f"'title', {_escape_sql(title_id_display)}, {_escape_sql(title_id)}, "
+            f"{_escape_sql(title_id_padded)}, {_escape_sql(title_name)}, NULL, NULL, {idx});"
+        )
+
+    # Levels: Chapters
+    sql_lines.append("\n-- Levels (Chapters)")
+    chapters = conn.execute(
+        """
+        SELECT chapter_id, chapter_title, title_id, title_id_padded, title_id_display,
+               chapter_id_padded, chapter_id_display, section_count, section_start, section_end
+        FROM chapters
+        ORDER BY title_id_padded, chapter_id_padded
+        """
+    ).fetchall()
+
+    for idx, (
+        chapter_id,
+        chapter_title,
+        title_id,
+        title_id_padded,
+        title_id_display,
+        chapter_id_padded,
+        chapter_id_display,
+        section_count,
+        section_start,
+        section_end,
+    ) in enumerate(chapters):
+        name = _clean_chapter_title(chapter_title)
+        sql_lines.append(
+            "INSERT INTO levels (id, source_id, doc_type, level_index, level_name, "
+            "label, identifier, identifier_sort, name, parent_id, doc_id, sort_order) "
+            f"VALUES ({_escape_sql('lvl_cgs_chapter_' + chapter_id)}, 'cgs', 'statute', 1, "
+            f"'chapter', {_escape_sql(chapter_id_display)}, {_escape_sql(chapter_id)}, "
+            f"{_escape_sql(chapter_id_padded)}, {_escape_sql(name)}, "
+            f"{_escape_sql('lvl_cgs_title_' + title_id)}, NULL, {idx});"
+        )
+
+    # Documents + Levels: Sections
+    sql_lines.append("\n-- Documents (Sections)")
+    sections = conn.execute(
+        """
+        SELECT section_id, chapter_id, title_id, section_number, section_title, section_label,
+               see_also, prev_section_id, next_section_id, prev_section_label, next_section_label
+        FROM sections
+        ORDER BY title_id, section_number
+        """
+    ).fetchall()
+
+    for idx, (
+        section_id,
+        chapter_id,
+        title_id,
+        section_number,
+        section_title,
+        section_label,
+        see_also,
+        prev_section_id,
+        next_section_id,
+        prev_section_label,
+        next_section_label,
+    ) in enumerate(sections):
+        normalized_number = section_number or re.sub(r"^secs?_", "", section_id)
+        derived_title_id = title_id or normalized_number.split("-", 1)[0]
+        slug = _section_slug(derived_title_id, normalized_number)
+        r2_key = f"{slug}.json"
+        doc_id = f"doc_cgs_{normalized_number}"
+        level_id = f"lvl_cgs_section_{normalized_number}"
+        parent_id = (
+            f"lvl_cgs_chapter_{chapter_id}" if chapter_id else None
+        )
+
+        sql_lines.append(
+            "INSERT INTO documents (id, source_id, doc_type, title, citation, slug, as_of, "
+            "effective_start, effective_end, source_url, created_at, updated_at) "
+            f"VALUES ({_escape_sql(doc_id)}, 'cgs', 'statute', {_escape_sql(section_title)}, "
+            f"{_escape_sql(normalized_number)}, {_escape_sql(slug)}, NULL, NULL, NULL, NULL, NULL, NULL);"
+        )
+
+        if idx == 0:
+            sql_lines.append("\n-- Levels (Sections)")
+        sql_lines.append(
+            "INSERT INTO levels (id, source_id, doc_type, level_index, level_name, label, "
+            "identifier, identifier_sort, name, parent_id, doc_id, sort_order) "
+            f"VALUES ({_escape_sql(level_id)}, 'cgs', 'statute', 2, 'section', "
+            f"{_escape_sql(section_label)}, {_escape_sql(normalized_number)}, "
+            f"{_escape_sql(normalized_number)}, {_escape_sql(section_title)}, "
+            f"{_escape_sql(parent_id)}, {_escape_sql(doc_id)}, {idx});"
+        )
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(sql_lines))
+
+    print(f"Wrote D1 import SQL to {output_path}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -704,6 +847,11 @@ def main():
         "--db",
         default="cga_sections.sqlite3",
         help="SQLite database output path.",
+    )
+    parser.add_argument(
+        "--import-sql",
+        default="data/d1/import.sql",
+        help="D1 import SQL output path.",
     )
     args = parser.parse_args()
 
@@ -727,6 +875,7 @@ def main():
         update_prev_next(conn)
         update_chapter_summaries(conn)
         conn.commit()
+        dump_import_sql(conn, args.import_sql)
     finally:
         conn.close()
 

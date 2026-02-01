@@ -1,4 +1,3 @@
-import { A } from "@solidjs/router";
 import { Footer } from "~/components/Footer";
 import { Header } from "~/components/Header";
 
@@ -17,12 +16,12 @@ export default function Home() {
 							precise.
 						</p>
 						<div class="hero-actions">
-							<A class="button" href="#search">
+							<a class="button" href="#search">
 								Preview Search
-							</A>
-							<A class="button ghost" href="#method">
+							</a>
+							<a class="button ghost" href="#method">
 								How it works
-							</A>
+							</a>
 						</div>
 					</div>
 					<div class="hero-card">
@@ -94,9 +93,9 @@ export default function Home() {
 							<div class="stat-label">For third-party search</div>
 						</div>
 					</div>
-					<A class="button ghost" href="/statutes/cgs/title/21a">
+					<a class="button ghost" href="/statutes/cgs/title/21a">
 						Browse Title 21a
-					</A>
+					</a>
 				</section>
 
 				<section id="search" class="section reveal">
@@ -112,9 +111,9 @@ export default function Home() {
 							placeholder="Search sections, citations, and history"
 							disabled
 						/>
-						<A class="button" href="/search">
+						<a class="button" href="/search">
 							Open search
-						</A>
+						</a>
 						<p class="muted">
 							Live now: Pinecone-backed semantic search with a chat interface.
 						</p>

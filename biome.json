@@ -4,7 +4,6 @@
 		"includes": [
 			"**/*",
 			"!!.output",
-			"!!.vinxi",
 			"!!.wrangler",
 			"!!data",
 			"!!dist",

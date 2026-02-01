@@ -1,10 +1,25 @@
-// @refresh reload
-import { mount, StartClient } from "@solidjs/start/client";
+/* @refresh reload */
+import { hydrate, render } from "solid-js/web";
+import App from "./App";
+import "./styles/global.css";
 
 const app = document.getElementById("app");
 
 if (!app) {
-	throw new Error("Missing #app container for StartClient.");
+	throw new Error("Missing #app container for App.");
 }
 
-mount(() => <StartClient />, app);
+const docData = window.__DOC_DATA__;
+
+const AppRoot = () => (
+	<App
+		url={`${window.location.pathname}${window.location.search}`}
+		docData={docData ?? null}
+	/>
+);
+
+if (window.__SSR__) {
+	hydrate(AppRoot, app);
+} else {
+	render(AppRoot, app);
+}

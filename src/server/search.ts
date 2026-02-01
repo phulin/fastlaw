@@ -1,5 +1,4 @@
 import { GoogleGenAI } from "@google/genai";
-import type { APIEvent } from "@solidjs/start/server";
 import type { Env } from "~/lib/types";
 
 interface PineconeMatch {
@@ -261,12 +260,13 @@ const compactMatches = (matches: PineconeMatch[]) =>
 		};
 	});
 
-export async function OPTIONS() {
-	return new Response(null, { status: 204, headers: corsHeaders });
-}
-
-export async function POST({ request, nativeEvent }: APIEvent) {
-	const env = nativeEvent.context.cloudflare.env as Env;
+export async function handleSearch(
+	request: Request,
+	env: Env,
+): Promise<Response> {
+	if (request.method === "OPTIONS") {
+		return new Response(null, { status: 204, headers: corsHeaders });
+	}
 
 	const stream = new TransformStream();
 	const writer = stream.writable.getWriter();
@@ -292,7 +292,6 @@ export async function POST({ request, nativeEvent }: APIEvent) {
 		history?: Array<{ role: string; content: string }>;
 	};
 
-	// Process in background
 	(async () => {
 		let trace: TraceEntry[] = [];
 		try {

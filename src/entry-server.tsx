@@ -1,23 +1,11 @@
-// @refresh reload
-import { createHandler, StartServer } from "@solidjs/start/server";
+import { generateHydrationScript, renderToString } from "solid-js/web";
+import type { DocData } from "./App";
+import App from "./App";
 
-export default createHandler(() => (
-	<StartServer
-		document={({ assets, children, scripts }) => (
-			<html lang="en">
-				<head>
-					<meta charset="utf-8" />
-					<meta name="viewport" content="width=device-width, initial-scale=1" />
-					<link rel="icon" href="/favicon.ico" />
-					{assets}
-				</head>
-				<body>
-					<div id="app" class="page">
-						{children}
-					</div>
-					{scripts}
-				</body>
-			</html>
-		)}
-	/>
-));
+export function render(url: string, docData?: DocData | null) {
+	const html = renderToString(() => (
+		<App url={url} docData={docData ?? null} />
+	));
+	const head = generateHydrationScript();
+	return { html, head };
+}

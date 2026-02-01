@@ -1,6 +1,8 @@
 name = "fastlaw"
-compatibility_date = "2024-10-28"
-pages_build_output_dir = "dist"
+compatibility_date = "2026-01-20"
+main = "src/worker.ts"
+assets = { binding = "ASSETS", directory = "dist/client" }
+compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"

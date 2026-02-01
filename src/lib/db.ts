@@ -1,20 +1,26 @@
-"use server";
-
-import { getRequestEvent } from "solid-js/web";
 import type {
 	ChapterRecord,
+	DocumentContent,
+	DocumentRecord,
 	Env,
+	LevelRecord,
 	SectionContent,
 	SectionRecord,
+	SourceRecord,
 	TitleSummary,
 } from "./types";
 
+let envRef: Env | null = null;
+
+export const setEnv = (env: Env) => {
+	envRef = env;
+};
+
 function getEnv(): Env {
-	const event = getRequestEvent();
-	if (!event?.nativeEvent?.context?.cloudflare?.env) {
+	if (!envRef) {
 		throw new Error("Cloudflare environment not available");
 	}
-	return event.nativeEvent.context.cloudflare.env as Env;
+	return envRef;
 }
 
 function getDB(): D1Database {
@@ -197,6 +203,118 @@ export async function getSectionByNumber(
 	return result;
 }
 
+// Sources
+
+export async function getSources(): Promise<SourceRecord[]> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM sources
+      ORDER BY sort_order, name
+    `,
+		)
+		.all<SourceRecord>();
+	return result.results;
+}
+
+export async function getSourceById(
+	sourceId: string,
+): Promise<SourceRecord | null> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM sources
+      WHERE id = ?
+      LIMIT 1
+    `,
+		)
+		.bind(sourceId)
+		.first<SourceRecord>();
+	return result;
+}
+
+// Levels (breadcrumbs)
+
+export async function getLevelsByParentId(
+	sourceId: string,
+	docType: string,
+	parentId: string | null,
+): Promise<LevelRecord[]> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM levels
+      WHERE source_id = ? AND doc_type = ? AND parent_id IS ?
+      ORDER BY identifier_sort, sort_order
+    `,
+		)
+		.bind(sourceId, docType, parentId)
+		.all<LevelRecord>();
+	return result.results;
+}
+
+export async function getLevelById(
+	levelId: string,
+): Promise<LevelRecord | null> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM levels
+      WHERE id = ?
+      LIMIT 1
+    `,
+		)
+		.bind(levelId)
+		.first<LevelRecord>();
+	return result;
+}
+
+// Documents
+
+export async function getDocumentById(
+	docId: string,
+): Promise<DocumentRecord | null> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM documents
+      WHERE id = ?
+      LIMIT 1
+    `,
+		)
+		.bind(docId)
+		.first<DocumentRecord>();
+	return result;
+}
+
+export async function getDocumentBySlug(
+	slug: string,
+): Promise<DocumentRecord | null> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM documents
+      WHERE slug = ?
+      LIMIT 1
+    `,
+		)
+		.bind(slug)
+		.first<DocumentRecord>();
+	return result;
+}
+
 // R2 Content
 
 export async function getSectionContent(
@@ -215,4 +333,13 @@ export async function getSectionContentById(
 	const section = await getSectionById(sectionId);
 	if (!section) return null;
 	return getSectionContent(section.r2_key);
+}
+
+export async function getDocumentContent(
+	slug: string,
+): Promise<DocumentContent | null> {
+	const storage = getStorage();
+	const object = await storage.get(`${slug}.json`);
+	if (!object) return null;
+	return object.json<DocumentContent>();
 }

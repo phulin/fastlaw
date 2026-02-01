@@ -10,17 +10,13 @@
 		"allowJs": true,
 		"strict": true,
 		"noEmit": true,
-		"types": [
-			"vinxi/types/client",
-			"@cloudflare/workers-types",
-			"@solidjs/start/env"
-		],
+		"types": ["@cloudflare/workers-types", "vite/client"],
 		"isolatedModules": true,
 		"paths": {
 			"~/*": ["./src/*"]
 		},
 		"skipLibCheck": true
 	},
-	"include": ["src/**/*", "app.config.ts", "scripts/**/*"],
+	"include": ["src/**/*", "scripts/**/*", "vite.config.ts"],
 	"exclude": ["node_modules", "dist", ".output", ".vinxi"]
 }

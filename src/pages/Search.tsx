@@ -1,4 +1,3 @@
-import { A } from "@solidjs/router";
 import { marked } from "marked";
 import { createSignal, For, Show } from "solid-js";
 import { Header } from "~/components/Header";
@@ -324,9 +323,9 @@ export default function SearchPage() {
 												</div>
 												<Show when={href()}>
 													{(h) => (
-														<A class="source-link" href={h()}>
+														<a class="source-link" href={h()}>
 															Open section
-														</A>
+														</a>
 													)}
 												</Show>
 											</div>

@@ -43,6 +43,48 @@ export interface SectionRecord {
 	sort_order: number;
 }
 
+export interface SourceRecord {
+	id: string;
+	name: string;
+	jurisdiction: string;
+	region: string;
+	doc_type: string;
+	edition: string | null;
+	citation_prefix: string | null;
+	slug: string;
+	sort_order: number;
+}
+
+export interface DocumentRecord {
+	id: string;
+	source_id: string;
+	doc_type: string;
+	title: string | null;
+	citation: string | null;
+	slug: string;
+	as_of: string | null;
+	effective_start: string | null;
+	effective_end: string | null;
+	source_url: string | null;
+	created_at: string | null;
+	updated_at: string | null;
+}
+
+export interface LevelRecord {
+	id: string;
+	source_id: string;
+	doc_type: string;
+	level_index: number;
+	level_name: string;
+	label: string | null;
+	identifier: string | null;
+	identifier_sort: string | null;
+	name: string | null;
+	parent_id: string | null;
+	doc_id: string | null;
+	sort_order: number;
+}
+
 // R2 Content Types
 
 export interface ContentBlock {
@@ -55,6 +97,22 @@ export interface SectionContent {
 	version: 1;
 	section_id: string;
 	blocks: ContentBlock[];
+}
+
+export interface DocumentContent {
+	version: 2;
+	doc_id: string;
+	doc_type: "statute" | "regulation" | "case";
+	blocks: ContentBlock[];
+	metadata?: {
+		citations?: string[];
+		parties?: string[];
+		court?: string;
+		docket?: string;
+		decision_date?: string;
+		agency?: string;
+		source?: string;
+	};
 }
 
 // Cloudflare Environment

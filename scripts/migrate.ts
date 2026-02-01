@@ -20,7 +20,7 @@ import Database from "better-sqlite3";
 interface SQLiteSection {
 	section_id: string;
 	chapter_id: string;
-	title_id: string | null;
+	title_id: string;
 	section_number: string | null;
 	section_title: string | null;
 	section_label: string;
@@ -41,7 +41,7 @@ interface SQLiteSection {
 interface SQLiteChapter {
 	chapter_id: string;
 	chapter_title: string;
-	title_id: string | null;
+	title_id: string;
 	title_id_padded: string | null;
 	title_id_display: string | null;
 	chapter_id_padded: string | null;
@@ -89,6 +89,11 @@ const formatDesignator = (value: string | null): string | null => {
 const escapeSQL = (value: string | null): string => {
 	if (value === null) return "NULL";
 	return `'${value.replace(/'/g, "''")}'`;
+};
+
+const buildSectionSlug = (titleId: string, sectionNumber: string): string => {
+	const sectionSuffix = sectionNumber.replace(`${titleId}-`, "");
+	return `statutes/cgs/section/${titleId}/${sectionSuffix}`;
 };
 
 async function migrate() {
@@ -172,10 +177,16 @@ async function migrate() {
 
 	// Create output directories
 	await mkdir("data/d1", { recursive: true });
-	await mkdir("data/r2/sections/cgs", { recursive: true });
+	await mkdir("data/r2", { recursive: true });
 
 	// Generate D1 SQL
 	const sqlLines: string[] = [];
+
+	// Sources
+	sqlLines.push("-- Sources");
+	sqlLines.push(
+		`INSERT INTO sources (id, name, jurisdiction, region, doc_type, edition, citation_prefix, slug, sort_order) VALUES ('cgs', 'Connecticut General Statutes', 'state', 'CT', 'statute', NULL, 'Conn. Gen. Stat.', 'cgs', 0);`,
+	);
 
 	// Titles
 	sqlLines.push("-- Titles");
@@ -184,8 +195,14 @@ async function migrate() {
 		const id = t.title_id;
 		const idPadded = t.title_id_padded ?? padDesignator(t.title_id);
 		const idDisplay = t.title_id_display ?? formatDesignator(t.title_id);
+		const levelId = `lvl_cgs_title_${id}`;
+
 		sqlLines.push(
 			`INSERT INTO titles (id, id_padded, id_display, name, sort_order) VALUES (${escapeSQL(id)}, ${escapeSQL(idPadded)}, ${escapeSQL(idDisplay)}, ${escapeSQL(t.title_name)}, ${i});`,
+		);
+
+		sqlLines.push(
+			`INSERT INTO levels (id, source_id, doc_type, level_index, level_name, label, identifier, identifier_sort, name, parent_id, doc_id, sort_order) VALUES (${escapeSQL(levelId)}, 'cgs', 'statute', 0, 'title', ${escapeSQL(idDisplay)}, ${escapeSQL(id)}, ${escapeSQL(idPadded)}, ${escapeSQL(t.title_name)}, NULL, NULL, ${i});`,
 		);
 	}
 
@@ -207,9 +224,15 @@ async function migrate() {
 		const name =
 			c.chapter_title?.replace(/^Chapter\s+[^-]+-\s+/i, "").trim() ??
 			c.chapter_title;
+		const levelId = `lvl_cgs_chapter_${id}`;
+		const parentId = `lvl_cgs_title_${titleId}`;
 
 		sqlLines.push(
 			`INSERT INTO chapters (id, id_padded, id_display, title_id, title_id_padded, title_id_display, name, section_count, section_start, section_end, sort_order) VALUES (${escapeSQL(id)}, ${escapeSQL(idPadded)}, ${escapeSQL(idDisplay)}, ${escapeSQL(titleId)}, ${escapeSQL(titleIdPadded)}, ${escapeSQL(titleIdDisplay)}, ${escapeSQL(name)}, ${c.section_count ?? 0}, ${escapeSQL(c.section_start)}, ${escapeSQL(c.section_end)}, ${i});`,
+		);
+
+		sqlLines.push(
+			`INSERT INTO levels (id, source_id, doc_type, level_index, level_name, label, identifier, identifier_sort, name, parent_id, doc_id, sort_order) VALUES (${escapeSQL(levelId)}, 'cgs', 'statute', 1, 'chapter', ${escapeSQL(idDisplay)}, ${escapeSQL(id)}, ${escapeSQL(idPadded)}, ${escapeSQL(name)}, ${escapeSQL(parentId)}, NULL, ${i});`,
 		);
 	}
 
@@ -219,10 +242,24 @@ async function migrate() {
 		const s = sections[i];
 		const sectionNumber =
 			s.section_number ?? s.section_id.replace(/^secs?_/, "");
-		const r2Key = `sections/cgs/${sectionNumber}.json`;
+		const titleId = s.title_id;
+		const chapterId = s.chapter_id;
+		const slug = buildSectionSlug(titleId, sectionNumber);
+		const r2Key = `${slug}.json`;
+		const docId = `doc_cgs_${sectionNumber}`;
+		const levelId = `lvl_cgs_section_${sectionNumber}`;
+		const parentId = `lvl_cgs_chapter_${chapterId}`;
 
 		sqlLines.push(
 			`INSERT INTO sections (id, title_id, chapter_id, section_number, section_label, heading, r2_key, see_also, prev_section_id, next_section_id, prev_section_label, next_section_label, sort_order) VALUES (${escapeSQL(s.section_id)}, ${escapeSQL(s.title_id)}, ${escapeSQL(s.chapter_id)}, ${escapeSQL(sectionNumber)}, ${escapeSQL(s.section_label)}, ${escapeSQL(s.section_title)}, ${escapeSQL(r2Key)}, ${escapeSQL(s.see_also)}, ${escapeSQL(s.prev_section_id)}, ${escapeSQL(s.next_section_id)}, ${escapeSQL(s.prev_section_label)}, ${escapeSQL(s.next_section_label)}, ${i});`,
+		);
+
+		sqlLines.push(
+			`INSERT INTO documents (id, source_id, doc_type, title, citation, slug, as_of, effective_start, effective_end, source_url, created_at, updated_at) VALUES (${escapeSQL(docId)}, 'cgs', 'statute', ${escapeSQL(s.section_title)}, ${escapeSQL(sectionNumber)}, ${escapeSQL(slug)}, NULL, NULL, NULL, ${escapeSQL(s.source_file)}, NULL, NULL);`,
+		);
+
+		sqlLines.push(
+			`INSERT INTO levels (id, source_id, doc_type, level_index, level_name, label, identifier, identifier_sort, name, parent_id, doc_id, sort_order) VALUES (${escapeSQL(levelId)}, 'cgs', 'statute', 2, 'section', ${escapeSQL(s.section_label)}, ${escapeSQL(sectionNumber)}, ${escapeSQL(sectionNumber)}, ${escapeSQL(s.section_title)}, ${escapeSQL(parentId)}, ${escapeSQL(docId)}, ${i});`,
 		);
 
 		// Generate R2 content JSON
@@ -262,10 +299,9 @@ async function migrate() {
 			blocks,
 		};
 
-		await writeFile(
-			`data/r2/sections/cgs/${sectionNumber}.json`,
-			JSON.stringify(content, null, 2),
-		);
+		const outputPath = path.join("data/r2", `${slug}.json`);
+		await mkdir(path.dirname(outputPath), { recursive: true });
+		await writeFile(outputPath, JSON.stringify(content, null, 2));
 
 		if ((i + 1) % 1000 === 0) {
 			console.log(`Processed ${i + 1}/${sections.length} sections...`);
