@@ -2,8 +2,6 @@
 
 # Node/Yarn
 node_modules/
-dist/
-.astro/
 *.log
 
 # Yarn (Berry) artifacts
@@ -23,6 +21,18 @@ __pycache__/
 .venv/
 venv/
 
+# CF/Wrangler
+.wrangler/
+
 # Data/artifacts
 cga_mirror/
 *.sqlite3
+data/
+
+# Build outputs (Astro legacy)
+dist/
+.astro/
+
+# Build outputs (SolidStart/Vinxi)
+.output/
+.vinxi/

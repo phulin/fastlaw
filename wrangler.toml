@@ -1,8 +1,18 @@
-name = "authority-search"
-main = "workers/search.ts"
+name = "fastlaw"
 compatibility_date = "2024-10-28"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fastlaw"
+database_id = "dc9efc6c-abb6-4790-9546-c3565022c186"
+
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "fastlaw-content"
 
 [vars]
+GEMINI_MODEL = "gemini-3-flash-preview"
 PINECONE_INDEX_NAME = "cgs"
 PINECONE_EMBED_ENDPOINT = "https://api.pinecone.io/embed"
 PINECONE_EMBED_MODEL = "llama-text-embed-v2"

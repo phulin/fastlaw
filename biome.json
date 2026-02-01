@@ -1,0 +1,17 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.3.13/schema.json",
+	"files": {
+		"includes": [
+			"**/*",
+			"!!.output",
+			"!!.vinxi",
+			"!!.wrangler",
+			"!!data",
+			"!!dist",
+			"!!node_modules"
+		]
+	},
+	"formatter": {
+		"includes": ["**/*", "!!**/data/**"]
+	}
+}
