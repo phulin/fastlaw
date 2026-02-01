@@ -23,6 +23,7 @@ const isAssetRequest = (pathname: string) =>
 	pathname.startsWith("/src/") ||
 	pathname.startsWith("/node_modules/") ||
 	pathname.startsWith("/@vite/") ||
+	pathname === "/@solid-refresh" ||
 	pathname === "/favicon.ico" ||
 	pathname === "/robots.txt" ||
 	/\.[a-z0-9]+$/i.test(pathname);
@@ -68,7 +69,7 @@ app.get("*", async (c) => {
 		};
 	}
 
-	const rendered = render(`${url.pathname}${url.search}`, docData);
+	const rendered = render(url.pathname, docData);
 	const ssrScript = "<script>window.__SSR__=true</script>";
 	const docScript = docData
 		? `<script>window.__DOC_DATA__=${JSON.stringify(docData)}</script>`

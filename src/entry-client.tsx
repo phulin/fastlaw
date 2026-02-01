@@ -1,7 +1,6 @@
 /* @refresh reload */
 import { hydrate, render } from "solid-js/web";
 import App from "./App";
-import "./styles/global.css";
 
 const app = document.getElementById("app");
 
@@ -12,10 +11,7 @@ if (!app) {
 const docData = window.__DOC_DATA__;
 
 const AppRoot = () => (
-	<App
-		url={`${window.location.pathname}${window.location.search}`}
-		docData={docData ?? null}
-	/>
+	<App pathname={window.location.pathname} docData={docData ?? null} />
 );
 
 if (window.__SSR__) {

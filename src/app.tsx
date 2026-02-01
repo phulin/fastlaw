@@ -8,15 +8,9 @@ export type DocData = {
 };
 
 interface AppProps {
-	url?: string;
-	docData?: DocData | null;
+	pathname: string;
+	docData: DocData | null;
 }
-
-const getRoutePath = (url: string | undefined) => {
-	if (!url) return "/";
-	const path = url.split("?", 1)[0];
-	return path || "/";
-};
 
 const isDocumentRoute = (path: string) =>
 	path === "/statutes" ||
@@ -25,31 +19,29 @@ const isDocumentRoute = (path: string) =>
 	path.startsWith("/cases/");
 
 export default function App(props: AppProps) {
-	const routePath = () => getRoutePath(props.url);
-
 	return (
 		<>
-			<Show when={routePath() === "/"} fallback={null}>
+			<Show when={props.pathname === "/"} fallback={null}>
 				<Home />
 			</Show>
-			<Show when={routePath() === "/search"} fallback={null}>
+			<Show when={props.pathname === "/search"} fallback={null}>
 				<SearchPage />
 			</Show>
-			<Show when={isDocumentRoute(routePath())} fallback={null}>
+			<Show when={isDocumentRoute(props.pathname)} fallback={null}>
 				<DocumentStub
-					path={props.docData?.slug ?? routePath()}
+					path={props.docData?.slug ?? props.pathname}
 					status={props.docData?.status}
 				/>
 			</Show>
 			<Show
 				when={
-					routePath() !== "/" &&
-					routePath() !== "/search" &&
-					!isDocumentRoute(routePath())
+					props.pathname !== "/" &&
+					props.pathname !== "/search" &&
+					!isDocumentRoute(props.pathname)
 				}
 				fallback={null}
 			>
-				<DocumentStub path={routePath()} status="missing" />
+				<DocumentStub path={props.pathname} status="missing" />
 			</Show>
 		</>
 	);
