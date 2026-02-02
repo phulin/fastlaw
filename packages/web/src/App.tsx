@@ -1,9 +1,10 @@
 import { Show } from "solid-js";
 import type {
-	DocumentContent,
-	DocumentRecord,
 	LevelPageData,
-	LevelRecord,
+	NodeContent,
+	NodeRecord,
+	SourceRecord,
+	SourceVersionRecord,
 } from "~/lib/types";
 import DeepSearchPage from "~/pages/DeepSearch";
 import { DocumentPage } from "~/pages/Document";
@@ -20,12 +21,12 @@ export type DocData =
 	| {
 			status: "found";
 			slug: string;
-			doc: DocumentRecord;
-			content: DocumentContent;
-			level: LevelRecord | null;
-			nav: { prev: LevelRecord | null; next: LevelRecord | null } | null;
-			ancestors: LevelRecord[] | null;
-			source: import("~/lib/types").SourceRecord | null;
+			node: NodeRecord;
+			content: NodeContent;
+			nav: { prev: NodeRecord | null; next: NodeRecord | null } | null;
+			ancestors: NodeRecord[];
+			source: SourceRecord;
+			sourceVersion: SourceVersionRecord;
 	  };
 
 export type LevelData = LevelPageData;

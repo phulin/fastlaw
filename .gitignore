@@ -25,14 +25,9 @@ venv/
 .wrangler/
 
 # Data/artifacts
-cga_mirror/
 *.sqlite3
 data/
 
 # Build outputs (Astro legacy)
 dist/
-.astro/
-
-# Build outputs (SolidStart/Vinxi)
-.output/
-.vinxi/
+.turbo/

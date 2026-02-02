@@ -3,14 +3,11 @@
 	"files": {
 		"includes": [
 			"**/*",
-			"!!.output",
-			"!!.wrangler",
-			"!!data",
-			"!!dist",
-			"!!node_modules"
+			"!.output",
+			"!.wrangler",
+			"!data",
+			"!**/dist",
+			"!node_modules"
 		]
-	},
-	"formatter": {
-		"includes": ["**/*", "!!**/data/**"]
 	}
 }

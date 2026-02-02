@@ -2,7 +2,7 @@ import { For, Show } from "solid-js";
 import { Breadcrumbs } from "~/components/Breadcrumbs";
 import { Footer } from "~/components/Footer";
 import { Header } from "~/components/Header";
-import type { LevelPageData, LevelRecord } from "~/lib/types";
+import type { LevelPageData, NodeRecord } from "~/lib/types";
 
 const levelDisplayName = (levelName: string): string => {
 	const names: Record<string, string> = {
@@ -15,17 +15,13 @@ const levelDisplayName = (levelName: string): string => {
 	return names[levelName] ?? levelName;
 };
 
-const childUrl = (child: LevelRecord, sourceSlug: string): string => {
-	if (child.doc_id && child.slug) {
-		const parts = child.slug.split("/");
-		if (parts.length >= 2) {
-			const titleId = parts[parts.length - 2];
-			const sectionId = parts[parts.length - 1];
-			return `/statutes/${sourceSlug}/section/${titleId}/${sectionId}`;
-		}
+const childUrl = (child: NodeRecord, sourceCode: string): string => {
+	// Check if this is a leaf node (section) with content
+	if (child.blob_key && child.slug) {
+		return `/statutes/${sourceCode}/${child.slug}`;
 	}
 	if (child.slug) {
-		return `/${child.slug}`;
+		return `/statutes/${sourceCode}/${child.slug}`;
 	}
 	return "#";
 };
@@ -35,34 +31,38 @@ type LevelPageProps = {
 };
 
 export function LevelPage(props: LevelPageProps) {
-	const level = () => props.data.level;
+	const node = () => props.data.node;
 	const source = () => props.data.source;
 	const children = () => props.data.children ?? [];
 	const ancestors = () => props.data.ancestors ?? [];
 
 	const levelTypeLabel = () => {
-		const lvl = level();
-		return lvl.level_name.charAt(0).toUpperCase() + lvl.level_name.slice(1);
+		const n = node();
+		return n.level_name.charAt(0).toUpperCase() + n.level_name.slice(1);
 	};
 
-	const formatLevelNumber = (identifier: string | null): string => {
-		if (!identifier) return "";
-		// Handle identifiers like "chap_417" -> "417", "title_21a" -> "21a"
-		const match = identifier.match(/^[a-z]+_(.+)$/i);
-		return match ? match[1] : identifier;
+	const formatLabel = (label: string | null): string => {
+		if (!label) return "";
+		return label;
 	};
 
 	const heading = () => {
-		const lvl = level();
-		return `${levelTypeLabel()} ${formatLevelNumber(lvl.identifier)}`;
+		const n = node();
+		if (n.label) {
+			return `${levelTypeLabel()} ${formatLabel(n.label)}`;
+		}
+		return levelTypeLabel();
 	};
 
 	const currentBreadcrumbLabel = () => {
-		const lvl = level();
-		return `${levelTypeLabel()} ${formatLevelNumber(lvl.identifier)}`;
+		const n = node();
+		if (n.label) {
+			return `${levelTypeLabel()} ${formatLabel(n.label)}`;
+		}
+		return levelTypeLabel();
 	};
 
-	const subheading = () => level().name;
+	const subheading = () => node().name;
 
 	const childLevelName = () => {
 		const first = children()[0];
@@ -92,9 +92,9 @@ export function LevelPage(props: LevelPageProps) {
 						<div class="section-list">
 							<For each={children()}>
 								{(child) => (
-									<a class="section-row" href={childUrl(child, source().slug)}>
+									<a class="section-row" href={childUrl(child, source().code)}>
 										<span class="section-number">
-											{child.label ?? child.identifier}
+											{child.label ?? child.string_id}
 										</span>
 										<span class="section-title-text">{child.name}</span>
 									</a>

@@ -1,0 +1,20 @@
+name = "fastlaw-ingest"
+compatibility_date = "2026-01-20"
+main = "src/worker.ts"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fastlaw"
+database_id = "dc9efc6c-abb6-4790-9546-c3565022c186"
+migrations_dir = "../../db/migrations"
+
+[[r2_buckets]]
+binding = "STORAGE"
+bucket_name = "fastlaw-content"
+
+[vars]
+# Source URLs
+CGA_BASE_URL = "https://www.cga.ct.gov"
+CGA_START_PATH = "/current/pub/titles.htm"
+USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"

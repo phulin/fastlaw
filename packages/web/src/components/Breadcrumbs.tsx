@@ -1,24 +1,20 @@
 import { For } from "solid-js";
-import type { LevelRecord, SourceRecord } from "~/lib/types";
+import type { NodeRecord, SourceRecord } from "~/lib/types";
 
 interface BreadcrumbsProps {
 	source: SourceRecord;
-	ancestors: LevelRecord[];
+	ancestors: NodeRecord[];
 	current?: { label: string };
 	showHome?: boolean;
 }
 
-const formatLevelNumber = (identifier: string | null): string => {
-	if (!identifier) return "";
-	// Handle identifiers like "chap_417" -> "417", "title_21a" -> "21a"
-	const match = identifier.match(/^[a-z]+_(.+)$/i);
-	return match ? match[1] : identifier;
-};
-
-const formatAncestorLabel = (ancestor: LevelRecord): string => {
+const formatAncestorLabel = (ancestor: NodeRecord): string => {
 	const levelType =
 		ancestor.level_name.charAt(0).toUpperCase() + ancestor.level_name.slice(1);
-	return `${levelType} ${formatLevelNumber(ancestor.identifier)}`;
+	if (ancestor.label) {
+		return `${levelType} ${ancestor.label}`;
+	}
+	return levelType;
 };
 
 export function Breadcrumbs(props: BreadcrumbsProps) {
@@ -35,12 +31,14 @@ export function Breadcrumbs(props: BreadcrumbsProps) {
 					<span class="crumb-sep">/</span>
 				</>
 			)}
-			<a href={`/statutes/${props.source.slug}`}>{props.source.name}</a>
+			<a href={`/statutes/${props.source.code}`}>{props.source.name}</a>
 			<For each={ancestorsWithoutCurrent()}>
 				{(ancestor) => (
 					<>
 						<span class="crumb-sep">/</span>
-						<a href={`/${ancestor.slug}`}>{formatAncestorLabel(ancestor)}</a>
+						<a href={`/statutes/${props.source.code}/${ancestor.slug}`}>
+							{formatAncestorLabel(ancestor)}
+						</a>
 					</>
 				)}
 			</For>

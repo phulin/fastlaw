@@ -39,14 +39,12 @@ const getIndentClass = (text: string) => {
 	return "indent-1";
 };
 
-const toSectionPath = (identifier: string | null) => {
-	if (!identifier) return null;
-	const [titleId, ...rest] = identifier.split("-");
-	const suffix = rest.join("-");
-	if (!titleId || !suffix) return null;
-	return `/statutes/cgs/section/${encodeURIComponent(titleId)}/${encodeURIComponent(
-		suffix,
-	)}`;
+const toSectionPath = (
+	node: { slug: string | null; string_id: string } | null,
+	sourceCode: string,
+) => {
+	if (!node?.slug) return null;
+	return `/statutes/${sourceCode}/${node.slug}`;
 };
 
 const getSlugSection = (slug: string) => {
@@ -58,10 +56,8 @@ const getSlugSection = (slug: string) => {
 };
 
 const navLabel = (
-	label: string | null,
-	name: string | null,
-	id: string | null,
-) => label ?? name ?? id ?? "Section";
+	node: { label: string | null; name: string | null; string_id: string } | null,
+) => node?.label ?? node?.name ?? node?.string_id ?? "Section";
 
 type DocumentPageProps = {
 	doc: Extract<DocData, { status: "found" }>;
@@ -80,16 +76,12 @@ export function DocumentPage(props: DocumentPageProps) {
 		})),
 	];
 	const heading = () =>
-		props.doc.level?.name ??
-		props.doc.doc.title ??
-		props.doc.level?.label ??
-		"Statute text";
+		props.doc.node.name ?? props.doc.node.label ?? "Statute text";
 	const sectionNumber = () =>
-		props.doc.level?.identifier ??
-		props.doc.doc.citation ??
-		getSlugSection(props.doc.doc.slug);
-	const prevLevel = () => props.doc.nav?.prev ?? null;
-	const nextLevel = () => props.doc.nav?.next ?? null;
+		props.doc.node.label ?? getSlugSection(props.doc.slug);
+	const prevNode = () => props.doc.nav?.prev ?? null;
+	const nextNode = () => props.doc.nav?.next ?? null;
+	const sourceCode = () => props.doc.source.code;
 
 	return (
 		<>
@@ -111,22 +103,11 @@ export function DocumentPage(props: DocumentPageProps) {
 				</aside>
 				<section class="statute">
 					<div class="statute-header">
-						<Show
-							when={props.doc.source && props.doc.ancestors}
-							fallback={
-								<div class="statute-breadcrumbs">
-									<a href="/">Home</a>
-									<span class="crumb-sep">/</span>
-									<span>{sectionNumber()}</span>
-								</div>
-							}
-						>
-							<Breadcrumbs
-								source={props.doc.source!}
-								ancestors={props.doc.ancestors!}
-								current={{ label: sectionNumber() }}
-							/>
-						</Show>
+						<Breadcrumbs
+							source={props.doc.source}
+							ancestors={props.doc.ancestors}
+							current={{ label: sectionNumber() }}
+						/>
 						<h1>{`Section ${sectionNumber()}`}</h1>
 						<p class="lead">{heading()}</p>
 					</div>
@@ -189,34 +170,22 @@ export function DocumentPage(props: DocumentPageProps) {
 						</div>
 					</Show>
 					<div class="statute-nav">
-						<Show when={prevLevel()}>
+						<Show when={prevNode()}>
 							<a
 								class="statute-nav-link"
-								href={toSectionPath(prevLevel()?.identifier ?? null) ?? "#"}
+								href={toSectionPath(prevNode(), sourceCode()) ?? "#"}
 							>
 								<span class="statute-nav-label">Previous</span>
-								<span>
-									{navLabel(
-										prevLevel()?.label ?? null,
-										prevLevel()?.name ?? null,
-										prevLevel()?.identifier ?? null,
-									)}
-								</span>
+								<span>{navLabel(prevNode())}</span>
 							</a>
 						</Show>
-						<Show when={nextLevel()}>
+						<Show when={nextNode()}>
 							<a
 								class="statute-nav-link"
-								href={toSectionPath(nextLevel()?.identifier ?? null) ?? "#"}
+								href={toSectionPath(nextNode(), sourceCode()) ?? "#"}
 							>
 								<span class="statute-nav-label">Next</span>
-								<span>
-									{navLabel(
-										nextLevel()?.label ?? null,
-										nextLevel()?.name ?? null,
-										nextLevel()?.identifier ?? null,
-									)}
-								</span>
+								<span>{navLabel(nextNode())}</span>
 							</a>
 						</Show>
 					</div>

@@ -1,0 +1,29 @@
+{
+	"name": "@authority/web",
+	"private": true,
+	"version": "0.2.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"start": "vite preview",
+		"typecheck": "tsc --noEmit",
+		"deploy": "wrangler deploy",
+		"deploy:local": "wrangler dev"
+	},
+	"dependencies": {
+		"@google/genai": "^1.38.0",
+		"csv-parse": "^6.1.0",
+		"hono": "^4.6.4",
+		"marked": "^12.0.2",
+		"solid-js": "^1.9.5"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "^1.22.1",
+		"@types/better-sqlite3": "^7.6.12",
+		"better-sqlite3": "^11.2.0",
+		"tsx": "^4.21.0",
+		"vite": "^6.1.1",
+		"vite-plugin-solid": "^2.10.0"
+	}
+}

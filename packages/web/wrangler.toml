@@ -8,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "fastlaw"
 database_id = "dc9efc6c-abb6-4790-9546-c3565022c186"
-migrations_dir = "db/migrations"
+migrations_dir = "../../db/migrations"
 
 [[r2_buckets]]
 binding = "STORAGE"
