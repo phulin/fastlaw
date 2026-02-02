@@ -2,6 +2,7 @@
 import argparse
 import html
 import html.parser
+import json
 import os
 import re
 import sqlite3
@@ -33,6 +34,7 @@ class SectionTextExtractor(html.parser.HTMLParser):
         self.ignore_depth = 0
         self.in_row = False
         self.row_cells = 0
+        self.stop_parsing = False
         self.block_tags = {
             "p",
             "div",
@@ -50,6 +52,8 @@ class SectionTextExtractor(html.parser.HTMLParser):
         }
 
     def handle_starttag(self, tag, attrs):
+        if self.stop_parsing:
+            return
         if self.ignore_depth > 0:
             self.ignore_depth += 1
             return
@@ -75,6 +79,7 @@ class SectionTextExtractor(html.parser.HTMLParser):
                     classes = {c.strip() for c in value.split()}
                     if "nav_tbl" in classes:
                         self.ignore_depth = 1
+                        self.stop_parsing = True
                         return
 
         if tag == "br" or tag == "hr":
@@ -99,6 +104,8 @@ class SectionTextExtractor(html.parser.HTMLParser):
             self._newline(self.current_target)
 
     def handle_endtag(self, tag):
+        if self.stop_parsing:
+            return
         if self.ignore_depth > 0:
             self.ignore_depth -= 1
             return
@@ -127,6 +134,8 @@ class SectionTextExtractor(html.parser.HTMLParser):
             self._newline(self.current_target)
 
     def handle_data(self, data):
+        if self.stop_parsing:
+            return
         if self.in_script or self.in_style or self.ignore_depth > 0 or self.in_label:
             return
         self.parts[self.current_target].append(data)
@@ -262,6 +271,7 @@ def trim_trailing_headings(body_text):
         r"^(?:PART|SUBPART|ARTICLE|CHAPTER)\s+[IVXLC\d]+$"
     )
     caps_re = re.compile(r"^[A-Z][A-Z\s\-,&]+$")
+    paren_heading_re = re.compile(r"^\(([A-Z]|[IVXLC]+)\)$")
     while lines:
         line = lines[-1].strip()
         if heading_re.match(line):
@@ -270,6 +280,11 @@ def trim_trailing_headings(body_text):
                 lines.pop()
             continue
         if caps_re.match(line) and len(line) <= 80:
+            lines.pop()
+            while lines and lines[-1] == "":
+                lines.pop()
+            continue
+        if paren_heading_re.match(line):
             lines.pop()
             while lines and lines[-1] == "":
                 lines.pop()
@@ -735,12 +750,14 @@ def dump_import_sql(conn, output_path):
     for idx, (title_id, title_id_padded, title_id_display, title_name) in enumerate(
         titles
     ):
+        slug = f"statutes/cgs/title/{title_id}"
         sql_lines.append(
             "INSERT INTO levels (id, source_id, doc_type, level_index, level_name, "
-            "label, identifier, identifier_sort, name, parent_id, doc_id, sort_order) "
+            "label, identifier, identifier_sort, name, parent_id, doc_id, sort_order, slug) "
             f"VALUES ({_escape_sql('lvl_cgs_title_' + title_id)}, 'cgs', 'statute', 0, "
             f"'title', {_escape_sql(title_id_display)}, {_escape_sql(title_id)}, "
-            f"{_escape_sql(title_id_padded)}, {_escape_sql(title_name)}, NULL, NULL, {idx});"
+            f"{_escape_sql(title_id_padded)}, {_escape_sql(title_name)}, NULL, NULL, {idx}, "
+            f"{_escape_sql(slug)});"
         )
 
     # Levels: Chapters
@@ -767,13 +784,14 @@ def dump_import_sql(conn, output_path):
         section_end,
     ) in enumerate(chapters):
         name = _clean_chapter_title(chapter_title)
+        slug = f"statutes/cgs/chapter/{title_id}/{chapter_id}"
         sql_lines.append(
             "INSERT INTO levels (id, source_id, doc_type, level_index, level_name, "
-            "label, identifier, identifier_sort, name, parent_id, doc_id, sort_order) "
+            "label, identifier, identifier_sort, name, parent_id, doc_id, sort_order, slug) "
             f"VALUES ({_escape_sql('lvl_cgs_chapter_' + chapter_id)}, 'cgs', 'statute', 1, "
             f"'chapter', {_escape_sql(chapter_id_display)}, {_escape_sql(chapter_id)}, "
             f"{_escape_sql(chapter_id_padded)}, {_escape_sql(name)}, "
-            f"{_escape_sql('lvl_cgs_title_' + title_id)}, NULL, {idx});"
+            f"{_escape_sql('lvl_cgs_title_' + title_id)}, NULL, {idx}, {_escape_sql(slug)});"
         )
 
     # Documents + Levels: Sections
@@ -821,17 +839,170 @@ def dump_import_sql(conn, output_path):
             sql_lines.append("\n-- Levels (Sections)")
         sql_lines.append(
             "INSERT INTO levels (id, source_id, doc_type, level_index, level_name, label, "
-            "identifier, identifier_sort, name, parent_id, doc_id, sort_order) "
+            "identifier, identifier_sort, name, parent_id, doc_id, sort_order, slug) "
             f"VALUES ({_escape_sql(level_id)}, 'cgs', 'statute', 2, 'section', "
             f"{_escape_sql(section_label)}, {_escape_sql(normalized_number)}, "
             f"{_escape_sql(normalized_number)}, {_escape_sql(section_title)}, "
-            f"{_escape_sql(parent_id)}, {_escape_sql(doc_id)}, {idx});"
+            f"{_escape_sql(parent_id)}, {_escape_sql(doc_id)}, {idx}, {_escape_sql(slug)});"
         )
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(sql_lines))
 
     print(f"Wrote D1 import SQL to {output_path}")
+
+
+def dump_r2_content(conn, output_root):
+    os.makedirs(output_root, exist_ok=True)
+
+    sections = conn.execute(
+        """
+        SELECT section_id, title_id, section_number, section_title, body,
+               history_short, history_long, citations
+        FROM sections
+        ORDER BY title_id, section_number
+        """
+    ).fetchall()
+
+    total = 0
+    for (
+        section_id,
+        title_id,
+        section_number,
+        section_title,
+        body,
+        history_short,
+        history_long,
+        citations,
+    ) in sections:
+        normalized_number = section_number or re.sub(r"^secs?_", "", section_id)
+        derived_title_id = title_id or normalized_number.split("-", 1)[0]
+        slug = _section_slug(derived_title_id, normalized_number)
+        output_path = os.path.join(output_root, f"{slug}.json")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        blocks = []
+        if body:
+            blocks.append({"type": "body", "content": body})
+        if history_short:
+            blocks.append(
+                {"type": "history_short", "label": "History", "content": history_short}
+            )
+        if history_long:
+            blocks.append(
+                {
+                    "type": "history_long",
+                    "label": "History Notes",
+                    "content": history_long,
+                }
+            )
+        if citations:
+            blocks.append(
+                {"type": "citations", "label": "Citations", "content": citations}
+            )
+
+        content = {
+            "version": 2,
+            "doc_id": f"doc_cgs_{normalized_number}",
+            "doc_type": "statute",
+            "blocks": blocks,
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(content, f, ensure_ascii=True, indent=2)
+
+        total += 1
+        if total % 1000 == 0:
+            print(f"Wrote {total} section files...")
+
+    print(f"Wrote {total} R2 files to {output_root}")
+
+
+def _level_slug(source_slug, level_type, identifier):
+    """Generate slug for a level (title or chapter)."""
+    return f"statutes/{source_slug}/{level_type}/{identifier}"
+
+
+def dump_r2_level_indexes(conn, output_root, source_slug="cgs"):
+    """Write index JSON files for each title and chapter."""
+    os.makedirs(output_root, exist_ok=True)
+    total = 0
+
+    # Title indexes
+    titles = conn.execute(
+        """
+        SELECT title_id, title_id_display, title_name
+        FROM titles
+        ORDER BY title_id_padded
+        """
+    ).fetchall()
+
+    for title_id, title_id_display, title_name in titles:
+        slug = _level_slug(source_slug, "title", title_id)
+        # Get chapters for this title
+        chapters = conn.execute(
+            """
+            SELECT chapter_id, chapter_id_display, chapter_title
+            FROM chapters
+            WHERE title_id_padded = ?
+            ORDER BY chapter_id_padded
+            """,
+            (format_designator_padded(title_id),),
+        ).fetchall()
+
+        title_chapters = [
+            {
+                "identifier": ch_id,
+                "display": ch_display,
+                "heading": _clean_chapter_title(ch_title),
+            }
+            for ch_id, ch_display, ch_title in chapters
+        ]
+
+        content = {
+            "version": 1,
+            "type": "index",
+            "level_type": "title",
+            "title_id": title_id,
+            "title_display": title_id_display,
+            "title_name": title_name,
+            "chapters": title_chapters,
+        }
+        output_path = os.path.join(output_root, f"{slug}.json")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(content, f, ensure_ascii=True, indent=2)
+        total += 1
+
+    # Chapter indexes
+    chapters = conn.execute(
+        """
+        SELECT chapter_id, chapter_id_display, chapter_title, title_id, title_id_display
+        FROM chapters
+        ORDER BY title_id_padded, chapter_id_padded
+        """
+    ).fetchall()
+
+    for chapter_id, chapter_id_display, chapter_title, title_id, title_id_display in chapters:
+        slug = _level_slug(source_slug, "chapter", f"{title_id}/{chapter_id}")
+        content = {
+            "version": 1,
+            "type": "index",
+            "level_type": "chapter",
+            "title_id": title_id,
+            "title_display": title_id_display,
+            "chapter_id": chapter_id,
+            "chapter_display": chapter_id_display,
+            "chapter_name": _clean_chapter_title(chapter_title),
+        }
+        output_path = os.path.join(output_root, f"{slug}.json")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(content, f, ensure_ascii=True, indent=2)
+        total += 1
+
+    print(f"Wrote {total} level index files to R2")
+    return total
 
 
 def main():
@@ -852,6 +1023,11 @@ def main():
         "--import-sql",
         default="data/d1/import.sql",
         help="D1 import SQL output path.",
+    )
+    parser.add_argument(
+        "--r2-root",
+        default="data/r2",
+        help="R2 content output root.",
     )
     args = parser.parse_args()
 
@@ -876,6 +1052,8 @@ def main():
         update_chapter_summaries(conn)
         conn.commit()
         dump_import_sql(conn, args.import_sql)
+        dump_r2_content(conn, args.r2_root)
+        dump_r2_level_indexes(conn, args.r2_root, source_slug="cgs")
     finally:
         conn.close()
 

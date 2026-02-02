@@ -1,7 +1,7 @@
 export function Footer() {
 	return (
 		<footer class="site-footer">
-			<p>FastLaw · Built for clarity in the statutes.</p>
+			<p>Legal research made... fast.</p>
 		</footer>
 	);
 }

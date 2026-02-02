@@ -260,6 +260,88 @@ const compactMatches = (matches: PineconeMatch[]) =>
 		};
 	});
 
+export async function handleQuickSearch(
+	request: Request,
+	env: Env,
+): Promise<Response> {
+	if (request.method === "OPTIONS") {
+		return new Response(null, { status: 204, headers: corsHeaders });
+	}
+
+	try {
+		const body = (await request.json()) as { query?: string; topK?: number };
+		const query = String(body.query ?? "").trim();
+		if (!query) {
+			return new Response(JSON.stringify({ error: "Missing query" }), {
+				status: 400,
+				headers: { ...corsHeaders, "Content-Type": "application/json" },
+			});
+		}
+
+		const apiKey = env.PINECONE_API_KEY;
+		const indexName = env.PINECONE_INDEX_NAME ?? "cgs";
+		const apiVersion = env.PINECONE_API_VERSION ?? "2025-04";
+		const embedEndpoint =
+			env.PINECONE_EMBED_ENDPOINT ?? "https://api.pinecone.io/embed";
+		const embedModel = env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2";
+		const embedDimension = Number(env.PINECONE_EMBED_DIMENSION ?? "2048");
+		const topK = Number(body.topK ?? env.PINECONE_TOP_K ?? "10");
+
+		const host = await getIndexHost(env, indexName, apiKey);
+		const vector = await embedQuery(
+			query,
+			apiKey,
+			apiVersion,
+			embedEndpoint,
+			embedModel,
+			embedDimension,
+		);
+		const matches = await queryIndex(
+			host,
+			apiKey,
+			vector,
+			topK,
+			env.PINECONE_NAMESPACE,
+		);
+
+		// Deduplicate by section_id, keeping highest score per section
+		const seenSections = new Map<string, PineconeMatch>();
+		for (const match of matches) {
+			const sectionId = String(match.metadata?.section_id ?? match.id);
+			const existing = seenSections.get(sectionId);
+			if (!existing || match.score > existing.score) {
+				seenSections.set(sectionId, match);
+			}
+		}
+
+		const results = Array.from(seenSections.values()).map((match) => ({
+			id: match.id,
+			score: match.score,
+			section_id: match.metadata?.section_id ?? null,
+			section_label: match.metadata?.section_label ?? null,
+			section_number: match.metadata?.section_number ?? null,
+			section_title: match.metadata?.section_title ?? null,
+			chapter_id: match.metadata?.chapter_id ?? null,
+			title_id: match.metadata?.title_id ?? null,
+			text: match.metadata?.text ?? null,
+		}));
+
+		return new Response(JSON.stringify({ query, results }), {
+			headers: { ...corsHeaders, "Content-Type": "application/json" },
+		});
+	} catch (error) {
+		return new Response(
+			JSON.stringify({
+				error: error instanceof Error ? error.message : String(error),
+			}),
+			{
+				status: 500,
+				headers: { ...corsHeaders, "Content-Type": "application/json" },
+			},
+		);
+	}
+}
+
 export async function handleSearch(
 	request: Request,
 	env: Env,

@@ -40,10 +40,12 @@ CREATE TABLE IF NOT EXISTS levels (
   name TEXT,
   parent_id TEXT,
   doc_id TEXT,
-  sort_order INTEGER NOT NULL DEFAULT 0
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  slug TEXT                        -- URL path (e.g., 'statutes/cgs/title/1')
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_id, doc_type);
 CREATE INDEX IF NOT EXISTS idx_documents_slug ON documents(slug);
 CREATE INDEX IF NOT EXISTS idx_levels_source ON levels(source_id, doc_type, level_index);
 CREATE INDEX IF NOT EXISTS idx_levels_parent ON levels(parent_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_levels_slug ON levels(slug);

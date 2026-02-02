@@ -92,13 +92,13 @@ Full section content (body, history, annotations) is stored in R2 as JSON. D1 ho
 #### R2 Key Structure
 
 ```
-sections/{jurisdiction}/{section_id}.json
+{slug}.json
 ```
 
 Examples:
 ```
-sections/cgs/21a-279.json
-sections/usc/26-501.json      # Future: federal statutes
+statutes/cgs/section/21a/279.json
+statutes/usc/section/26/501.json      # Future: federal statutes
 ```
 
 #### Content JSON Schema
@@ -107,8 +107,9 @@ Content is stored as an array of labeled blocks. This format is jurisdiction-agn
 
 ```typescript
 interface SectionContent {
-  version: 1;
-  section_id: string;
+  version: 2;
+  doc_id: string;
+  doc_type: "statute" | "regulation" | "case";
   blocks: ContentBlock[];
 }
 
@@ -135,8 +136,9 @@ interface ContentBlock {
 
 ```json
 {
-  "version": 1,
-  "section_id": "21a-279",
+  "version": 2,
+  "doc_id": "doc_cgs_21a-279",
+  "doc_type": "statute",
   "blocks": [
     {
       "type": "body",
@@ -617,100 +619,21 @@ wrangler d1 execute fastlaw --local --file=./db/schema.sql
 The migration splits data between D1 (metadata/index) and R2 (full content):
 
 ```typescript
-// scripts/migrate.ts
-import Database from 'better-sqlite3';
-import { writeFile, mkdir } from 'fs/promises';
-
-const db = new Database('cga_sections.sqlite3');
-
-// 1. Export titles and chapters to D1
-const titles = db.prepare(`
-  SELECT DISTINCT title_id as id, title_name as name
-  FROM sections ORDER BY title_id
-`).all();
-
-const chapters = db.prepare(`
-  SELECT DISTINCT chapter_id as id, title_id, chapter_name as name
-  FROM sections WHERE chapter_id IS NOT NULL ORDER BY chapter_id
-`).all();
-
-// 2. Export sections: metadata to D1, content to R2
-const rows = db.prepare(`
-  SELECT section_id, title_id, chapter_id, section_number,
-         section_label, section_title, body,
-         history_short, history_long, citations,
-         see_also, prev_section_id, next_section_id
-  FROM sections ORDER BY title_id, section_number
-`).all();
-
-const d1Sections = [];
-await mkdir('data/r2/sections/cgs', { recursive: true });
-
-for (const row of rows) {
-  // D1 record (metadata only)
-  d1Sections.push({
-    id: row.section_id,
-    title_id: row.title_id,
-    chapter_id: row.chapter_id,
-    section_number: row.section_number,
-    section_label: row.section_label,
-    heading: row.section_title,
-    r2_key: `sections/cgs/${row.section_id}.json`,
-    see_also: row.see_also,
-    prev_section_id: row.prev_section_id,
-    next_section_id: row.next_section_id,
-  });
-
-  // R2 content (block format)
-  const content = {
-    version: 1,
-    section_id: row.section_id,
-    blocks: [
-      { type: 'body', content: row.body },
-      row.history_short && {
-        type: 'history_short',
-        label: 'History',
-        content: row.history_short
-      },
-      row.history_long && {
-        type: 'history_long',
-        label: 'Full History',
-        content: row.history_long
-      },
-      row.citations && {
-        type: 'citations',
-        label: 'Citations',
-        content: row.citations
-      },
-    ].filter(Boolean),
-  };
-
-  await writeFile(
-    `data/r2/sections/cgs/${row.section_id}.json`,
-    JSON.stringify(content, null, 2)
-  );
-}
-
-// Write D1 import files
-await writeFile('data/d1/titles.json', JSON.stringify(titles));
-await writeFile('data/d1/chapters.json', JSON.stringify(chapters));
-await writeFile('data/d1/sections.json', JSON.stringify(d1Sections));
+// parse_cga_to_sqlite.py now outputs both D1 SQL and R2 JSON.
+// Use that script to generate content aligned to slug-based R2 keys.
 ```
 
 Run migration:
 ```bash
-# Export from SQLite
-npx tsx scripts/migrate.ts
+# Export from SQLite + generate D1 SQL + R2 JSON
+./parse_cga_to_sqlite.py
 
 # Import to D1
 wrangler d1 execute fastlaw --local --file=./db/schema.sql
 npx tsx scripts/ingest-d1.ts
 
 # Upload to R2 (local dev)
-wrangler r2 object put statute-content/sections/cgs/ --local --pipe < data/r2/sections/cgs/*
-
-# Or use the R2 API for bulk upload
-npx tsx scripts/upload-r2.ts
+rclone copy data/r2 r2-local:fastlaw-content
 ```
 
 #### 4. Recreate Routes in SolidStart

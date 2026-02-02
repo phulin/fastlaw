@@ -9,9 +9,14 @@ if (!app) {
 }
 
 const docData = window.__DOC_DATA__;
+const levelData = window.__LEVEL_DATA__;
 
 const AppRoot = () => (
-	<App pathname={window.location.pathname} docData={docData ?? null} />
+	<App
+		pathname={window.location.pathname}
+		docData={docData ?? null}
+		levelData={levelData ?? null}
+	/>
 );
 
 if (window.__SSR__) {

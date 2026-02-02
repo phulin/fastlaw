@@ -277,6 +277,96 @@ export async function getLevelById(
 	return result;
 }
 
+export async function getLevelByDocId(
+	docId: string,
+): Promise<LevelRecord | null> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM levels
+      WHERE doc_id = ?
+      LIMIT 1
+    `,
+		)
+		.bind(docId)
+		.first<LevelRecord>();
+	return result;
+}
+
+export async function getSiblingLevels(
+	parentId: string,
+	sortOrder: number,
+): Promise<{ prev: LevelRecord | null; next: LevelRecord | null }> {
+	const db = getDB();
+	const prev = await db
+		.prepare(
+			`
+      SELECT *
+      FROM levels
+      WHERE parent_id = ? AND sort_order < ?
+      ORDER BY sort_order DESC
+      LIMIT 1
+    `,
+		)
+		.bind(parentId, sortOrder)
+		.first<LevelRecord>();
+	const next = await db
+		.prepare(
+			`
+      SELECT *
+      FROM levels
+      WHERE parent_id = ? AND sort_order > ?
+      ORDER BY sort_order ASC
+      LIMIT 1
+    `,
+		)
+		.bind(parentId, sortOrder)
+		.first<LevelRecord>();
+	return { prev: prev ?? null, next: next ?? null };
+}
+
+export async function getLevelBySlug(
+	slug: string,
+): Promise<LevelRecord | null> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      SELECT *
+      FROM levels
+      WHERE slug = ?
+      LIMIT 1
+    `,
+		)
+		.bind(slug)
+		.first<LevelRecord>();
+	return result;
+}
+
+export async function getAncestorLevels(
+	levelId: string,
+): Promise<LevelRecord[]> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`
+      WITH RECURSIVE ancestors AS (
+        SELECT * FROM levels WHERE id = ?
+        UNION ALL
+        SELECT l.* FROM levels l
+        INNER JOIN ancestors a ON l.id = a.parent_id
+      )
+      SELECT * FROM ancestors
+      ORDER BY level_index ASC
+    `,
+		)
+		.bind(levelId)
+		.all<LevelRecord>();
+	return result.results;
+}
+
 // Documents
 
 export async function getDocumentById(

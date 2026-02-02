@@ -14,7 +14,9 @@
 		"check:fix": "biome check --write .",
 		"typecheck": "tsc --noEmit",
 		"seed:pinecone": "node scripts/seed_pinecone.mjs",
-		"migrate": "npx tsx scripts/migrate.ts"
+		"r2:ingest:local": "tsx scripts/ingest_r2_local.ts",
+		"migrate:local": "wrangler d1 migrations apply fastlaw --local",
+		"migrate:remote": "wrangler d1 migrations apply fastlaw --remote"
 	},
 	"dependencies": {
 		"@google/genai": "^1.38.0",
@@ -29,6 +31,7 @@
 		"@types/better-sqlite3": "^7.6.12",
 		"@types/node": "^22.13.5",
 		"better-sqlite3": "^11.2.0",
+		"tsx": "^4.21.0",
 		"typescript": "^5.7.3",
 		"vite": "^6.1.1",
 		"vite-plugin-solid": "^2.10.0",

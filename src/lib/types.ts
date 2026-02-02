@@ -83,7 +83,19 @@ export interface LevelRecord {
 	parent_id: string | null;
 	doc_id: string | null;
 	sort_order: number;
+	slug: string | null;
 }
+
+export type LevelPageData =
+	| { status: "missing"; slug: string }
+	| {
+			status: "found";
+			slug: string;
+			level: LevelRecord;
+			source: SourceRecord;
+			children: LevelRecord[];
+			ancestors: LevelRecord[];
+	  };
 
 // R2 Content Types
 
