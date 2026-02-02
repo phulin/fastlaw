@@ -7,36 +7,11 @@ import {
 	insertNode,
 	setRootNodeId,
 } from "../versioning";
-import {
-	crawlCGA,
-	getChapterIdFromUrl,
-	getTitleIdFromUrl,
-	isChapterUrl,
-	isTitleUrl,
-} from "./crawler";
-import {
-	extractChapterTitle,
-	extractSectionsFromHtml,
-	formatDesignatorDisplay,
-	formatDesignatorPadded,
-	normalizeDesignator,
-} from "./parser";
+import { crawlCGA } from "./crawler";
+import { formatDesignatorDisplay, formatDesignatorPadded } from "./parser";
 
 const SOURCE_CODE = "cgs";
 const SOURCE_NAME = "Connecticut General Statutes";
-
-interface TitleInfo {
-	titleId: string;
-	titleName: string | null;
-	sourceUrl: string;
-}
-
-interface ChapterInfo {
-	chapterId: string;
-	chapterTitle: string | null;
-	titleId: string;
-	sourceUrl: string;
-}
 
 /**
  * Main CGA ingestion function
@@ -60,72 +35,49 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
-	const versionId = await getOrCreateSourceVersion(env.DB, sourceId, versionDate);
+	const versionId = await getOrCreateSourceVersion(
+		env.DB,
+		sourceId,
+		versionDate,
+	);
 
-	// Crawl CGA website
+	// Crawl CGA website - now returns structured data directly
 	console.log(`Starting CGA crawl from ${startUrl}`);
-	const pages = await crawlCGA(startUrl, env.GODADDY_CA, 2000, 50);
-	console.log(`Crawled ${pages.size} pages`);
+	const result = await crawlCGA(startUrl, env.GODADDY_CA, 2000, 0, 20);
+	console.log(
+		`Crawled ${result.titles.size} titles, ${result.chapters.size} chapters, ${result.sections.length} sections`,
+	);
 
-	// Extract titles and chapters
-	const titles = new Map<string, TitleInfo>();
-	const chapters = new Map<string, ChapterInfo>();
+	const titles = result.titles;
+	const chapters = result.chapters;
+
+	// Convert crawled sections to ParsedSection format with parentStringId
 	const allSections: ParsedSection[] = [];
-
-	// First pass: extract title info from title_*.htm files
-	for (const [url, html] of pages) {
-		if (isTitleUrl(url)) {
-			const rawTitleId = getTitleIdFromUrl(url);
-			if (!rawTitleId) continue;
-
-			const titleId = normalizeDesignator(rawTitleId) || rawTitleId;
-			const titleName = extractTitleName(html);
-
-			titles.set(titleId, {
-				titleId,
-				titleName,
-				sourceUrl: url,
-			});
-		}
-	}
-
-	// Second pass: extract chapters and sections from chap_*.htm files
-	for (const [url, html] of pages) {
-		if (isChapterUrl(url)) {
-			const chapterId = getChapterIdFromUrl(url);
-			if (!chapterId) continue;
-
-			const chapterTitle = extractChapterTitle(html);
-			const sections = extractSectionsFromHtml(html, chapterId, url);
-
-			// Determine title from first section
-			let titleId: string | null = null;
-			if (sections.length > 0) {
-				const firstSection = sections[0];
-				// Extract title from section's string_id pattern
-				const match = firstSection.slug.match(
-					/statutes\/cgs\/section\/([^/]+)/,
-				);
-				if (match) {
-					titleId = match[1];
-				}
-			}
-
-			if (titleId) {
-				chapters.set(chapterId, {
-					chapterId,
-					chapterTitle,
-					titleId,
-					sourceUrl: url,
-				});
-
-				// Update sections with correct parentStringId
-				for (const section of sections) {
-					section.parentStringId = `cgs/chapter/${chapterId}`;
-					allSections.push(section);
-				}
+	for (const section of result.sections) {
+		// Find chapter info to get chapterId
+		let chapterId: string | null = null;
+		for (const [chapId, chapter] of chapters.entries()) {
+			if (chapter.sourceUrl === section.sourceUrl) {
+				chapterId = chapId;
+				break;
 			}
 		}
+
+		allSections.push({
+			stringId: `cgs/section/${section.sectionId}`,
+			levelName: "section",
+			levelIndex: 2,
+			label: section.label,
+			name: null,
+			slug: `statutes/cgs/section/${section.sectionId}`,
+			body: section.body,
+			historyShort: section.historyShort,
+			historyLong: section.historyLong,
+			citations: section.citations,
+			parentStringId: chapterId ? `cgs/chapter/${chapterId}` : null,
+			sortOrder: 0,
+			sourceUrl: section.sourceUrl,
+		});
 	}
 
 	console.log(
@@ -316,36 +268,4 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		nodesCreated,
 		diff,
 	};
-}
-
-/**
- * Extract title name from title_*.htm HTML
- */
-function extractTitleName(html: string): string | null {
-	const titleMatch = html.match(/<title>(.*?)<\/title>/is);
-	if (!titleMatch) return null;
-
-	const titleText = titleMatch[1].replace(/<[^>]+>/g, "");
-	const decoded = decodeHtmlEntities(titleText).trim();
-
-	// Try to extract name from "Title X - Name" format
-	const match = decoded.match(/^Title\s+[\w]+?\s*-\s*(.+)$/i);
-	if (match) {
-		return match[1].trim() || null;
-	}
-
-	return null;
-}
-
-function decodeHtmlEntities(text: string): string {
-	const entities: Record<string, string> = {
-		"&amp;": "&",
-		"&lt;": "<",
-		"&gt;": ">",
-		"&quot;": '"',
-		"&#39;": "'",
-		"&apos;": "'",
-		"&nbsp;": " ",
-	};
-	return text.replace(/&[^;]+;/g, (entity) => entities[entity] || entity);
 }

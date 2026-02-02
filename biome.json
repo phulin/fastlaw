@@ -4,10 +4,10 @@
 		"includes": [
 			"**/*",
 			"!.output",
-			"!.wrangler",
 			"!data",
+			"!**/.wrangler",
 			"!**/dist",
-			"!node_modules"
+			"!**/node_modules"
 		]
 	}
 }

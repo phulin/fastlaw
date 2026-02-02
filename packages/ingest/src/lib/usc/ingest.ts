@@ -60,7 +60,11 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
-	const versionId = await getOrCreateSourceVersion(env.DB, sourceId, versionDate);
+	const versionId = await getOrCreateSourceVersion(
+		env.DB,
+		sourceId,
+		versionDate,
+	);
 
 	// Try to fetch from R2 first (if pre-loaded), otherwise fetch from web
 	console.log("Attempting to fetch USC XML from R2...");

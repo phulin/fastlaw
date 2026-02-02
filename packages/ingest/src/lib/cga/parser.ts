@@ -1,10 +1,8 @@
 import { Parser } from "htmlparser2";
 import type { ParsedSection } from "../../types";
 
-// Regex patterns from Python code
-const SECTION_START_RE = /<span[^>]*class="catchln"[^>]*id="([^"]+)"[^>]*>/gi;
-const SECTION_LABEL_RE = /^(Secs?)\.\s+([^.]+)\.\s*(.*)$/;
-const SECTION_RANGE_RE = /^(.+?)\s+to\s+([^,]+)/i;
+const BASE_URL = "https://www.cga.ct.gov";
+const ALLOWED_PREFIX = "/current/pub/";
 
 type ContentTarget =
 	| "body"
@@ -21,23 +19,73 @@ interface TextParts {
 	see_also: string[];
 }
 
+export interface SectionData {
+	sectionId: string;
+	label: string;
+	parts: TextParts;
+}
+
 /**
- * HTML parser that extracts text content classified by CSS classes.
- * Ports the Python SectionTextExtractor logic to htmlparser2.
+ * Decode common HTML entities
  */
-export class SectionTextExtractor {
-	private parts: TextParts = {
-		body: [],
-		history_short: [],
-		history_long: [],
-		citations: [],
-		see_also: [],
+function decodeHtmlEntities(text: string): string {
+	const entities: Record<string, string> = {
+		"&": "&",
+		"<": "<",
+		">": ">",
+		'"': '"',
+		"'": "'",
+		"&apos;": "'",
+		" ": " ",
 	};
+	return text.replace(/&[^;]+;/g, (entity) => entities[entity] || entity);
+}
+
+/**
+ * Format designator with zero-padding for sorting
+ */
+export function formatDesignatorPadded(
+	value: string | null,
+	width = 4,
+): string | null {
+	if (!value) return value;
+	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
+	if (!match) return value.toLowerCase();
+	const number = match[1].padStart(width, "0");
+	const suffix = match[2].toLowerCase();
+	return `${number}${suffix}`;
+}
+
+/**
+ * Format designator for display (lowercase, no leading zeros)
+ */
+export function formatDesignatorDisplay(value: string | null): string | null {
+	if (!value) return value;
+	return value.toLowerCase();
+}
+
+/**
+ * Single-pass HTML parser that extracts all section data, chapter title, and labels
+ */
+export class ChapterParser {
 	private currentTarget: ContentTarget = "body";
 	private targetStack: Array<{ tag: string; target: ContentTarget }> = [];
 	private inScript = false;
 	private inStyle = false;
 	private inLabel = false;
+	private labelBuffer = "";
+	private currentSectionId: string | null = null;
+
+	// Section tracking
+	private sections: SectionData[] = [];
+	private currentSectionIndex = -1;
+
+	// Chapter title tracking
+	private titleBuffer = "";
+	private foundTitle = false;
+	private metaDescription: string | null = null;
+
+	// Parsing state
 	private ignoreDepth = 0;
 	private stopParsing = false;
 	private inRow = false;
@@ -65,6 +113,7 @@ export class SectionTextExtractor {
 				onopentag: (name, attribs) => this.handleOpenTag(name, attribs),
 				onclosetag: (name) => this.handleCloseTag(name),
 				ontext: (text) => this.handleText(text),
+				oncomment: (comment) => this.handleComment(comment),
 			},
 			{ decodeEntities: true },
 		);
@@ -75,6 +124,18 @@ export class SectionTextExtractor {
 
 	private handleOpenTag(tag: string, attribs: Record<string, string>): void {
 		if (this.stopParsing) return;
+
+		// Track title from <title> tag
+		if (tag === "title" && !this.foundTitle) {
+			this.titleBuffer = "";
+			return;
+		}
+
+		// Track meta description
+		if (tag === "meta" && attribs.name === "description") {
+			this.metaDescription = attribs.content || null;
+		}
+
 		if (this.ignoreDepth > 0) {
 			this.ignoreDepth++;
 			return;
@@ -92,7 +153,8 @@ export class SectionTextExtractor {
 		if (tag === "span") {
 			const classes = this.parseClasses(attribs.class);
 			if (classes.has("catchln")) {
-				this.inLabel = true;
+				// Start new section
+				this.startSection(attribs.id || null);
 				return;
 			}
 		}
@@ -124,17 +186,22 @@ export class SectionTextExtractor {
 
 		if ((tag === "td" || tag === "th") && this.inRow) {
 			if (this.rowCells > 0) {
-				this.parts[this.currentTarget].push(" | ");
+				this.getCurrentParts()[this.currentTarget].push(" | ");
 			}
 			this.rowCells++;
 		}
 
-		if (SectionTextExtractor.BLOCK_TAGS.has(tag)) {
+		if (ChapterParser.BLOCK_TAGS.has(tag)) {
 			this.addNewline(this.currentTarget);
 		}
 	}
 
 	private handleCloseTag(tag: string): void {
+		// Capture title text
+		if (tag === "title" && this.titleBuffer && !this.foundTitle) {
+			this.foundTitle = true;
+		}
+
 		if (this.stopParsing) return;
 		if (this.ignoreDepth > 0) {
 			this.ignoreDepth--;
@@ -152,6 +219,17 @@ export class SectionTextExtractor {
 
 		if (tag === "span" && this.inLabel) {
 			this.inLabel = false;
+			const label = decodeHtmlEntities(this.labelBuffer).trim();
+			if (this.currentSectionId && label) {
+				const section = this.sections.find(
+					(s) => s.sectionId === this.currentSectionId,
+				);
+				if (section) {
+					section.label = label;
+				}
+			}
+			this.currentSectionId = null;
+			this.labelBuffer = "";
 			return;
 		}
 
@@ -171,21 +249,82 @@ export class SectionTextExtractor {
 			}
 		}
 
-		if (SectionTextExtractor.BLOCK_TAGS.has(tag)) {
+		if (ChapterParser.BLOCK_TAGS.has(tag)) {
 			this.addNewline(this.currentTarget);
 		}
 	}
 
 	private handleText(text: string): void {
 		if (this.stopParsing) return;
-		if (this.inScript || this.inStyle || this.ignoreDepth > 0 || this.inLabel) {
+
+		// Capture title text
+		if (this.titleBuffer !== undefined && !this.foundTitle) {
+			this.titleBuffer += text;
 			return;
 		}
-		this.parts[this.currentTarget].push(text);
+
+		if (this.inScript || this.inStyle || this.ignoreDepth > 0) {
+			return;
+		}
+		if (this.inLabel) {
+			this.labelBuffer += text;
+			return;
+		}
+		this.getCurrentParts()[this.currentTarget].push(text);
+	}
+
+	private handleComment(_comment: string): void {
+		// Skip HTML comments
+	}
+
+	private startSection(sectionId: string | null): void {
+		if (!sectionId) return;
+
+		// Finish previous section's label if it was captured during parse
+		if (this.currentSectionId && this.labelBuffer) {
+			const prevSection = this.sections.find(
+				(s) => s.sectionId === this.currentSectionId,
+			);
+			if (prevSection && !prevSection.label) {
+				prevSection.label = decodeHtmlEntities(this.labelBuffer).trim();
+			}
+		}
+
+		this.currentSectionId = sectionId;
+		this.inLabel = true;
+		this.labelBuffer = "";
+		this.currentSectionIndex = this.sections.length;
+
+		this.sections.push({
+			sectionId,
+			label: "",
+			parts: {
+				body: [],
+				history_short: [],
+				history_long: [],
+				citations: [],
+				see_also: [],
+			},
+		});
+	}
+
+	private getCurrentParts(): TextParts {
+		if (this.currentSectionIndex >= 0) {
+			return this.sections[this.currentSectionIndex].parts;
+		}
+		// Return a dummy object if no section is active (shouldn't happen)
+		return {
+			body: [],
+			history_short: [],
+			history_long: [],
+			citations: [],
+			see_also: [],
+		};
 	}
 
 	private addNewline(target: ContentTarget): void {
-		const arr = this.parts[target];
+		const parts = this.getCurrentParts();
+		const arr = parts[target];
 		if (arr.length === 0) {
 			arr.push("\n");
 			return;
@@ -225,51 +364,165 @@ export class SectionTextExtractor {
 		return null;
 	}
 
-	getText(target: ContentTarget): string {
-		const raw = this.parts[target].join("");
-		const lines: string[] = [];
+	getSections(): SectionData[] {
+		return this.sections;
+	}
 
-		for (const line of raw.split("\n")) {
-			const cleaned = line.split(/\s+/).join(" ").trim();
-			lines.push(cleaned);
-		}
-
-		// Normalize blank lines
-		const normalized: string[] = [];
-		let blank = false;
-		for (const line of lines) {
-			if (line === "") {
-				if (!blank) {
-					normalized.push("");
-				}
-				blank = true;
-			} else {
-				normalized.push(line);
-				blank = false;
+	getChapterTitle(): string | null {
+		if (this.titleBuffer) {
+			const title = this.titleBuffer.replace(/<[^>]+>/g, "");
+			const decoded = decodeHtmlEntities(title).trim();
+			if (decoded) {
+				return decoded.replace(/^Chapter\s+[^-]+-\s+/i, "").trim();
 			}
 		}
+		if (this.metaDescription) {
+			return decodeHtmlEntities(this.metaDescription)
+				.replace(/^Chapter\s+[^-]+-\s+/i, "")
+				.trim();
+		}
+		return null;
+	}
 
-		return normalized.join("\n").trim();
+	getSectionLabels(): Map<string, string> {
+		const map = new Map<string, string>();
+		for (const section of this.sections) {
+			map.set(section.sectionId, section.label || section.sectionId);
+		}
+		return map;
 	}
 }
 
 /**
- * Extract section label from HTML
+ * Format text parts into cleaned text
  */
-export function extractLabel(
-	sectionHtml: string,
-	sectionId: string,
-): string | null {
-	const pattern = new RegExp(
-		`<span[^>]*class="catchln"[^>]*id="${escapeRegex(sectionId)}"[^>]*>(.*?)</span>`,
-		"is",
-	);
-	const match = sectionHtml.match(pattern);
-	if (!match) return null;
+export function formatText(parts: string[]): string {
+	const raw = parts.join("");
+	const lines: string[] = [];
 
-	const labelHtml = match[1];
-	const label = labelHtml.replace(/<[^>]+>/g, "");
-	return decodeHtmlEntities(label).trim();
+	for (const line of raw.split("\n")) {
+		const cleaned = line.split(/\s+/).join(" ").trim();
+		lines.push(cleaned);
+	}
+
+	// Normalize blank lines
+	const normalized: string[] = [];
+	let blank = false;
+	for (const line of lines) {
+		if (line === "") {
+			if (!blank) {
+				normalized.push("");
+			}
+			blank = true;
+		} else {
+			normalized.push(line);
+			blank = false;
+		}
+	}
+
+	return normalized.join("\n").trim();
+}
+
+// ============ Link Extraction ============
+
+/**
+ * Extract links from HTML content
+ */
+export function extractLinks(html: string, baseUrl: string): string[] {
+	const links: string[] = [];
+
+	const parser = new Parser(
+		{
+			onopentag: (name, attribs) => {
+				if (name === "a" && attribs.href) {
+					const normalized = normalizeLink(attribs.href, baseUrl);
+					if (normalized) {
+						links.push(normalized);
+					}
+				}
+			},
+		},
+		{ decodeEntities: true },
+	);
+
+	parser.write(html);
+	parser.end();
+
+	return links;
+}
+
+/**
+ * Normalize a link URL, filtering to only CGA statute pages
+ */
+export function normalizeLink(href: string, baseUrl: string): string | null {
+	if (href.startsWith("mailto:") || href.startsWith("javascript:")) {
+		return null;
+	}
+
+	// Resolve relative URL
+	let fullUrl: string;
+	try {
+		fullUrl = new URL(href, baseUrl).toString();
+	} catch {
+		return null;
+	}
+
+	const parsed = new URL(fullUrl);
+
+	// Only allow http/https
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+		return null;
+	}
+
+	// Only allow CGA domain
+	const baseHost = new URL(BASE_URL).hostname;
+	if (parsed.hostname !== baseHost) {
+		return null;
+	}
+
+	// Only allow paths under /current/pub/
+	if (!parsed.pathname.startsWith(ALLOWED_PREFIX)) {
+		return null;
+	}
+
+	// Strip fragment
+	parsed.hash = "";
+	return parsed.toString();
+}
+
+/**
+ * Trim trailing chapter/part headings from body text
+ */
+function trimTrailingHeadings(bodyText: string): string {
+	if (!bodyText) return bodyText;
+
+	const lines = bodyText.split("\n");
+
+	// Remove trailing blank lines
+	while (lines.length > 0 && lines[lines.length - 1] === "") {
+		lines.pop();
+	}
+
+	while (lines.length > 0) {
+		const line = lines[lines.length - 1].trim();
+
+		// Check for various heading patterns
+		if (
+			/^(?:PART|SUBPART|ARTICLE|CHAPTER)\s+[IVXLC\d]+$/.test(line) ||
+			(/^[A-Z][A-Z\s\-,&]+$/.test(line) && line.length <= 80) ||
+			/^\(([A-Z]|[IVXLC]+)\)$/.test(line)
+		) {
+			lines.pop();
+			while (lines.length > 0 && lines[lines.length - 1] === "") {
+				lines.pop();
+			}
+			continue;
+		}
+
+		break;
+	}
+
+	return lines.join("\n").trim();
 }
 
 /**
@@ -285,7 +538,8 @@ export function parseLabel(label: string | null): {
 		return { number: null, title: null, rangeStart: null, rangeEnd: null };
 	}
 
-	const match = label.match(SECTION_LABEL_RE);
+	// Parse "Sec. X." or "Secs. X to Y." format
+	const match = label.match(/^(Secs?)\.\s+([^.]+)\.\s*(.*)$/);
 	if (!match) {
 		return { number: null, title: null, rangeStart: null, rangeEnd: null };
 	}
@@ -296,7 +550,7 @@ export function parseLabel(label: string | null): {
 	let rangeEnd: string | null = null;
 
 	if (match[1].toLowerCase().startsWith("secs")) {
-		const rangeMatch = number.match(SECTION_RANGE_RE);
+		const rangeMatch = number.match(/^(.+?)\s+to\s+([^,]+)$/i);
 		if (rangeMatch) {
 			rangeStart = rangeMatch[1].trim();
 			rangeEnd = rangeMatch[2].trim();
@@ -331,162 +585,6 @@ export function extractTitleId(
 }
 
 /**
- * Extract text blocks from section HTML
- */
-export function extractTextBlocks(sectionHtml: string): {
-	body: string;
-	historyShort: string;
-	historyLong: string;
-	citations: string;
-	seeAlso: string;
-} {
-	const extractor = new SectionTextExtractor();
-	extractor.parse(sectionHtml);
-
-	return {
-		body: trimTrailingHeadings(extractor.getText("body")),
-		historyShort: extractor.getText("history_short"),
-		historyLong: extractor.getText("history_long"),
-		citations: extractor.getText("citations"),
-		seeAlso: extractor.getText("see_also"),
-	};
-}
-
-/**
- * Trim trailing chapter/part headings from body text
- */
-function trimTrailingHeadings(bodyText: string): string {
-	if (!bodyText) return bodyText;
-
-	const lines = bodyText.split("\n");
-
-	// Remove trailing blank lines
-	while (lines.length > 0 && lines[lines.length - 1] === "") {
-		lines.pop();
-	}
-
-	const headingRe = /^(?:PART|SUBPART|ARTICLE|CHAPTER)\s+[IVXLC\d]+$/;
-	const capsRe = /^[A-Z][A-Z\s\-,&]+$/;
-	const parenHeadingRe = /^\(([A-Z]|[IVXLC]+)\)$/;
-
-	while (lines.length > 0) {
-		const line = lines[lines.length - 1].trim();
-
-		if (headingRe.test(line)) {
-			lines.pop();
-			while (lines.length > 0 && lines[lines.length - 1] === "") {
-				lines.pop();
-			}
-			continue;
-		}
-
-		if (capsRe.test(line) && line.length <= 80) {
-			lines.pop();
-			while (lines.length > 0 && lines[lines.length - 1] === "") {
-				lines.pop();
-			}
-			continue;
-		}
-
-		if (parenHeadingRe.test(line)) {
-			lines.pop();
-			while (lines.length > 0 && lines[lines.length - 1] === "") {
-				lines.pop();
-			}
-			continue;
-		}
-
-		break;
-	}
-
-	return lines.join("\n").trim();
-}
-
-/**
- * Extract all sections from a chapter HTML file
- */
-export function extractSectionsFromHtml(
-	html: string,
-	chapterId: string,
-	sourceUrl: string,
-): ParsedSection[] {
-	const sections: ParsedSection[] = [];
-	const matches: Array<{ index: number; id: string }> = [];
-
-	// Reset regex
-	SECTION_START_RE.lastIndex = 0;
-	for (
-		let match = SECTION_START_RE.exec(html);
-		match !== null;
-		match = SECTION_START_RE.exec(html)
-	) {
-		matches.push({ index: match.index, id: match[1] });
-	}
-
-	for (let i = 0; i < matches.length; i++) {
-		const { index: start, id: sectionId } = matches[i];
-		const end = i + 1 < matches.length ? matches[i + 1].index : html.length;
-		const sectionHtml = html.slice(start, end);
-
-		const label = extractLabel(sectionHtml, sectionId) || sectionId;
-		const { number, title, rangeStart } = parseLabel(label);
-		const textBlocks = extractTextBlocks(sectionHtml);
-		const titleId = extractTitleId(sectionId, number, rangeStart);
-
-		const normalizedNumber = number || sectionId.replace(/secs?_/, "");
-		const derivedTitleId = titleId || normalizedNumber.split("-")[0];
-
-		sections.push({
-			stringId: `cgs/section/${normalizedNumber}`,
-			levelName: "section",
-			levelIndex: 2,
-			label: label,
-			name: title,
-			slug: `statutes/cgs/section/${derivedTitleId}/${normalizedNumber.replace(`${derivedTitleId}-`, "")}`,
-			body: textBlocks.body,
-			historyShort: textBlocks.historyShort || null,
-			historyLong: textBlocks.historyLong || null,
-			citations: textBlocks.citations || null,
-			parentStringId: `cgs/chapter/${chapterId}`,
-			sortOrder: i,
-			sourceUrl,
-		});
-	}
-
-	return sections;
-}
-
-/**
- * Extract chapter title from HTML
- */
-export function extractChapterTitle(html: string): string | null {
-	// Try <title> tag first
-	const titleMatch = html.match(/<title>(.*?)<\/title>/is);
-	if (titleMatch) {
-		const title = titleMatch[1].replace(/<[^>]+>/g, "");
-		const decoded = decodeHtmlEntities(title).trim();
-		if (decoded) return cleanChapterTitle(decoded);
-	}
-
-	// Try meta description
-	const metaMatch = html.match(
-		/<meta[^>]+name="Description"[^>]+content="([^"]+)"/i,
-	);
-	if (metaMatch) {
-		return cleanChapterTitle(decodeHtmlEntities(metaMatch[1]).trim());
-	}
-
-	return null;
-}
-
-/**
- * Clean chapter title (remove "Chapter X - " prefix)
- */
-function cleanChapterTitle(title: string): string {
-	return title.replace(/^Chapter\s+[^-]+-\s+/i, "").trim();
-}
-
-/**
  * Normalize designator (strip leading zeros, lowercase)
  */
 export function normalizeDesignator(value: string | null): string | null {
@@ -499,46 +597,64 @@ export function normalizeDesignator(value: string | null): string | null {
 }
 
 /**
- * Format designator for display (proper case)
+ * Extract all sections from a chapter HTML file - single pass parsing
  */
-export function formatDesignatorDisplay(value: string | null): string | null {
-	if (!value) return value;
-	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
-	if (!match) return value.toUpperCase();
-	const num = String(Number.parseInt(match[1], 10));
-	const suffix = match[2].toUpperCase();
-	return `${num}${suffix}`;
+export function extractSectionsFromHtml(
+	html: string,
+	chapterId: string,
+	sourceUrl: string,
+): ParsedSection[] {
+	const parser = new ChapterParser();
+	parser.parse(html);
+
+	const sections = parser.getSections();
+	const labelMap = parser.getSectionLabels();
+	const _chapterTitle = parser.getChapterTitle();
+
+	const results: ParsedSection[] = [];
+
+	for (let i = 0; i < sections.length; i++) {
+		const section = sections[i];
+		const label = labelMap.get(section.sectionId) || section.sectionId;
+		const { number, title, rangeStart } = parseLabel(label);
+
+		const textBlocks = {
+			body: trimTrailingHeadings(formatText(section.parts.body)),
+			historyShort: formatText(section.parts.history_short) || null,
+			historyLong: formatText(section.parts.history_long) || null,
+			citations: formatText(section.parts.citations) || null,
+			seeAlso: formatText(section.parts.see_also) || null,
+		};
+
+		const titleId = extractTitleId(section.sectionId, number, rangeStart);
+		const normalizedNumber = number || section.sectionId.replace(/secs?_/, "");
+		const derivedTitleId = titleId || normalizedNumber.split("-")[0];
+
+		results.push({
+			stringId: `cgs/section/${normalizedNumber}`,
+			levelName: "section",
+			levelIndex: 2,
+			label: label,
+			name: title,
+			slug: `statutes/cgs/section/${derivedTitleId}/${normalizedNumber.replace(`${derivedTitleId}-`, "")}`,
+			body: textBlocks.body,
+			historyShort: textBlocks.historyShort,
+			historyLong: textBlocks.historyLong,
+			citations: textBlocks.citations,
+			parentStringId: `cgs/chapter/${chapterId}`,
+			sortOrder: i,
+			sourceUrl,
+		});
+	}
+
+	return results;
 }
 
 /**
- * Format designator padded for sorting
+ * Extract chapter title from HTML - uses the single-pass parser
  */
-export function formatDesignatorPadded(
-	value: string | null,
-	width = 4,
-): string | null {
-	if (!value) return value;
-	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
-	if (!match) return value.toLowerCase();
-	const num = match[1].padStart(width, "0");
-	const suffix = match[2].toLowerCase();
-	return `${num}${suffix}`;
-}
-
-// Utility functions
-function escapeRegex(str: string): string {
-	return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function decodeHtmlEntities(text: string): string {
-	const entities: Record<string, string> = {
-		"&amp;": "&",
-		"&lt;": "<",
-		"&gt;": ">",
-		"&quot;": '"',
-		"&#39;": "'",
-		"&apos;": "'",
-		"&nbsp;": " ",
-	};
-	return text.replace(/&[^;]+;/g, (entity) => entities[entity] || entity);
+export function extractChapterTitle(html: string): string | null {
+	const parser = new ChapterParser();
+	parser.parse(html);
+	return parser.getChapterTitle();
 }
