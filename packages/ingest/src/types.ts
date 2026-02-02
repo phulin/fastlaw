@@ -1,6 +1,7 @@
 export interface Env {
 	DB: D1Database;
 	STORAGE: R2Bucket;
+	GODADDY_CA?: Fetcher; // Only available in deployed workers
 	CGA_BASE_URL: string;
 	CGA_START_PATH: string;
 	USC_DOWNLOAD_BASE: string;

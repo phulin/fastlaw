@@ -34,15 +34,28 @@ export async function getOrCreateSource(
 }
 
 /**
- * Create a new source version
+ * Get or create a source version for a given date
  */
-export async function createSourceVersion(
+export async function getOrCreateSourceVersion(
 	db: D1Database,
 	sourceId: number,
 	versionDate: string,
 ): Promise<number> {
 	const canonicalName = `${await getSourceCode(db, sourceId)}-${versionDate}`;
 
+	// Check if version already exists
+	const existing = await db
+		.prepare(
+			"SELECT id FROM source_versions WHERE source_id = ? AND canonical_name = ?",
+		)
+		.bind(sourceId, canonicalName)
+		.first<{ id: number }>();
+
+	if (existing) {
+		return existing.id;
+	}
+
+	// Create new version
 	const result = await db
 		.prepare(`
 			INSERT INTO source_versions (source_id, canonical_name, version_date)

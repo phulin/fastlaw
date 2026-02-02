@@ -13,6 +13,7 @@ __metadata:
     fast-xml-parser: "npm:^4.5.1"
     hono: "npm:^4.6.4"
     htmlparser2: "npm:^9.1.0"
+    wrangler: "npm:^4.61.1"
   languageName: unknown
   linkType: soft
 

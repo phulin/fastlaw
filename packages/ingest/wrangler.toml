@@ -13,6 +13,10 @@ migrations_dir = "../../db/migrations"
 binding = "STORAGE"
 bucket_name = "fastlaw-content"
 
+[[certificate_authorities]]
+binding = "GODADDY_CA"
+id = "71b82770-388e-4213-a3a3-8ebb5f2570a7"
+
 [vars]
 # Source URLs
 CGA_BASE_URL = "https://www.cga.ct.gov"

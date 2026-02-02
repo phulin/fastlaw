@@ -1,4 +1,5 @@
 import { Parser } from "htmlparser2";
+import type { Env } from "../../types";
 
 const BASE_URL = "https://www.cga.ct.gov";
 const ALLOWED_PREFIX = "/current/pub/";
@@ -74,9 +75,12 @@ function normalizeLink(href: string, baseUrl: string): string | null {
  *
  * Note: This is designed to work within CF Worker constraints.
  * For large crawls, consider breaking into smaller batches.
+ *
+ * @param fetcher - CF Workers CA fetcher binding (deployed) or undefined (local dev with NODE_EXTRA_CA_CERTS)
  */
 export async function crawlCGA(
 	startUrl: string,
+	fetcher: Env["GODADDY_CA"],
 	maxPages = 1000,
 	delayMs = 100,
 ): Promise<Map<string, string>> {
@@ -84,13 +88,18 @@ export async function crawlCGA(
 	const queue: string[] = [startUrl];
 	const results = new Map<string, string>();
 
+	// Use fetcher.fetch if available (deployed worker), otherwise regular fetch (local dev)
+	const doFetch = fetcher
+		? (url: string, init?: RequestInit) => fetcher.fetch(url, init)
+		: fetch;
+
 	while (queue.length > 0 && results.size < maxPages) {
 		const url = queue.shift();
 		if (!url || seen.has(url)) continue;
 		seen.add(url);
 
 		try {
-			const response = await fetch(url, {
+			const response = await doFetch(url, {
 				headers: {
 					"User-Agent": "fastlaw-ingest/1.0",
 				},

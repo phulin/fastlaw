@@ -4,7 +4,7 @@
 	"version": "0.1.0",
 	"type": "module",
 	"scripts": {
-		"dev": "wrangler dev",
+		"dev": "NODE_EXTRA_CA_CERTS=certs/godaddy-g2.pem wrangler dev --persist-to ../web/.wrangler/state",
 		"build": "wrangler deploy --dry-run --outdir=dist",
 		"deploy": "wrangler deploy",
 		"typecheck": "tsc --noEmit"
@@ -15,6 +15,7 @@
 		"htmlparser2": "^9.1.0"
 	},
 	"devDependencies": {
-		"@cloudflare/workers-types": "^4.20250129.0"
+		"@cloudflare/workers-types": "^4.20250129.0",
+		"wrangler": "^4.61.1"
 	}
 }

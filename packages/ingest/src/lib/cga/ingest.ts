@@ -1,9 +1,9 @@
 import type { Env, IngestionResult, ParsedSection } from "../../types";
 import {
 	computeDiff,
-	createSourceVersion,
 	getLatestVersion,
 	getOrCreateSource,
+	getOrCreateSourceVersion,
 	insertNode,
 	setRootNodeId,
 } from "../versioning";
@@ -60,11 +60,11 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
-	const versionId = await createSourceVersion(env.DB, sourceId, versionDate);
+	const versionId = await getOrCreateSourceVersion(env.DB, sourceId, versionDate);
 
 	// Crawl CGA website
 	console.log(`Starting CGA crawl from ${startUrl}`);
-	const pages = await crawlCGA(startUrl, 2000, 50);
+	const pages = await crawlCGA(startUrl, env.GODADDY_CA, 2000, 50);
 	console.log(`Crawled ${pages.size} pages`);
 
 	// Extract titles and chapters
