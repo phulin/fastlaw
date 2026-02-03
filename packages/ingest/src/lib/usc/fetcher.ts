@@ -6,6 +6,7 @@ import {
 	ZipReader,
 } from "@zip.js/zip.js";
 import { Parser } from "htmlparser2";
+import type { ObjectStore } from "../../types";
 
 /**
  * USC XML fetcher
@@ -69,7 +70,7 @@ function getFilenameFromUrl(url: string): string {
  */
 export async function fetchUSCTitle(
 	url: string,
-	storage?: R2Bucket,
+	storage?: ObjectStore,
 ): Promise<string | null> {
 	const filename = getFilenameFromUrl(url);
 	const r2Key = `${USC_R2_PREFIX}${filename}`;
@@ -149,7 +150,7 @@ export function getTitleNumFromUrl(url: string): string | null {
 export async function fetchAllUSCTitles(
 	maxTitles = 54,
 	delayMs = 100,
-	storage?: R2Bucket,
+	storage?: ObjectStore,
 ): Promise<Map<string, string>> {
 	const results = new Map<string, string>();
 	const urls = (await getUSCTitleUrls()).slice(0, maxTitles);
@@ -264,7 +265,7 @@ function isFileEntry(entry: Entry): entry is FileEntry {
  * This is more reliable for production as it avoids external fetch issues
  */
 export async function fetchUSCFromR2(
-	storage: R2Bucket,
+	storage: ObjectStore,
 	prefix = "usc_raw/",
 ): Promise<Map<string, string>> {
 	const results = new Map<string, string>();

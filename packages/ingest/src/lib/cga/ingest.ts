@@ -1,4 +1,4 @@
-import type { Env, IngestionResult } from "../../types";
+import type { IngestContext, IngestionResult } from "../../types";
 import { BlobStore } from "../packfile";
 import {
 	computeDiff,
@@ -32,14 +32,14 @@ async function withContext<T>(
 /**
  * Main CGA ingestion function
  */
-export async function ingestCGA(env: Env): Promise<IngestionResult> {
+export async function ingestCGA(env: IngestContext): Promise<IngestionResult> {
 	const startUrl = `${env.CGA_BASE_URL}${env.CGA_START_PATH}`;
 	const accessedAt = new Date().toISOString();
 
 	// Get or create source
 	const sourceId = await withContext("getOrCreateSource", () =>
 		getOrCreateSource(
-			env.DB,
+			env.db,
 			SOURCE_CODE,
 			SOURCE_NAME,
 			"state",
@@ -50,13 +50,13 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Get latest version for diff comparison
 	const previousVersion = await withContext("getLatestVersion", () =>
-		getLatestVersion(env.DB, sourceId),
+		getLatestVersion(env.db, sourceId),
 	);
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
 	const versionId = await withContext("getOrCreateSourceVersion", () =>
-		getOrCreateSourceVersion(env.DB, sourceId, versionDate),
+		getOrCreateSourceVersion(env.db, sourceId, versionDate),
 	);
 
 	// Crawl CGA website - now returns structured data directly
@@ -87,13 +87,13 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	const nodeIdMap = new Map<string, number>();
 
 	// Initialize blob store for this source
-	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
+	const blobStore = new BlobStore(env.db, env.storage, sourceId, SOURCE_CODE);
 
 	// Insert root node for source
 	const rootStringId = `cgs/root`;
 	const rootNodeId = await withContext("insertNode(root)", () =>
 		insertNode(
-			env.DB,
+			env.db,
 			versionId,
 			rootStringId,
 			null,
@@ -136,7 +136,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 		const nodeId = await withContext(`insertNode(title:${stringId})`, () =>
 			insertNode(
-				env.DB,
+				env.db,
 				versionId,
 				stringId,
 				rootNodeId,
@@ -195,7 +195,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			`insertNode(${chapter.type}:${stringId})`,
 			() =>
 				insertNode(
-					env.DB,
+					env.db,
 					versionId,
 					stringId,
 					parentId,
@@ -310,7 +310,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	// Batch insert all section nodes
 	console.log(`Inserting ${sectionNodes.length} section nodes in batches...`);
 	const sectionNodeIds = await withContext("insertNodesBatched", () =>
-		insertNodesBatched(env.DB, sectionNodes),
+		insertNodesBatched(env.db, sectionNodes),
 	);
 	for (const [stringId, nodeId] of sectionNodeIds) {
 		nodeIdMap.set(stringId, nodeId);
@@ -323,7 +323,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Set root node ID
 	await withContext("setRootNodeId", () =>
-		setRootNodeId(env.DB, versionId, rootNodeId),
+		setRootNodeId(env.db, versionId, rootNodeId),
 	);
 	console.log("Set root note ID.");
 
@@ -332,7 +332,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	if (previousVersion) {
 		console.log("Computing diff...");
 		diff = await withContext("computeDiff", () =>
-			computeDiff(env.DB, previousVersion.id, versionId),
+			computeDiff(env.db, previousVersion.id, versionId),
 		);
 		console.log(
 			`Diff: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.modified.length} modified`,

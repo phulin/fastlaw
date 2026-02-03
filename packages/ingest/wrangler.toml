@@ -3,6 +3,23 @@ compatibility_date = "2026-01-20"
 main = "src/worker.ts"
 compatibility_flags = ["nodejs_compat"]
 
+[[containers]]
+class_name = "IngestContainer"
+image = "./Dockerfile"
+max_instances = 10
+
+[[durable_objects.bindings]]
+name = "INGEST_CONTAINER"
+class_name = "IngestContainer"
+
+[[durable_objects.bindings]]
+name = "PROGRESS_DO"
+class_name = "ProgressDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["IngestContainer", "ProgressDO"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "fastlaw"
@@ -18,6 +35,15 @@ bucket_name = "fastlaw-content"
 CGA_BASE_URL = "https://www.cga.ct.gov"
 CGA_START_PATH = "/current/pub/titles.htm"
 USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
+INGEST_WORKER_URL = "https://fastlaw-ingest.your-domain.example"
+CF_ACCOUNT_ID = "YOUR_ACCOUNT_ID"
+D1_DATABASE_ID = "dc9efc6c-abb6-4790-9546-c3565022c186"
+R2_BUCKET_NAME = "fastlaw-content"
+
+# Secrets (set via `wrangler secret put`):
+# D1_API_TOKEN
+# R2_ACCESS_KEY_ID
+# R2_SECRET_ACCESS_KEY
 
 [observability]
 enabled = true

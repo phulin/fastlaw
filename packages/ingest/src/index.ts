@@ -51,11 +51,19 @@ export {
 } from "./lib/versioning";
 // Types
 export type {
+	ContainerEnv,
+	DatabaseClient,
 	DiffResult,
-	Env,
+	IngestContext,
 	IngestionResult,
+	IngestJob,
 	Node,
 	NodeMeta,
+	ObjectStore,
+	ObjectStoreBody,
+	ObjectStoreGetOptions,
+	ObjectStoreListResult,
 	Source,
 	SourceVersion,
+	WorkerEnv,
 } from "./types";

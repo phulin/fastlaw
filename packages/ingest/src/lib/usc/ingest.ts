@@ -1,4 +1,4 @@
-import type { Env, IngestionResult } from "../../types";
+import type { IngestContext, IngestionResult } from "../../types";
 import { BlobStore } from "../packfile";
 import {
 	computeDiff,
@@ -49,7 +49,7 @@ interface USCSectionData {
 /**
  * Main USC ingestion function
  */
-export async function ingestUSC(env: Env): Promise<IngestionResult> {
+export async function ingestUSC(env: IngestContext): Promise<IngestionResult> {
 	const accessedAt = new Date().toISOString();
 	const titleUrls = await getUSCTitleUrls();
 	const titleUrlByNum = new Map<string, string>();
@@ -63,7 +63,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 	// Get or create source
 	const sourceId = await getOrCreateSource(
-		env.DB,
+		env.db,
 		SOURCE_CODE,
 		SOURCE_NAME,
 		"federal",
@@ -72,24 +72,24 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	);
 
 	// Get latest version for diff comparison
-	const previousVersion = await getLatestVersion(env.DB, sourceId);
+	const previousVersion = await getLatestVersion(env.db, sourceId);
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
 	const versionId = await getOrCreateSourceVersion(
-		env.DB,
+		env.db,
 		sourceId,
 		versionDate,
 	);
 
 	// Try to fetch from R2 first (if pre-loaded), otherwise fetch from web
 	console.log("Attempting to fetch USC XML from R2...");
-	let xmlByTitle = await fetchUSCFromR2(env.STORAGE, "usc_raw/");
+	let xmlByTitle = await fetchUSCFromR2(env.storage, "usc_raw/");
 
 	if (xmlByTitle.size === 0) {
 		console.log("No R2 data found, fetching from House OLRC...");
 		// Caches to R2 at sources/usc/ for future runs
-		xmlByTitle = await fetchAllUSCTitles(100, 200, env.STORAGE);
+		xmlByTitle = await fetchAllUSCTitles(100, 200, env.storage);
 	}
 
 	console.log(`Processing ${xmlByTitle.size} USC titles`);
@@ -147,12 +147,12 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	const nodeIdMap = new Map<string, number>();
 
 	// Initialize blob store for this source
-	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
+	const blobStore = new BlobStore(env.db, env.storage, sourceId, SOURCE_CODE);
 
 	// Insert root node
 	const rootStringId = "usc/root";
 	const rootNodeId = await insertNode(
-		env.DB,
+		env.db,
 		versionId,
 		rootStringId,
 		null,
@@ -195,7 +195,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		}),
 	);
 
-	const titleIdMap = await insertNodesBatched(env.DB, titleNodes);
+	const titleIdMap = await insertNodesBatched(env.db, titleNodes);
 	for (const [stringId, nodeId] of titleIdMap) {
 		nodeIdMap.set(stringId, nodeId);
 	}
@@ -270,7 +270,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			};
 		});
 
-		const levelIdMap = await insertNodesBatched(env.DB, levelNodes);
+		const levelIdMap = await insertNodesBatched(env.db, levelNodes);
 		for (const [stringId, nodeId] of levelIdMap) {
 			nodeIdMap.set(stringId, nodeId);
 		}
@@ -394,7 +394,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 	// Batch insert all section nodes
 	console.log(`Batch inserting ${sectionNodes.length} section nodes...`);
-	const sectionIdMap = await insertNodesBatched(env.DB, sectionNodes);
+	const sectionIdMap = await insertNodesBatched(env.db, sectionNodes);
 	for (const [stringId, nodeId] of sectionIdMap) {
 		nodeIdMap.set(stringId, nodeId);
 	}
@@ -404,12 +404,12 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	await blobStore.flush();
 
 	// Set root node ID
-	await setRootNodeId(env.DB, versionId, rootNodeId);
+	await setRootNodeId(env.db, versionId, rootNodeId);
 
 	// Compute diff if there was a previous version
 	let diff = null;
 	if (previousVersion) {
-		diff = await computeDiff(env.DB, previousVersion.id, versionId);
+		diff = await computeDiff(env.db, previousVersion.id, versionId);
 		console.log(
 			`Diff: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.modified.length} modified`,
 		);

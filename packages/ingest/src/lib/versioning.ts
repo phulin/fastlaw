@@ -1,4 +1,4 @@
-import type { DiffResult, Node, SourceVersion } from "../types";
+import type { DatabaseClient, DiffResult, Node, SourceVersion } from "../types";
 
 export type NodeInsert = Omit<Node, "id">;
 
@@ -6,7 +6,7 @@ export type NodeInsert = Omit<Node, "id">;
  * Get or create a source by its code
  */
 export async function getOrCreateSource(
-	db: D1Database,
+	db: DatabaseClient,
 	code: string,
 	name: string,
 	jurisdiction: string,
@@ -39,7 +39,7 @@ export async function getOrCreateSource(
  * Get or create a source version for a given date
  */
 export async function getOrCreateSourceVersion(
-	db: D1Database,
+	db: DatabaseClient,
 	sourceId: number,
 	versionDate: string,
 ): Promise<number> {
@@ -73,7 +73,7 @@ export async function getOrCreateSourceVersion(
  * Get the source code by ID
  */
 async function getSourceCode(
-	db: D1Database,
+	db: DatabaseClient,
 	sourceId: number,
 ): Promise<string> {
 	const result = await db
@@ -88,7 +88,7 @@ async function getSourceCode(
  * Get the latest version for a source
  */
 export async function getLatestVersion(
-	db: D1Database,
+	db: DatabaseClient,
 	sourceId: number,
 ): Promise<SourceVersion | null> {
 	const result = await db
@@ -108,7 +108,7 @@ export async function getLatestVersion(
  * Update the root_node_id for a source version
  */
 export async function setRootNodeId(
-	db: D1Database,
+	db: DatabaseClient,
 	versionId: number,
 	rootNodeId: number,
 ): Promise<void> {
@@ -122,7 +122,7 @@ export async function setRootNodeId(
  * Compute diff between two versions using string_id
  */
 export async function computeDiff(
-	db: D1Database,
+	db: DatabaseClient,
 	oldVersionId: number,
 	newVersionId: number,
 ): Promise<DiffResult> {
@@ -177,7 +177,7 @@ export async function computeDiff(
  * Insert a node into the database
  */
 export async function insertNode(
-	db: D1Database,
+	db: DatabaseClient,
 	versionId: number,
 	stringId: string,
 	parentId: number | null,
@@ -224,7 +224,7 @@ export async function insertNode(
  * Get a node ID by its string_id within a version
  */
 export async function getNodeIdByStringId(
-	db: D1Database,
+	db: DatabaseClient,
 	versionId: number,
 	stringId: string,
 ): Promise<number | null> {
@@ -245,7 +245,7 @@ const BATCH_SIZE = 50;
  * Returns a map from stringId to nodeId.
  */
 export async function insertNodesBatched(
-	db: D1Database,
+	db: DatabaseClient,
 	nodes: NodeInsert[],
 ): Promise<Map<string, number>> {
 	const nodeIdMap = new Map<string, number>();

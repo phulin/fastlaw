@@ -1,3 +1,4 @@
+import type { DatabaseClient, ObjectStore } from "../../types";
 import { hash64, hash64ToHex, hexToHash64, verifyHashPrefix } from "./hash";
 import { extractBlob, PackfileWriter } from "./writer";
 
@@ -19,8 +20,8 @@ const BATCH_SIZE = 50;
  *   await store.flush(); // Upload any pending packfiles
  */
 export class BlobStore {
-	private db: D1Database;
-	private storage: R2Bucket;
+	private db: DatabaseClient;
+	private storage: ObjectStore;
 	private sourceId: number;
 	private writer: PackfileWriter;
 	private hashCache: Set<string> = new Set(); // Track hashes we've seen this session (hex strings)
@@ -28,8 +29,8 @@ export class BlobStore {
 	private dbHashCachePromise: Promise<Map<string, BlobLocation>> | null = null;
 
 	constructor(
-		db: D1Database,
-		storage: R2Bucket,
+		db: DatabaseClient,
+		storage: ObjectStore,
 		sourceId: number,
 		sourceCode: string,
 	) {
@@ -207,11 +208,11 @@ export class BlobStore {
  * Read a blob from storage given its location
  */
 export async function readBlob(
-	storage: R2Bucket,
+	storage: ObjectStore,
 	location: BlobLocation,
 	expectedHashHex: string,
 ): Promise<Uint8Array> {
-	let packfile: R2ObjectBody | null = null;
+	let packfile: Awaited<ReturnType<ObjectStore["get"]>> | null = null;
 	try {
 		packfile = await storage.get(location.packfileKey, {
 			range: {
@@ -244,7 +245,7 @@ export async function readBlob(
  * Read a blob and parse as JSON
  */
 export async function readBlobJson<T>(
-	storage: R2Bucket,
+	storage: ObjectStore,
 	location: BlobLocation,
 	expectedHashHex: string,
 ): Promise<T> {
