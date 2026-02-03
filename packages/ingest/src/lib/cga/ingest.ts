@@ -11,6 +11,7 @@ import {
 	setRootNodeId,
 } from "../versioning";
 import { crawlCGA } from "./crawler";
+import { extractSectionCrossReferences } from "./cross-references";
 import { formatDesignatorPadded, normalizeDesignator } from "./parser";
 
 const SOURCE_CODE = "cgs";
@@ -236,6 +237,10 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			? nodeIdMap.get(section.parentStringId) || null
 			: null;
 
+		const crossReferences = extractSectionCrossReferences(
+			[section.body, section.seeAlso].filter(Boolean).join("\n"),
+		);
+
 		// Create content JSON
 		const content = {
 			blocks: [
@@ -268,6 +273,9 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 						]
 					: []),
 			],
+			...(crossReferences.length > 0
+				? { metadata: { cross_references: crossReferences } }
+				: {}),
 		};
 
 		// Store in packfile

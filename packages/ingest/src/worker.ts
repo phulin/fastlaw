@@ -27,6 +27,32 @@ app.get("/api/versions", async (c) => {
 	return c.json({ versions: results });
 });
 
+// List R2 objects
+app.get("/api/storage/objects", async (c) => {
+	const prefix = c.req.query("prefix");
+	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
+	const cursor = c.req.query("cursor");
+
+	const result = await c.env.STORAGE.list({
+		prefix,
+		limit,
+		cursor,
+	});
+
+	const cursorValue = "cursor" in result ? result.cursor : null;
+
+	return c.json({
+		objects: result.objects.map((obj) => ({
+			key: obj.key,
+			size: obj.size,
+			etag: obj.etag,
+			uploaded: obj.uploaded,
+		})),
+		truncated: result.truncated,
+		cursor: cursorValue,
+	});
+});
+
 // Get diff between two versions
 app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
 	const oldVersionId = Number.parseInt(c.req.param("oldVersionId"), 10);
@@ -60,6 +86,30 @@ app.post("/api/ingest/usc", async (c) => {
 		console.error("USC ingest failed:", error);
 		return c.json({ error: "USC ingest failed" }, 500);
 	}
+});
+
+// Danger: delete all R2 objects and clear D1 tables
+app.post("/api/admin/reset", async (c) => {
+	let cursor: string | undefined;
+	do {
+		const listResult = await c.env.STORAGE.list({
+			limit: 1000,
+			cursor,
+		});
+		if (listResult.objects.length > 0) {
+			await c.env.STORAGE.delete(listResult.objects.map((obj) => obj.key));
+		}
+		cursor = "cursor" in listResult ? listResult.cursor : undefined;
+	} while (cursor);
+
+	await c.env.DB.batch([
+		c.env.DB.prepare("DELETE FROM nodes"),
+		c.env.DB.prepare("DELETE FROM blobs"),
+		c.env.DB.prepare("DELETE FROM source_versions"),
+		c.env.DB.prepare("DELETE FROM sources"),
+	]);
+
+	return c.json({ status: "ok" });
 });
 
 export default app;

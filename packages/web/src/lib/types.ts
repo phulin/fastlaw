@@ -72,6 +72,13 @@ export interface ContentBlock {
 	content: string;
 }
 
+export interface SectionCrossReference {
+	section: string;
+	offset: number;
+	length: number;
+	link: string;
+}
+
 // Generic node content stored in R2 blobs
 export interface NodeContent {
 	version: 1 | 2;
@@ -87,6 +94,7 @@ export interface NodeContent {
 		decision_date?: string;
 		agency?: string;
 		source?: string;
+		cross_references?: SectionCrossReference[];
 	};
 }
 

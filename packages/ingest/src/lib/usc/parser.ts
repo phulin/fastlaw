@@ -1,8 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
 
-const _USLM_NS = "http://xml.house.gov/schemas/uslm/1.0";
-const _DC_NS = "http://purl.org/dc/elements/1.1/";
-
 // fast-xml-parser configuration for handling namespaces
 const parserOptions = {
 	ignoreAttributes: false,
@@ -21,10 +18,108 @@ const parserOptions = {
 	},
 };
 
+/**
+ * Canonical organizational level hierarchy for USC.
+ * These are ordered from top (title) to bottom (before section).
+ * Each level has a fixed level_index regardless of which levels are present in a particular title.
+ */
+export const USC_LEVEL_HIERARCHY = [
+	"title",
+	"subtitle",
+	"chapter",
+	"subchapter",
+	"part",
+	"subpart",
+	"division",
+	"subdivision",
+] as const;
+
+export type USCLevelType = (typeof USC_LEVEL_HIERARCHY)[number];
+
+/**
+ * Map from level type to its canonical level_index
+ */
+export const USC_LEVEL_INDEX: Record<USCLevelType, number> = Object.fromEntries(
+	USC_LEVEL_HIERARCHY.map((level, index) => [level, index]),
+) as Record<USCLevelType, number>;
+
+/**
+ * Set of level type names for quick lookup
+ */
+const USC_LEVEL_SET = new Set<string>(USC_LEVEL_HIERARCHY);
+
+/**
+ * Identifier prefix patterns for each level type (from USLM spec)
+ */
+const LEVEL_ID_PREFIXES: Record<USCLevelType, string> = {
+	title: "t",
+	subtitle: "st",
+	chapter: "ch",
+	subchapter: "sch",
+	part: "pt",
+	subpart: "spt",
+	division: "d",
+	subdivision: "sd",
+};
+
+/**
+ * Parse level number from an identifier like /us/usc/t42/ch21/sch1/s1983
+ */
+function parseLevelNumFromIdentifier(
+	ident: string | undefined,
+	levelType: USCLevelType,
+): string | null {
+	if (!ident) return null;
+	const rest = ident.replace(/^\/us\/usc\//, "").replace(/^\/+|\/+$/g, "");
+	const parts = rest.split("/");
+	const prefix = LEVEL_ID_PREFIXES[levelType];
+
+	for (const part of parts) {
+		// Handle prefix matching carefully to avoid false matches
+		// e.g., "st" for subtitle vs "sch" for subchapter
+		if (part.startsWith(prefix)) {
+			const numPart = part.substring(prefix.length);
+			// Make sure it's not a longer prefix (e.g., "st" matching "sch")
+			if (numPart && /^[0-9a-zA-Z]/.test(numPart)) {
+				// Check if this might be a different prefix
+				let isLongerPrefix = false;
+				for (const [otherLevel, otherPrefix] of Object.entries(
+					LEVEL_ID_PREFIXES,
+				)) {
+					if (
+						otherLevel !== levelType &&
+						otherPrefix.startsWith(prefix) &&
+						otherPrefix.length > prefix.length &&
+						part.startsWith(otherPrefix)
+					) {
+						isLongerPrefix = true;
+						break;
+					}
+				}
+				if (!isLongerPrefix) {
+					return stripLeadingZeros(numPart);
+				}
+			}
+		}
+	}
+	return null;
+}
+
+/**
+ * Organizational level node (title, subtitle, chapter, subchapter, part, subpart, etc.)
+ */
+export interface USCLevel {
+	levelType: USCLevelType;
+	levelIndex: number;
+	identifier: string; // e.g., "42-ch21" for chapter 21 of title 42
+	num: string; // e.g., "21"
+	heading: string;
+	titleNum: string;
+	parentIdentifier: string | null;
+}
+
 interface USCSection {
 	titleNum: string;
-	chapterId: string | null;
-	chapterHeading: string | null;
 	sectionNum: string;
 	heading: string;
 	body: string;
@@ -38,7 +133,7 @@ interface USCSection {
 }
 
 /**
- * Parse a single USC XML file and extract all sections
+ * Parse a single USC XML file and extract all sections and organizational levels
  */
 export function parseUSCXml(
 	xmlContent: string,
@@ -46,101 +141,185 @@ export function parseUSCXml(
 	_sourceUrl: string,
 ): {
 	sections: USCSection[];
-	titles: Map<string, string>;
-	chapters: Map<string, { titleNum: string; heading: string }>;
+	levels: USCLevel[];
+	titleNum: string;
+	titleName: string;
 } {
 	const parser = new XMLParser(parserOptions);
 	const doc = parser.parse(xmlContent);
 
 	const sections: USCSection[] = [];
-	const titles = new Map<string, string>();
-	const chapters = new Map<string, { titleNum: string; heading: string }>();
+	const levels: USCLevel[] = [];
 
 	// Get document identifier to determine title number
 	const docIdentifier = getDocIdentifier(doc);
 	const docTitleNum = parseTitleFromIdentifier(docIdentifier) || fileTitle;
 
 	// Get title name from metadata
-	const titleName = getTitleName(doc, docTitleNum);
-	if (titleName) {
-		titles.set(docTitleNum, titleName);
-	}
+	const titleName = getTitleName(doc, docTitleNum) || `Title ${docTitleNum}`;
 
 	// Find main/title element
 	const main = findElement(doc, "main");
-	if (!main) return { sections, titles, chapters };
+	if (!main) return { sections, levels, titleNum: docTitleNum, titleName };
 
 	const title = findElement(main, "title");
-	if (!title) return { sections, titles, chapters };
+	if (!title) return { sections, levels, titleNum: docTitleNum, titleName };
 
 	// Get title identifier
 	const titleIdentifier = title["@_identifier"] as string | undefined;
 	const parsedTitleNum = parseTitleFromIdentifier(titleIdentifier);
 	const titleNum = parsedTitleNum || docTitleNum;
 
-	// Iterate through elements to find chapters and sections
-	let currentChapterId: string | null = null;
-	let currentChapterHeading: string | null = null;
+	// Track current parent chain as we traverse the tree
+	// Maps level type to its identifier for finding the immediate parent
+	const levelStack: Array<{ levelType: USCLevelType; identifier: string }> = [];
 
-	iterateElements(title, (elem, tagName) => {
-		if (tagName === "chapter") {
-			const chapterIdent = elem["@_identifier"] as string | undefined;
-			const chapterNum = parseChapterFromIdentifier(chapterIdent);
-			currentChapterId = chapterNum ? `${titleNum}-${chapterNum}` : null;
+	// Track seen levels to avoid duplicates
+	const seenLevels = new Set<string>();
 
-			const headingEl = findElement(elem, "heading");
-			currentChapterHeading = headingEl ? textContent(headingEl) : null;
-
-			if (currentChapterId && currentChapterHeading) {
-				chapters.set(currentChapterId, {
-					titleNum,
-					heading: currentChapterHeading,
-				});
-			}
-		} else if (tagName === "section") {
+	// Recursive function to traverse and discover levels
+	function traverseElement(
+		elem: Record<string, unknown>,
+		tagName: string,
+	): void {
+		// Check if this is an organizational level
+		if (USC_LEVEL_SET.has(tagName) && tagName !== "title") {
+			const levelType = tagName as USCLevelType;
 			const ident = elem["@_identifier"] as string | undefined;
-			if (!ident || !ident.startsWith("/us/usc/") || !ident.includes("/s")) {
-				return;
+			const levelNum =
+				parseLevelNumFromIdentifier(ident, levelType) || getNumValue(elem);
+
+			if (levelNum) {
+				const identifier = `${titleNum}-${LEVEL_ID_PREFIXES[levelType]}${levelNum}`;
+
+				if (!seenLevels.has(identifier)) {
+					seenLevels.add(identifier);
+
+					const headingEl = findElement(elem, "heading");
+					const heading = headingEl
+						? normalizedWhitespace(textContent(headingEl))
+						: "";
+
+					// Find parent - the most recent level in the stack
+					const parentIdentifier =
+						levelStack.length > 0
+							? levelStack[levelStack.length - 1].identifier
+							: `${titleNum}-title`;
+
+					levels.push({
+						levelType,
+						levelIndex: USC_LEVEL_INDEX[levelType],
+						identifier,
+						num: levelNum,
+						heading,
+						titleNum,
+						parentIdentifier,
+					});
+				}
+
+				// Push onto stack before processing children
+				levelStack.push({ levelType, identifier });
 			}
-
-			const sectionNum = parseSectionFromIdentifier(ident) || getNumValue(elem);
-			if (!sectionNum) return;
-
-			const headingEl = findElement(elem, "heading");
-			const heading = headingEl
-				? normalizedWhitespace(textContent(headingEl))
-				: "";
-
-			const body = extractSectionBody(elem);
-			const historyShort = extractSourceCredit(elem);
-			const { historyLong, citations } = extractNotes(elem);
-
-			const path = `/statutes/usc/section/${titleNum}/${sectionNum}`;
-			const docId = `doc_usc_${titleNum}-${sectionNum}`;
-			const levelId = `lvl_usc_section_${titleNum}-${sectionNum}`;
-			const parentLevelId = currentChapterId
-				? `lvl_usc_chapter_${currentChapterId}`
-				: `lvl_usc_title_${titleNum}`;
-
-			sections.push({
-				titleNum,
-				chapterId: currentChapterId,
-				chapterHeading: currentChapterHeading,
-				sectionNum,
-				heading,
-				body,
-				historyShort,
-				historyLong,
-				citations,
-				path,
-				docId,
-				levelId,
-				parentLevelId,
-			});
 		}
-	});
 
-	return { sections, titles, chapters };
+		// Check if this is a section
+		if (tagName === "section") {
+			const ident = elem["@_identifier"] as string | undefined;
+			if (ident?.startsWith("/us/usc/") && ident.includes("/s")) {
+				const sectionNum =
+					parseSectionFromIdentifier(ident) || getNumValue(elem);
+				if (sectionNum) {
+					const headingEl = findElement(elem, "heading");
+					const heading = headingEl
+						? normalizedWhitespace(textContent(headingEl))
+						: "";
+
+					const body = extractSectionBody(elem);
+					const historyShort = extractSourceCredit(elem);
+					const { historyLong, citations } = extractNotes(elem);
+
+					const path = `/statutes/usc/section/${titleNum}/${sectionNum}`;
+					const docId = `doc_usc_${titleNum}-${sectionNum}`;
+					const levelId = `lvl_usc_section_${titleNum}-${sectionNum}`;
+
+					// Find parent level - use the most recent level from the stack
+					const parentLevelId =
+						levelStack.length > 0
+							? `lvl_usc_${levelStack[levelStack.length - 1].levelType}_${levelStack[levelStack.length - 1].identifier}`
+							: `lvl_usc_title_${titleNum}`;
+
+					sections.push({
+						titleNum,
+						sectionNum,
+						heading,
+						body,
+						historyShort,
+						historyLong,
+						citations,
+						path,
+						docId,
+						levelId,
+						parentLevelId,
+					});
+				}
+			}
+			return; // Don't recurse into sections
+		}
+
+		// Recurse into children
+		for (const [key, value] of Object.entries(elem)) {
+			if (key.startsWith("@_") || key === "#text") continue;
+
+			if (Array.isArray(value)) {
+				for (const item of value) {
+					if (typeof item === "object" && item !== null) {
+						traverseElement(item as Record<string, unknown>, key);
+					}
+				}
+			} else if (typeof value === "object" && value !== null) {
+				traverseElement(value as Record<string, unknown>, key);
+			}
+		}
+
+		// Pop from stack if we pushed for this level
+		if (
+			USC_LEVEL_SET.has(tagName) &&
+			tagName !== "title" &&
+			levelStack.length > 0
+		) {
+			const levelType = tagName as USCLevelType;
+			const ident = elem["@_identifier"] as string | undefined;
+			const levelNum =
+				parseLevelNumFromIdentifier(ident, levelType) || getNumValue(elem);
+			if (levelNum) {
+				const identifier = `${titleNum}-${LEVEL_ID_PREFIXES[levelType]}${levelNum}`;
+				// Only pop if the top of stack matches
+				if (
+					levelStack.length > 0 &&
+					levelStack[levelStack.length - 1].identifier === identifier
+				) {
+					levelStack.pop();
+				}
+			}
+		}
+	}
+
+	// Start traversal from title element
+	for (const [key, value] of Object.entries(title)) {
+		if (key.startsWith("@_") || key === "#text") continue;
+
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				if (typeof item === "object" && item !== null) {
+					traverseElement(item as Record<string, unknown>, key);
+				}
+			}
+		} else if (typeof value === "object" && value !== null) {
+			traverseElement(value as Record<string, unknown>, key);
+		}
+	}
+
+	return { sections, levels, titleNum, titleName };
 }
 
 /**
@@ -329,18 +508,6 @@ function parseTitleFromIdentifier(ident: string | undefined): string | null {
 	return null;
 }
 
-function parseChapterFromIdentifier(ident: string | undefined): string | null {
-	if (!ident) return null;
-	const rest = ident.replace(/^\/us\/usc\//, "").replace(/^\/+|\/+$/g, "");
-	const parts = rest.split("/");
-	for (const part of parts) {
-		if (part.startsWith("ch")) {
-			return stripLeadingZeros(part.substring(2));
-		}
-	}
-	return null;
-}
-
 function parseSectionFromIdentifier(ident: string | undefined): string | null {
 	if (!ident) return null;
 	const rest = ident.replace(/^\/us\/usc\//, "").replace(/^\/+|\/+$/g, "");
@@ -434,31 +601,6 @@ function findAllElements(
 	return results;
 }
 
-function iterateElements(
-	obj: unknown,
-	callback: (elem: Record<string, unknown>, tagName: string) => void,
-): void {
-	if (!obj || typeof obj !== "object") return;
-
-	const record = obj as Record<string, unknown>;
-
-	for (const [key, value] of Object.entries(record)) {
-		if (key.startsWith("@_") || key === "#text") continue;
-
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				if (typeof item === "object" && item !== null) {
-					callback(item as Record<string, unknown>, key);
-					iterateElements(item, callback);
-				}
-			}
-		} else if (typeof value === "object" && value !== null) {
-			callback(value as Record<string, unknown>, key);
-			iterateElements(value, callback);
-		}
-	}
-}
-
 function textContent(obj: unknown): string {
 	if (!obj) return "";
 	if (typeof obj === "string") return obj;
@@ -549,17 +691,19 @@ export function titleSortKey(t: string): [number, [number, string] | string] {
 }
 
 /**
- * Sort key for chapter IDs (title-chapter format)
+ * Sort key for level identifiers (title-prefixNum format, e.g., "42-ch21")
+ * Sorts by: title number, then level index, then level number
  */
-export function chapterSortKey(
-	chapterId: string,
-): [[number, [number, string] | string], [number, [number, string] | string]] {
-	const parts = chapterId.split("-", 2);
-	if (parts.length !== 2) {
-		return [
-			[0, chapterId],
-			[0, ""],
-		];
-	}
-	return [titleSortKey(parts[0]), sectionSortKey(parts[1])];
+export function levelSortKey(
+	level: USCLevel,
+): [
+	[number, [number, string] | string],
+	number,
+	[number, [number, string] | string],
+] {
+	return [
+		titleSortKey(level.titleNum),
+		level.levelIndex,
+		sectionSortKey(level.num),
+	];
 }

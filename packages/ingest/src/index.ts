@@ -7,6 +7,10 @@ export {
 	isChapterUrl,
 	isTitleUrl,
 } from "./lib/cga/crawler";
+export {
+	extractSectionCrossReferences,
+	type SectionCrossReference,
+} from "./lib/cga/cross-references";
 // CGA
 export { ingestCGA } from "./lib/cga/ingest";
 export {
@@ -26,10 +30,14 @@ export {
 // USC
 export { ingestUSC } from "./lib/usc/ingest";
 export {
-	chapterSortKey,
+	levelSortKey,
 	parseUSCXml,
 	sectionSortKey,
 	titleSortKey,
+	USC_LEVEL_HIERARCHY,
+	USC_LEVEL_INDEX,
+	type USCLevel,
+	type USCLevelType,
 } from "./lib/usc/parser";
 // Versioning
 export {

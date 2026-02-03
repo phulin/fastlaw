@@ -91,6 +91,22 @@ app.get("*", async (c) => {
 			if (!sourceVersion) {
 				pageData = { status: "missing", path };
 			} else {
+				if (path.endsWith(".json")) {
+					const basePath = path.slice(0, path.length - 5);
+
+					const node = await getNodeByPath(sourceVersion.id, basePath);
+					if (!node) {
+						return c.json({ status: "missing", path: basePath }, 404);
+					}
+
+					const content = await getNodeContent(node);
+					if (!content) {
+						return c.json({ status: "missing", path: basePath }, 404);
+					}
+
+					return c.json(content);
+				}
+
 				const node = await getNodeByPath(sourceVersion.id, path);
 				if (!node) {
 					pageData = { status: "missing", path };

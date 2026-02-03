@@ -544,6 +544,7 @@ describe("Crawler Framework - Extension Points", () => {
 		expect(section).toHaveProperty("historyShort");
 		expect(section).toHaveProperty("historyLong");
 		expect(section).toHaveProperty("citations");
+		expect(section).toHaveProperty("seeAlso");
 	});
 
 	it("Section levelIndex is consistent", () => {

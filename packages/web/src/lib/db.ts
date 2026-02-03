@@ -33,6 +33,7 @@ const NODE_SELECT = `
 	source_version_id,
 	string_id,
 	readable_id,
+	heading_citation,
 	parent_id,
 	level_name,
 	level_index,

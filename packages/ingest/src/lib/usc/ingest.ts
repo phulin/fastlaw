@@ -8,6 +8,7 @@ import {
 	insertNode,
 	setRootNodeId,
 } from "../versioning";
+import { extractSectionCrossReferences } from "./cross-references";
 import {
 	fetchAllUSCTitles,
 	fetchUSCFromR2,
@@ -15,19 +16,22 @@ import {
 	getUSCTitleUrls,
 } from "./fetcher";
 import {
-	chapterSortKey,
+	levelSortKey,
 	parseUSCXml,
 	sectionSortKey,
 	titleSortKey,
+	USC_LEVEL_INDEX,
+	type USCLevel,
 } from "./parser";
 
 const SOURCE_CODE = "usc";
 const SOURCE_NAME = "United States Code";
 
+/** Section level index is one higher than the highest organizational level */
+const SECTION_LEVEL_INDEX = Object.keys(USC_LEVEL_INDEX).length;
+
 interface USCSectionData {
 	titleNum: string;
-	chapterId: string | null;
-	chapterHeading: string | null;
 	sectionNum: string;
 	heading: string;
 	body: string;
@@ -45,6 +49,15 @@ interface USCSectionData {
  */
 export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	const accessedAt = new Date().toISOString();
+	const titleUrls = await getUSCTitleUrls();
+	const titleUrlByNum = new Map<string, string>();
+
+	for (const url of titleUrls) {
+		const titleNum = getTitleNumFromUrl(url);
+		if (titleNum) {
+			titleUrlByNum.set(titleNum, url);
+		}
+	}
 
 	// Get or create source
 	const sourceId = await getOrCreateSource(
@@ -82,48 +95,45 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 	// Aggregated data
 	const allTitles = new Map<string, string>();
-	const allChapters = new Map<string, { titleNum: string; heading: string }>();
+	const allLevels: USCLevel[] = [];
+	const seenLevelIds = new Set<string>();
 	const allSections: USCSectionData[] = [];
 
 	// Parse each title XML
 	for (const [titleNum, xml] of xmlByTitle) {
-		const sourceUrl =
-			getUSCTitleUrls().find((u) => getTitleNumFromUrl(u) === titleNum) || "";
+		const sourceUrl = titleUrlByNum.get(titleNum) ?? "";
 
 		try {
-			const { sections, titles, chapters } = parseUSCXml(
-				xml,
-				titleNum,
-				sourceUrl,
-			);
+			const result = parseUSCXml(xml, titleNum, sourceUrl);
 
-			// Merge titles
-			for (const [t, name] of titles) {
-				if (!allTitles.has(t)) {
-					allTitles.set(t, name);
-				}
+			// Add title
+			if (!allTitles.has(result.titleNum)) {
+				allTitles.set(result.titleNum, result.titleName);
 			}
 
-			// Merge chapters
-			for (const [c, data] of chapters) {
-				if (!allChapters.has(c)) {
-					allChapters.set(c, data);
+			// Add levels (deduplicated)
+			for (const level of result.levels) {
+				if (!seenLevelIds.has(level.identifier)) {
+					seenLevelIds.add(level.identifier);
+					allLevels.push(level);
 				}
 			}
 
 			// Add sections
-			for (const section of sections) {
+			for (const section of result.sections) {
 				allSections.push(section);
 			}
 
-			console.log(`  Title ${titleNum}: ${sections.length} sections`);
+			console.log(
+				`  Title ${titleNum}: ${result.levels.length} levels, ${result.sections.length} sections`,
+			);
 		} catch (error) {
 			console.error(`Error parsing Title ${titleNum}:`, error);
 		}
 	}
 
 	console.log(
-		`Found ${allTitles.size} titles, ${allChapters.size} chapters, ${allSections.length} sections`,
+		`Found ${allTitles.size} titles, ${allLevels.length} organizational levels, ${allSections.length} sections`,
 	);
 
 	// Insert nodes into database
@@ -177,41 +187,66 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			titleNum, // readable_id
 			`Title ${titleNum}`, // heading_citation
 			null,
-			`https://uscode.house.gov/download/releasepoints/us/pl/usc${titleNum.padStart(2, "0")}.xml`,
+			titleUrlByNum.get(titleNum) ?? "",
 			accessedAt,
 		);
 		nodeIdMap.set(stringId, nodeId);
 		nodesCreated++;
 	}
 
-	// Insert chapters (sorted)
-	const sortedChapters = [...allChapters.entries()].sort((a, b) => {
-		const aKey = chapterSortKey(a[0]);
-		const bKey = chapterSortKey(b[0]);
-		return compareChapterKeys(aKey, bKey);
+	// Insert organizational levels (sorted by title, level index, then number)
+	const sortedLevels = [...allLevels].sort((a, b) => {
+		const aKey = levelSortKey(a);
+		const bKey = levelSortKey(b);
+		return compareLevelKeys(aKey, bKey);
 	});
 
-	for (let i = 0; i < sortedChapters.length; i++) {
-		const [chapterId, { titleNum, heading }] = sortedChapters[i];
-		const titleStringId = `usc/title/${titleNum}`;
-		const parentId = nodeIdMap.get(titleStringId) || null;
+	// First pass: create identifier to level mapping for parent lookups
+	const levelByIdentifier = new Map<string, USCLevel>();
+	for (const level of sortedLevels) {
+		levelByIdentifier.set(level.identifier, level);
+	}
 
-		const chapterNum = chapterId.includes("-")
-			? chapterId.split("-")[1]
-			: chapterId;
-		const stringId = `usc/chapter/${chapterId}`;
+	for (let i = 0; i < sortedLevels.length; i++) {
+		const level = sortedLevels[i];
+		const stringId = `usc/${level.levelType}/${level.identifier}`;
+
+		// Determine parent node ID
+		let parentId: number | null = null;
+		if (level.parentIdentifier) {
+			// Check if parent is another level
+			const parentLevel = levelByIdentifier.get(level.parentIdentifier);
+			if (parentLevel) {
+				const parentStringId = `usc/${parentLevel.levelType}/${parentLevel.identifier}`;
+				parentId = nodeIdMap.get(parentStringId) || null;
+			}
+			// Check if parent is a title
+			if (!parentId && level.parentIdentifier.endsWith("-title")) {
+				const titleStringId = `usc/title/${level.titleNum}`;
+				parentId = nodeIdMap.get(titleStringId) || null;
+			}
+		}
+		// Fall back to title if no parent found
+		if (!parentId) {
+			const titleStringId = `usc/title/${level.titleNum}`;
+			parentId = nodeIdMap.get(titleStringId) || null;
+		}
+
+		// Generate readable heading citation (e.g., "Chapter 21", "Subchapter I")
+		const headingCitation = `${level.levelType.charAt(0).toUpperCase() + level.levelType.slice(1)} ${level.num}`;
+
 		const nodeId = await insertNode(
 			env.DB,
 			versionId,
 			stringId,
 			parentId,
-			"chapter",
-			1,
+			level.levelType,
+			level.levelIndex,
 			i,
-			heading,
-			`/statutes/usc/chapter/${titleNum}/${chapterNum}`,
-			chapterNum, // readable_id
-			`Chapter ${chapterNum}`, // heading_citation
+			level.heading,
+			`/statutes/usc/${level.levelType}/${level.titleNum}/${level.num}`,
+			level.num, // readable_id
+			headingCitation,
 			null,
 			null,
 			accessedAt,
@@ -232,18 +267,30 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	for (let i = 0; i < sortedSections.length; i++) {
 		const section = sortedSections[i];
 
-		// Determine parent
+		// Determine parent from parentLevelId (format: lvl_usc_{levelType}_{identifier})
 		let parentId: number | null = null;
-		if (section.chapterId) {
-			const chapterStringId = `usc/chapter/${section.chapterId}`;
-			parentId = nodeIdMap.get(chapterStringId) || null;
+		const parentMatch = section.parentLevelId.match(/^lvl_usc_([^_]+)_(.+)$/);
+		if (parentMatch) {
+			const [, levelType, identifier] = parentMatch;
+			if (levelType === "title") {
+				const titleStringId = `usc/title/${identifier}`;
+				parentId = nodeIdMap.get(titleStringId) || null;
+			} else {
+				const levelStringId = `usc/${levelType}/${identifier}`;
+				parentId = nodeIdMap.get(levelStringId) || null;
+			}
 		}
+		// Fall back to title if no parent found
 		if (!parentId) {
 			const titleStringId = `usc/title/${section.titleNum}`;
 			parentId = nodeIdMap.get(titleStringId) || null;
 		}
 
 		// Create content JSON
+		const crossReferences = extractSectionCrossReferences(
+			[section.body, section.citations].filter(Boolean).join("\n"),
+			section.titleNum,
+		);
 		const content = {
 			version: 2,
 			doc_id: section.docId,
@@ -272,6 +319,9 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 					? [{ type: "citations", label: "Notes", content: section.citations }]
 					: []),
 			],
+			...(crossReferences.length > 0
+				? { metadata: { cross_references: crossReferences } }
+				: {}),
 		};
 
 		// Store in packfile
@@ -286,7 +336,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			stringId,
 			parentId,
 			"section",
-			2,
+			SECTION_LEVEL_INDEX,
 			i,
 			section.heading,
 			section.path,
@@ -348,11 +398,23 @@ function compareKeys(
 	return 0;
 }
 
-function compareChapterKeys(
-	a: [[number, [number, string] | string], [number, [number, string] | string]],
-	b: [[number, [number, string] | string], [number, [number, string] | string]],
+function compareLevelKeys(
+	a: [
+		[number, [number, string] | string],
+		number,
+		[number, [number, string] | string],
+	],
+	b: [
+		[number, [number, string] | string],
+		number,
+		[number, [number, string] | string],
+	],
 ): number {
+	// Compare by title first
 	const titleCmp = compareKeys(a[0], b[0]);
 	if (titleCmp !== 0) return titleCmp;
-	return compareKeys(a[1], b[1]);
+	// Then by level index
+	if (a[1] !== b[1]) return a[1] - b[1];
+	// Then by level number
+	return compareKeys(a[2], b[2]);
 }

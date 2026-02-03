@@ -31,6 +31,7 @@ export interface ParsedSection {
 	historyShort: string | null;
 	historyLong: string | null;
 	citations: string | null;
+	seeAlso: string | null;
 	parentStringId: string | null;
 	sortOrder: number;
 	sourceUrl: string;
@@ -673,6 +674,7 @@ export function extractSectionsFromHtml(
 			historyShort: textBlocks.historyShort,
 			historyLong: textBlocks.historyLong,
 			citations: textBlocks.citations,
+			seeAlso: textBlocks.seeAlso,
 			parentStringId: `cgs/${type}/${chapterId}`,
 			sortOrder: i,
 			sourceUrl,

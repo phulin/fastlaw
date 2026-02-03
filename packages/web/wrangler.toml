@@ -1,8 +1,8 @@
 name = "fastlaw"
-compatibility_date = "2026-01-20"
 main = "src/worker.ts"
 assets = { binding = "ASSETS", run_worker_first = true }
 compatibility_flags = ["nodejs_compat"]
+compatibility_date = "2026-01-20"
 
 [[d1_databases]]
 binding = "DB"
@@ -23,3 +23,21 @@ PINECONE_EMBED_DIMENSION = "2048"
 PINECONE_API_VERSION = "2025-04"
 READ_MAX_TOKENS = "600"
 AGENT_MAX_STEPS = "6"
+
+[[routes]]
+pattern = "fastlaw.fun"
+custom_domain = true
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1

@@ -18,3 +18,17 @@ bucket_name = "fastlaw-content"
 CGA_BASE_URL = "https://www.cga.ct.gov"
 CGA_START_PATH = "/current/pub/titles.htm"
 USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 1

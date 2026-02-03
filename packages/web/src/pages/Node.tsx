@@ -1,10 +1,11 @@
 import { Title } from "@solidjs/meta";
+import type { JSX } from "solid-js";
 import { For, onMount, Show } from "solid-js";
 import { Breadcrumbs } from "~/components/Breadcrumbs";
 import { Footer } from "~/components/Footer";
 import { Header } from "~/components/Header";
 import { capitalizeWords, pluralize } from "~/lib/text";
-import type { NodeRecord, PageData } from "~/lib/types";
+import type { NodeRecord, PageData, SectionCrossReference } from "~/lib/types";
 
 const toTitle = (value: string) =>
 	value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -23,10 +24,15 @@ const identifierPattern = new RegExp(
 const splitLeadingIdentifier = (text: string) => {
 	const trimmed = text.trimStart();
 	const match = trimmed.match(identifierPattern);
-	if (!match) return { leading: null, rest: text };
+	if (!match) {
+		return { leading: null, rest: text, restOffset: 0 };
+	}
+	const leadingWhitespace = text.length - trimmed.length;
+	const restOffset = leadingWhitespace + match[0].length;
 	return {
 		leading: match[1].trim(),
 		rest: trimmed.slice(match[0].length),
+		restOffset,
 	};
 };
 
@@ -41,8 +47,69 @@ const getIndentClass = (text: string) => {
 	return "indent-1";
 };
 
-const navLabel = (node: NodeRecord | null) =>
-	node?.name ?? node?.string_id ?? "Section";
+const filterNonOverlappingReferences = (
+	references: SectionCrossReference[],
+) => {
+	const sorted = [...references].sort(
+		(a, b) => a.offset - b.offset || b.length - a.length,
+	);
+	const result: SectionCrossReference[] = [];
+	let lastEnd = -1;
+
+	for (const ref of sorted) {
+		const end = ref.offset + ref.length;
+		if (ref.offset < lastEnd) continue;
+		result.push(ref);
+		lastEnd = end;
+	}
+
+	return result;
+};
+
+const buildLinkedText = (
+	text: string,
+	baseOffset: number,
+	references: SectionCrossReference[],
+) => {
+	const inRange = references.filter((ref) => {
+		const start = ref.offset;
+		const end = ref.offset + ref.length;
+		return start >= baseOffset && end <= baseOffset + text.length;
+	});
+	if (inRange.length === 0) return text;
+
+	const filtered = filterNonOverlappingReferences(inRange);
+	const parts: Array<string | JSX.Element> = [];
+	let cursor = 0;
+
+	for (const ref of filtered) {
+		const start = ref.offset - baseOffset;
+		const end = start + ref.length;
+		if (start > cursor) {
+			parts.push(text.slice(cursor, start));
+		}
+		parts.push(
+			<a class="statute-xref" href={ref.link}>
+				{text.slice(start, end)}
+			</a>,
+		);
+		cursor = end;
+	}
+
+	if (cursor < text.length) {
+		parts.push(text.slice(cursor));
+	}
+
+	return parts;
+};
+
+const navLabel = (node: NodeRecord | null) => {
+	if (node?.heading_citation && node?.name) {
+		return `${node.heading_citation}. ${node?.name}`;
+	} else {
+		return node?.name ?? node?.string_id ?? "Section";
+	}
+};
 
 type NodePageProps = {
 	data: Extract<PageData, { status: "found" }>;
@@ -106,6 +173,7 @@ export function NodePage(props: NodePageProps) {
 		content()?.blocks.filter((block) => block.type === "body") ?? [];
 	const metaBlocks = () =>
 		content()?.blocks.filter((block) => block.type !== "body") ?? [];
+	const crossReferences = () => content()?.metadata?.cross_references ?? [];
 
 	const tocItems = () => {
 		const items = [];
@@ -219,27 +287,52 @@ export function NodePage(props: NodePageProps) {
 					<Show when={content()}>
 						<div id="statute-body" class="statute-body">
 							<For each={bodyBlocks()}>
-								{(block) => (
-									<For each={splitParagraphs(block.content)}>
-										{(paragraph) => {
-											const parts = splitLeadingIdentifier(paragraph);
-											return (
-												<p class={getIndentClass(paragraph)}>
-													{parts.leading ? (
-														<>
-															<strong class="paragraph-identifier">
-																{parts.leading}
-															</strong>
-															{parts.rest ? ` ${parts.rest}` : ""}
-														</>
-													) : (
-														paragraph
-													)}
-												</p>
-											);
-										}}
-									</For>
-								)}
+								{(block) => {
+									const paragraphs = splitParagraphs(block.content);
+									let cursor = 0;
+
+									return (
+										<For each={paragraphs}>
+											{(paragraph) => {
+												const start = block.content.indexOf(paragraph, cursor);
+												const paragraphOffset = start >= 0 ? start : cursor;
+												cursor = paragraphOffset + paragraph.length;
+
+												const parts = splitLeadingIdentifier(paragraph);
+												const restOffset = paragraphOffset + parts.restOffset;
+												const rest = parts.rest;
+
+												return (
+													<p class={getIndentClass(paragraph)}>
+														{parts.leading ? (
+															<>
+																<strong class="paragraph-identifier">
+																	{parts.leading}
+																</strong>
+																{rest
+																	? [
+																			" ",
+																			buildLinkedText(
+																				rest,
+																				restOffset,
+																				crossReferences(),
+																			),
+																		]
+																	: ""}
+															</>
+														) : (
+															buildLinkedText(
+																paragraph,
+																paragraphOffset,
+																crossReferences(),
+															)
+														)}
+													</p>
+												);
+											}}
+										</For>
+									);
+								}}
 							</For>
 						</div>
 						<Show when={metaBlocks().length > 0}>
