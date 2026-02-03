@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   name TEXT,                         -- e.g., 'General Provisions'
   path TEXT,                         -- URL path segment
   readable_id TEXT,                  -- Human-readable identifier for breadcrumbs (e.g., '1-310' for CGA, '42 USC 5001' for USC)
+  heading_citation TEXT,             -- Formatted citation for headings (e.g., 'CGS § 1-1e', '42 USC 5001', 'Chapter 410', 'Title 22a')
 
   -- Blob reference (hash into blobs table)
   blob_hash INTEGER,

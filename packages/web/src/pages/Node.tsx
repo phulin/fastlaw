@@ -61,20 +61,17 @@ export function NodePage(props: NodePageProps) {
 
 	const heading = () => {
 		const n = node();
-		const s = source();
 		const levelType = capitalizeWords(n.level_name);
 
 		if (n.name && n.level_index < 0) {
 			return n.name;
 		}
 
-		// Use section_name_template for section pages if available
-		if (isSection() && s.section_name_template && n.readable_id) {
-			const sectionTitle = s.section_name_template.replace(
-				/%ID%/g,
-				n.readable_id,
-			);
-			return n.name ? `${sectionTitle}. ${n.name}` : `${sectionTitle}.`;
+		// Use heading_citation if available
+		if (n.heading_citation) {
+			return n.name
+				? `${n.heading_citation}. ${n.name}`
+				: `${n.heading_citation}.`;
 		}
 
 		if (n.readable_id) {

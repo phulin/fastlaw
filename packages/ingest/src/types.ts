@@ -36,6 +36,7 @@ export interface NodeMeta {
 	name: string | null;
 	path: string | null;
 	readable_id: string | null;
+	heading_citation: string | null;
 	source_url: string | null;
 	accessed_at: string | null;
 }

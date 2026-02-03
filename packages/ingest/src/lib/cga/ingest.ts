@@ -15,7 +15,6 @@ import { formatDesignatorPadded, normalizeDesignator } from "./parser";
 
 const SOURCE_CODE = "cgs";
 const SOURCE_NAME = "Connecticut General Statutes";
-const SECTION_NAME_TEMPLATE = "CGS § %ID%";
 
 async function withContext<T>(
 	label: string,
@@ -45,7 +44,6 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			"state",
 			"CT",
 			"statute",
-			SECTION_NAME_TEMPLATE,
 		),
 	);
 
@@ -104,6 +102,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			SOURCE_NAME,
 			`/statutes/cgs`,
 			"CGS", // readable_id for root
+			"CGS", // heading_citation
 			null,
 			startUrl,
 			accessedAt,
@@ -146,6 +145,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 				title.titleName,
 				`/statutes/cgs/title/${normalizedTitleId}`,
 				normalizedTitleId, // readable_id
+				`Title ${normalizedTitleId}`, // heading_citation
 				null,
 				title.sourceUrl,
 				accessedAt,
@@ -185,6 +185,11 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			`Adding ${chapter.type}: ${stringId} (raw chapterId: ${chapter.chapterId}, normalized: ${normalizedChapterNum})`,
 		);
 
+		// Generate heading_citation like "Chapter 410" or "Part 1"
+		const chapterType =
+			chapter.type.charAt(0).toUpperCase() + chapter.type.slice(1);
+		const headingCitation = `${chapterType} ${normalizedChapterNum}`;
+
 		const nodeId = await withContext(
 			`insertNode(${chapter.type}:${stringId})`,
 			() =>
@@ -199,6 +204,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 					chapter.chapterTitle,
 					`/statutes/cgs/${chapter.type}/${normalizedTitleId}/${normalizedChapterNum}`,
 					normalizedChapterNum, // readable_id
+					headingCitation,
 					null,
 					chapter.sourceUrl,
 					accessedAt,
@@ -265,11 +271,13 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		};
 
 		// Store in packfile
-		const blobHash = await withContext(`storeJson(${section.stringId})`, () =>
-			blobStore.storeJson(content),
-		);
+		const blobHash = await blobStore.storeJson(content);
 
 		// Collect node for batched insert
+		// heading_citation for sections is "CGS § X" where X is the readable_id
+		const sectionHeadingCitation = section.readableId
+			? `CGS § ${section.readableId}`
+			: null;
 		sectionNodes.push({
 			source_version_id: versionId,
 			string_id: section.stringId,
@@ -280,6 +288,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			name: section.name,
 			path: section.path,
 			readable_id: section.readableId,
+			heading_citation: sectionHeadingCitation,
 			blob_hash: blobHash,
 			source_url: section.sourceUrl,
 			accessed_at: accessedAt,
@@ -301,7 +310,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	nodesCreated += sectionNodes.length;
 
 	// Flush any remaining blobs to packfiles
-	await withContext("blobStore.flush", () => blobStore.flush());
+	await blobStore.flush();
 	console.log("Flushed all blobs to storage.");
 
 	// Set root node ID

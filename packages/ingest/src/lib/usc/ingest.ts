@@ -23,7 +23,6 @@ import {
 
 const SOURCE_CODE = "usc";
 const SOURCE_NAME = "United States Code";
-const SECTION_NAME_TEMPLATE = "%ID%";
 
 interface USCSectionData {
 	titleNum: string;
@@ -55,7 +54,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		"federal",
 		"US",
 		"statute",
-		SECTION_NAME_TEMPLATE,
 	);
 
 	// Get latest version for diff comparison
@@ -148,6 +146,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		SOURCE_NAME,
 		`/statutes/usc`,
 		"USC", // readable_id for root
+		"USC", // heading_citation
 		null,
 		env.USC_DOWNLOAD_BASE,
 		accessedAt,
@@ -176,6 +175,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			titleName,
 			`/statutes/usc/title/${titleNum}`,
 			titleNum, // readable_id
+			`Title ${titleNum}`, // heading_citation
 			null,
 			`https://uscode.house.gov/download/releasepoints/us/pl/usc${titleNum.padStart(2, "0")}.xml`,
 			accessedAt,
@@ -211,6 +211,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			heading,
 			`/statutes/usc/chapter/${titleNum}/${chapterNum}`,
 			chapterNum, // readable_id
+			`Chapter ${chapterNum}`, // heading_citation
 			null,
 			null,
 			accessedAt,
@@ -290,6 +291,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			section.heading,
 			section.path,
 			readableId,
+			readableId, // heading_citation same as readableId for USC sections
 			blobHash,
 			null,
 			accessedAt,

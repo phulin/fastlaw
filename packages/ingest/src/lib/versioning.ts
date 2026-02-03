@@ -13,7 +13,6 @@ export async function getOrCreateSource(
 	jurisdiction: string,
 	region: string,
 	docType: string,
-	sectionNameTemplate: string | null = null,
 ): Promise<number> {
 	// Try to get existing source
 	const existing = await db
@@ -22,23 +21,16 @@ export async function getOrCreateSource(
 		.first<{ id: number }>();
 
 	if (existing) {
-		// Update section_name_template if provided and different
-		if (sectionNameTemplate !== null) {
-			await db
-				.prepare("UPDATE sources SET section_name_template = ? WHERE id = ?")
-				.bind(sectionNameTemplate, existing.id)
-				.run();
-		}
 		return existing.id;
 	}
 
 	// Create new source
 	const result = await db
 		.prepare(`
-			INSERT INTO sources (code, name, jurisdiction, region, doc_type, section_name_template)
-			VALUES (?, ?, ?, ?, ?, ?)
+			INSERT INTO sources (code, name, jurisdiction, region, doc_type)
+			VALUES (?, ?, ?, ?, ?)
 		`)
-		.bind(code, name, jurisdiction, region, docType, sectionNameTemplate)
+		.bind(code, name, jurisdiction, region, docType)
 		.run();
 
 	return result.meta.last_row_id as number;
@@ -196,6 +188,7 @@ export async function insertNode(
 	name: string | null,
 	path: string | null,
 	readableId: string | null,
+	headingCitation: string | null,
 	blobHash: bigint | null,
 	sourceUrl: string | null,
 	accessedAt: string | null,
@@ -207,9 +200,9 @@ export async function insertNode(
 		.prepare(`
 			INSERT INTO nodes (
 				source_version_id, string_id, parent_id, level_name, level_index,
-				sort_order, name, path, readable_id, blob_hash,
+				sort_order, name, path, readable_id, heading_citation, blob_hash,
 				source_url, accessed_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		.bind(
 			versionId,
@@ -221,6 +214,7 @@ export async function insertNode(
 			name,
 			path,
 			readableId,
+			headingCitation,
 			blobHashValue,
 			sourceUrl,
 			accessedAt,
@@ -272,9 +266,9 @@ export async function insertNodesBatched(
 				.prepare(
 					`INSERT INTO nodes (
 						source_version_id, string_id, parent_id, level_name, level_index,
-						sort_order, name, path, readable_id, blob_hash,
+						sort_order, name, path, readable_id, heading_citation, blob_hash,
 						source_url, accessed_at
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				)
 				.bind(
 					node.source_version_id,
@@ -286,6 +280,7 @@ export async function insertNodesBatched(
 					node.name,
 					node.path,
 					node.readable_id,
+					node.heading_citation,
 					blobHashValue,
 					node.source_url,
 					node.accessed_at,

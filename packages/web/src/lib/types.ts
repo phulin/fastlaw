@@ -7,7 +7,6 @@ export interface SourceRecord {
 	jurisdiction: string;
 	region: string;
 	doc_type: string;
-	section_name_template: string | null;
 }
 
 export interface SourceVersionRecord {
@@ -24,6 +23,7 @@ export interface NodeRecord {
 	source_version_id: number;
 	string_id: string;
 	readable_id: string | null;
+	heading_citation: string | null;
 	parent_id: number | null;
 	level_name: string;
 	level_index: number;
