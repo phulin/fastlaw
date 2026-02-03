@@ -1,9 +1,4 @@
-import {
-	hash64,
-	hash64ToSqliteInt,
-	sqliteIntToHash64,
-	verifyHashPrefix,
-} from "./hash";
+import { hash64, hash64ToHex, hexToHash64, verifyHashPrefix } from "./hash";
 import { extractBlob, PackfileWriter } from "./writer";
 
 export interface BlobLocation {
@@ -18,7 +13,7 @@ const BATCH_SIZE = 50;
  * BlobStore manages blob storage using packfiles.
  *
  * Usage:
- *   const store = new BlobStore(db, storage, 'cgs');
+ *   const store = new BlobStore(db, storage, sourceId, 'cgs');
  *   const hash = await store.storeBlob(jsonContent);
  *   // ... store more blobs ...
  *   await store.flush(); // Upload any pending packfiles
@@ -26,16 +21,21 @@ const BATCH_SIZE = 50;
 export class BlobStore {
 	private db: D1Database;
 	private storage: R2Bucket;
-	private sourceCode: string;
+	private sourceId: number;
 	private writer: PackfileWriter;
-	private hashCache: Set<string> = new Set(); // Track hashes we've seen this session
+	private hashCache: Set<string> = new Set(); // Track hashes we've seen this session (hex strings)
 	private dbHashCache: Map<string, BlobLocation> | null = null; // Lazy-loaded from DB
 	private dbHashCachePromise: Promise<Map<string, BlobLocation>> | null = null;
 
-	constructor(db: D1Database, storage: R2Bucket, sourceCode: string) {
+	constructor(
+		db: D1Database,
+		storage: R2Bucket,
+		sourceId: number,
+		sourceCode: string,
+	) {
 		this.db = db;
 		this.storage = storage;
-		this.sourceCode = sourceCode;
+		this.sourceId = sourceId;
 		this.writer = new PackfileWriter(sourceCode);
 	}
 
@@ -70,11 +70,11 @@ export class BlobStore {
 				this.db
 					.prepare(
 						`SELECT hash, packfile_key, offset, size FROM blobs
-						 WHERE packfile_key LIKE ?`,
+						 WHERE source_id = ?`,
 					)
-					.bind(`${this.sourceCode}/%`)
+					.bind(this.sourceId)
 					.all<{
-						hash: bigint;
+						hash: string;
 						packfile_key: string;
 						offset: number;
 						size: number;
@@ -82,8 +82,7 @@ export class BlobStore {
 			);
 
 			for (const row of result.results) {
-				const hash = sqliteIntToHash64(row.hash);
-				cache.set(hash.toString(), {
+				cache.set(row.hash, {
 					packfileKey: row.packfile_key,
 					offset: row.offset,
 					size: row.size,
@@ -93,9 +92,7 @@ export class BlobStore {
 			this.dbHashCache = cache;
 			this.dbHashCachePromise = null;
 
-			console.log(
-				`Loaded ${cache.size} existing blob hashes for ${this.sourceCode}`,
-			);
+			console.log(`Loaded ${cache.size} existing blob hashes.`);
 
 			return cache;
 		})();
@@ -106,27 +103,28 @@ export class BlobStore {
 	/**
 	 * Check if a blob with the given hash already exists
 	 */
-	private async blobExists(hash: bigint): Promise<boolean> {
+	private async blobExists(hashHex: string): Promise<boolean> {
 		// Check session cache first
-		if (this.hashCache.has(hash.toString())) {
+		if (this.hashCache.has(hashHex)) {
 			return true;
 		}
 
 		// Check DB cache
 		const cache = await this.loadDbHashes();
-		return cache.has(hash.toString());
+		return cache.has(hashHex);
 	}
 
 	/**
-	 * Store a blob, returning its hash.
+	 * Store a blob, returning its hash as a hex string.
 	 * If the blob already exists (by hash), it won't be stored again.
 	 */
-	async storeBlob(content: Uint8Array): Promise<bigint> {
+	async storeBlob(content: Uint8Array): Promise<string> {
 		const hash = await hash64(content);
+		const hashHex = hash64ToHex(hash);
 
 		// Check for existing blob
-		if (await this.blobExists(hash)) {
-			return hash;
+		if (await this.blobExists(hashHex)) {
+			return hashHex;
 		}
 
 		// Add to writer
@@ -134,15 +132,15 @@ export class BlobStore {
 		await this.uploadFinishedPackfiles();
 
 		// Track in session cache
-		this.hashCache.add(hash.toString());
+		this.hashCache.add(hashHex);
 
-		return hash;
+		return hashHex;
 	}
 
 	/**
 	 * Store JSON content as a blob
 	 */
-	async storeJson(data: unknown): Promise<bigint> {
+	async storeJson(data: unknown): Promise<string> {
 		const json = JSON.stringify(data);
 		const bytes = new TextEncoder().encode(json);
 		return this.storeBlob(bytes);
@@ -178,11 +176,12 @@ export class BlobStore {
 				const statements = batch.map((entry) =>
 					this.db
 						.prepare(
-							`INSERT OR IGNORE INTO blobs (hash, packfile_key, offset, size)
-							 VALUES (?, ?, ?, ?)`,
+							`INSERT OR IGNORE INTO blobs (hash, source_id, packfile_key, offset, size)
+							 VALUES (?, ?, ?, ?, ?)`,
 						)
 						.bind(
-							hash64ToSqliteInt(entry.hash).toString(),
+							hash64ToHex(entry.hash),
+							this.sourceId,
 							packfile.key,
 							entry.offset,
 							entry.size,
@@ -196,11 +195,11 @@ export class BlobStore {
 	}
 
 	/**
-	 * Get the location of a blob by its hash
+	 * Get the location of a blob by its hash (hex string)
 	 */
-	async getBlobLocation(hash: bigint): Promise<BlobLocation | null> {
+	async getBlobLocation(hashHex: string): Promise<BlobLocation | null> {
 		const cache = await this.loadDbHashes();
-		return cache.get(hash.toString()) || null;
+		return cache.get(hashHex) || null;
 	}
 }
 
@@ -210,7 +209,7 @@ export class BlobStore {
 export async function readBlob(
 	storage: R2Bucket,
 	location: BlobLocation,
-	expectedHash: bigint,
+	expectedHashHex: string,
 ): Promise<Uint8Array> {
 	let packfile: R2ObjectBody | null = null;
 	try {
@@ -231,6 +230,7 @@ export async function readBlob(
 	const packData = new Uint8Array(await packfile.arrayBuffer());
 	const { content, hashPrefix } = await extractBlob(packData, 0, location.size);
 
+	const expectedHash = hexToHash64(expectedHashHex);
 	if (!verifyHashPrefix(hashPrefix, expectedHash)) {
 		throw new Error(
 			`Blob hash prefix mismatch for packfile ${location.packfileKey}`,
@@ -246,9 +246,9 @@ export async function readBlob(
 export async function readBlobJson<T>(
 	storage: R2Bucket,
 	location: BlobLocation,
-	expectedHash: bigint,
+	expectedHashHex: string,
 ): Promise<T> {
-	const content = await readBlob(storage, location, expectedHash);
+	const content = await readBlob(storage, location, expectedHashHex);
 	const json = new TextDecoder().decode(content);
 	return JSON.parse(json) as T;
 }

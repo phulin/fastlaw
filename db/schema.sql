@@ -11,12 +11,14 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 
 CREATE TABLE IF NOT EXISTS blobs (
-  hash INTEGER PRIMARY KEY,           -- xxhash64 of blob content (signed 64-bit)
+  hash TEXT PRIMARY KEY,              -- xxhash64 as 16-char hex string
+  source_id INTEGER NOT NULL REFERENCES sources(id),
   packfile_key TEXT NOT NULL,         -- R2 key (e.g., 'cgs/pack-abc123def456.pack')
-  offset INTEGER NOT NULL,            -- Byte offset within uncompressed tar
-  size INTEGER NOT NULL               -- Blob compressed size in bytes
+  offset INTEGER NOT NULL,            -- Byte offset within uncompressed pack
+  size INTEGER NOT NULL               -- Blob size in bytes (8-byte prefix + gzip payload)
 );
 
+CREATE INDEX IF NOT EXISTS idx_blobs_source ON blobs(source_id);
 CREATE INDEX IF NOT EXISTS idx_blobs_packfile ON blobs(packfile_key);
 
 CREATE TABLE IF NOT EXISTS source_versions (
@@ -49,8 +51,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   readable_id TEXT,                  -- Human-readable identifier for breadcrumbs (e.g., '1-310' for CGA, '42 USC 5001' for USC)
   heading_citation TEXT,             -- Formatted citation for headings (e.g., 'CGS § 1-1e', '42 USC 5001', 'Chapter 410', 'Title 22a')
 
-  -- Blob reference (hash into blobs table)
-  blob_hash INTEGER,
+  -- Blob reference (16-char hex hash into blobs table)
+  blob_hash TEXT,
 
   -- Source tracking
   source_url TEXT,                   -- Original URL this data was fetched from

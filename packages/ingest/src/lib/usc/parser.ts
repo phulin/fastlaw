@@ -158,8 +158,11 @@ export function parseUSCXml(
 	// Get title name from metadata
 	const titleName = getTitleName(doc, docTitleNum) || `Title ${docTitleNum}`;
 
-	// Find main/title element
-	const main = findElement(doc, "main");
+	// Find document root element (uscDoc) then main/title element
+	const uscDoc = findElement(doc, "uscDoc");
+	if (!uscDoc) return { sections, levels, titleNum: docTitleNum, titleName };
+
+	const main = findElement(uscDoc, "main");
 	if (!main) return { sections, levels, titleNum: docTitleNum, titleName };
 
 	const title = findElement(main, "title");
@@ -176,6 +179,9 @@ export function parseUSCXml(
 
 	// Track seen levels to avoid duplicates
 	const seenLevels = new Set<string>();
+
+	// Track seen sections to handle duplicates with suffixes (some sections appear multiple times in XML)
+	const sectionCounts = new Map<string, number>();
 
 	// Recursive function to traverse and discover levels
 	function traverseElement(
@@ -229,6 +235,14 @@ export function parseUSCXml(
 				const sectionNum =
 					parseSectionFromIdentifier(ident) || getNumValue(elem);
 				if (sectionNum) {
+					const sectionKey = `${titleNum}-${sectionNum}`;
+
+					// Handle duplicate sections by adding suffix
+					const count = sectionCounts.get(sectionKey) ?? 0;
+					sectionCounts.set(sectionKey, count + 1);
+					const finalSectionNum =
+						count === 0 ? sectionNum : `${sectionNum}-${count + 1}`;
+
 					const headingEl = findElement(elem, "heading");
 					const heading = headingEl
 						? normalizedWhitespace(textContent(headingEl))
@@ -238,9 +252,9 @@ export function parseUSCXml(
 					const historyShort = extractSourceCredit(elem);
 					const { historyLong, citations } = extractNotes(elem);
 
-					const path = `/statutes/usc/section/${titleNum}/${sectionNum}`;
-					const docId = `doc_usc_${titleNum}-${sectionNum}`;
-					const levelId = `lvl_usc_section_${titleNum}-${sectionNum}`;
+					const path = `/statutes/usc/section/${titleNum}/${finalSectionNum}`;
+					const docId = `doc_usc_${titleNum}-${finalSectionNum}`;
+					const levelId = `lvl_usc_section_${titleNum}-${finalSectionNum}`;
 
 					// Find parent level - use the most recent level from the stack
 					const parentLevelId =
@@ -250,7 +264,7 @@ export function parseUSCXml(
 
 					sections.push({
 						titleNum,
-						sectionNum,
+						sectionNum: finalSectionNum,
 						heading,
 						body,
 						historyShort,

@@ -191,25 +191,27 @@ function normalizeSectionNumber(value: string): string {
 }
 
 function isQualifierKeyword(
-	token: Token,
+	token: Token | undefined,
 ): token is { type: "word"; value: string } {
-	return token.type === "word" && QUALIFIER_KEYWORDS.has(token.value);
+	return token?.type === "word" && QUALIFIER_KEYWORDS.has(token.value);
 }
 
 function isSectionKeyword(
-	token: Token,
+	token: Token | undefined,
 ): token is { type: "word"; value: string } {
-	return token.type === "word" && SECTION_KEYWORDS.has(token.value);
+	return token?.type === "word" && SECTION_KEYWORDS.has(token.value);
 }
 
 function isTitleKeyword(
-	token: Token,
+	token: Token | undefined,
 ): token is { type: "word"; value: string } {
-	return token.type === "word" && TITLE_KEYWORDS.has(token.value);
+	return token?.type === "word" && TITLE_KEYWORDS.has(token.value);
 }
 
-function isUSCKeyword(token: Token): token is { type: "word"; value: string } {
-	return token.type === "word" && token.value === "usc";
+function isUSCKeyword(
+	token: Token | undefined,
+): token is { type: "word"; value: string } {
+	return token?.type === "word" && token.value === "usc";
 }
 
 function isWord(token: Token | undefined, value: string): boolean {

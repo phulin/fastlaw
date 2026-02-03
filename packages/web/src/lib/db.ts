@@ -40,17 +40,13 @@ const NODE_SELECT = `
 	sort_order,
 	name,
 	path,
-	CAST(blob_hash AS TEXT) AS blob_hash,
+	blob_hash,
 	source_url,
 	accessed_at
 `;
 
-function sqliteIntToHash64(sqliteInt: bigint | number | string): bigint {
-	const val = BigInt(sqliteInt);
-	if (val < 0n) {
-		return val + 0x10000000000000000n;
-	}
-	return val;
+function hexToHash64(hex: string): bigint {
+	return BigInt(`0x${hex}`);
 }
 
 function hash64ToPrefixBytes(hash: bigint): Uint8Array {
@@ -293,7 +289,7 @@ export async function getNodeContent(
 		throw new Error(`Blob entry too small in ${blob.packfile_key}`);
 	}
 
-	const expected = hash64ToPrefixBytes(sqliteIntToHash64(node.blob_hash));
+	const expected = hash64ToPrefixBytes(hexToHash64(node.blob_hash));
 	const prefix = entryData.slice(0, 8);
 	if (!prefixMatches(prefix, expected)) {
 		throw new Error(`Blob hash prefix mismatch for ${blob.packfile_key}`);

@@ -42,7 +42,7 @@ export interface NodeMeta {
 }
 
 export interface Node extends NodeMeta {
-	blob_hash: bigint | null;
+	blob_hash: string | null;
 }
 
 export interface DiffResult {

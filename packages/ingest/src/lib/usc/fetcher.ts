@@ -52,10 +52,41 @@ export async function getUSCTitleUrls(): Promise<string[]> {
 	return [...byTitle.values()];
 }
 
+const USC_R2_PREFIX = "sources/usc/";
+
+/**
+ * Extract filename from URL for R2 storage key
+ */
+function getFilenameFromUrl(url: string): string {
+	const urlObj = new URL(url);
+	const pathname = urlObj.pathname;
+	return pathname.split("/").pop() ?? "";
+}
+
 /**
  * Fetch a single USC title XML file
+ * If storage is provided, checks R2 first and caches the original response (zip or xml)
  */
-export async function fetchUSCTitle(url: string): Promise<string | null> {
+export async function fetchUSCTitle(
+	url: string,
+	storage?: R2Bucket,
+): Promise<string | null> {
+	const filename = getFilenameFromUrl(url);
+	const r2Key = `${USC_R2_PREFIX}${filename}`;
+
+	// Check R2 first if storage is available
+	if (storage) {
+		const existing = await storage.get(r2Key);
+		if (existing) {
+			console.log(`  -> Found in R2: ${r2Key}`);
+			if (filename.toLowerCase().endsWith(".zip")) {
+				const buffer = await existing.arrayBuffer();
+				return extractXmlFromZip(buffer);
+			}
+			return existing.text();
+		}
+	}
+
 	try {
 		const response = await fetch(url, {
 			headers: {
@@ -68,12 +99,25 @@ export async function fetchUSCTitle(url: string): Promise<string | null> {
 			return null;
 		}
 
-		if (isZipResponse(url, response)) {
-			const buffer = await response.arrayBuffer();
-			return extractXmlFromZip(buffer);
+		const contentType = response.headers.get("content-type") ?? "";
+		if (contentType.toLowerCase().includes("text/html")) {
+			console.warn(`Skipping ${url}: got text/html response`);
+			return null;
 		}
 
-		return await response.text();
+		const isZip = isZipResponse(url, response);
+		const buffer = await response.arrayBuffer();
+
+		// Save original response to R2 if storage is available
+		if (storage) {
+			await storage.put(r2Key, buffer);
+			console.log(`  -> Saved to R2: ${r2Key}`);
+		}
+
+		if (isZip) {
+			return extractXmlFromZip(buffer);
+		}
+		return new TextDecoder().decode(buffer);
 	} catch (error) {
 		console.error(`Error fetching ${url}:`, error);
 		return null;
@@ -99,10 +143,13 @@ export function getTitleNumFromUrl(url: string): string | null {
  *
  * Note: This can be slow and may hit CF Worker limits.
  * Consider fetching titles in batches for production use.
+ *
+ * If storage is provided, caches fetched XML to R2 and checks R2 before downloading.
  */
 export async function fetchAllUSCTitles(
 	maxTitles = 54,
 	delayMs = 100,
+	storage?: R2Bucket,
 ): Promise<Map<string, string>> {
 	const results = new Map<string, string>();
 	const urls = (await getUSCTitleUrls()).slice(0, maxTitles);
@@ -112,14 +159,14 @@ export async function fetchAllUSCTitles(
 		if (!titleNum) continue;
 
 		console.log(`Fetching USC Title ${titleNum}...`);
-		const xml = await fetchUSCTitle(url);
+		const xml = await fetchUSCTitle(url, storage);
 
 		if (xml) {
 			results.set(titleNum, xml);
 			console.log(`  -> Got ${xml.length} bytes`);
 		}
 
-		// Delay between requests
+		// Delay between requests (skip if retrieved from cache)
 		if (delayMs > 0) {
 			await new Promise((resolve) => setTimeout(resolve, delayMs));
 		}

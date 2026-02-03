@@ -1,5 +1,4 @@
 import type { DiffResult, Node, SourceVersion } from "../types";
-import { hash64ToSqliteInt } from "./packfile/hash";
 
 export type NodeInsert = Omit<Node, "id">;
 
@@ -189,13 +188,10 @@ export async function insertNode(
 	path: string | null,
 	readableId: string | null,
 	headingCitation: string | null,
-	blobHash: bigint | null,
+	blobHash: string | null,
 	sourceUrl: string | null,
 	accessedAt: string | null,
 ): Promise<number> {
-	const blobHashValue =
-		blobHash !== null ? hash64ToSqliteInt(blobHash).toString() : null;
-
 	const result = await db
 		.prepare(`
 			INSERT INTO nodes (
@@ -215,7 +211,7 @@ export async function insertNode(
 			path,
 			readableId,
 			headingCitation,
-			blobHashValue,
+			blobHash,
 			sourceUrl,
 			accessedAt,
 		)
@@ -256,13 +252,8 @@ export async function insertNodesBatched(
 
 	for (let i = 0; i < nodes.length; i += BATCH_SIZE) {
 		const batch = nodes.slice(i, i + BATCH_SIZE);
-		const statements = batch.map((node) => {
-			const blobHashValue =
-				node.blob_hash !== null
-					? hash64ToSqliteInt(node.blob_hash).toString()
-					: null;
-
-			return db
+		const statements = batch.map((node) =>
+			db
 				.prepare(
 					`INSERT INTO nodes (
 						source_version_id, string_id, parent_id, level_name, level_index,
@@ -281,11 +272,11 @@ export async function insertNodesBatched(
 					node.path,
 					node.readable_id,
 					node.heading_citation,
-					blobHashValue,
+					node.blob_hash,
 					node.source_url,
 					node.accessed_at,
-				);
-		});
+				),
+		);
 
 		const results = await db.batch(statements);
 

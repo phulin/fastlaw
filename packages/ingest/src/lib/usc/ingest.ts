@@ -6,6 +6,8 @@ import {
 	getOrCreateSource,
 	getOrCreateSourceVersion,
 	insertNode,
+	insertNodesBatched,
+	type NodeInsert,
 	setRootNodeId,
 } from "../versioning";
 import { extractSectionCrossReferences } from "./cross-references";
@@ -86,9 +88,8 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 	if (xmlByTitle.size === 0) {
 		console.log("No R2 data found, fetching from House OLRC...");
-		// Fetch a limited number of titles to stay within Worker limits
-		// For full ingestion, pre-load XML to R2
-		xmlByTitle = await fetchAllUSCTitles(10, 200);
+		// Caches to R2 at sources/usc/ for future runs
+		xmlByTitle = await fetchAllUSCTitles(100, 200, env.STORAGE);
 	}
 
 	console.log(`Processing ${xmlByTitle.size} USC titles`);
@@ -104,7 +105,12 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		const sourceUrl = titleUrlByNum.get(titleNum) ?? "";
 
 		try {
+			console.log(
+				`  Parsing Title ${titleNum} (${(xml.length / 1024 / 1024).toFixed(1)} MB)...`,
+			);
+			const parseStart = Date.now();
 			const result = parseUSCXml(xml, titleNum, sourceUrl);
+			console.log(`    Parsed in ${Date.now() - parseStart}ms`);
 
 			// Add title
 			if (!allTitles.has(result.titleNum)) {
@@ -125,7 +131,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			}
 
 			console.log(
-				`  Title ${titleNum}: ${result.levels.length} levels, ${result.sections.length} sections`,
+				`    Title ${titleNum}: ${result.levels.length} levels, ${result.sections.length} sections`,
 			);
 		} catch (error) {
 			console.error(`Error parsing Title ${titleNum}:`, error);
@@ -141,7 +147,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	const nodeIdMap = new Map<string, number>();
 
 	// Initialize blob store for this source
-	const blobStore = new BlobStore(env.DB, env.STORAGE, SOURCE_CODE);
+	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
 
 	// Insert root node
 	const rootStringId = "usc/root";
@@ -164,98 +170,114 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	nodeIdMap.set(rootStringId, rootNodeId);
 	nodesCreated++;
 
-	// Insert titles (sorted)
+	// Insert titles (sorted) - batched
 	const sortedTitles = [...allTitles.entries()].sort((a, b) => {
 		const aKey = titleSortKey(a[0]);
 		const bKey = titleSortKey(b[0]);
 		return compareKeys(aKey, bKey);
 	});
 
-	for (let i = 0; i < sortedTitles.length; i++) {
-		const [titleNum, titleName] = sortedTitles[i];
-		const stringId = `usc/title/${titleNum}`;
-		const nodeId = await insertNode(
-			env.DB,
-			versionId,
-			stringId,
-			rootNodeId,
-			"title",
-			0,
-			i,
-			titleName,
-			`/statutes/usc/title/${titleNum}`,
-			titleNum, // readable_id
-			`Title ${titleNum}`, // heading_citation
-			null,
-			titleUrlByNum.get(titleNum) ?? "",
-			accessedAt,
-		);
-		nodeIdMap.set(stringId, nodeId);
-		nodesCreated++;
-	}
+	const titleNodes: NodeInsert[] = sortedTitles.map(
+		([titleNum, titleName], i) => ({
+			source_version_id: versionId,
+			string_id: `usc/title/${titleNum}`,
+			parent_id: rootNodeId,
+			level_name: "title",
+			level_index: 0,
+			sort_order: i,
+			name: titleName,
+			path: `/statutes/usc/title/${titleNum}`,
+			readable_id: titleNum,
+			heading_citation: `Title ${titleNum}`,
+			blob_hash: null,
+			source_url: titleUrlByNum.get(titleNum) ?? "",
+			accessed_at: accessedAt,
+		}),
+	);
 
-	// Insert organizational levels (sorted by title, level index, then number)
+	const titleIdMap = await insertNodesBatched(env.DB, titleNodes);
+	for (const [stringId, nodeId] of titleIdMap) {
+		nodeIdMap.set(stringId, nodeId);
+	}
+	nodesCreated += titleNodes.length;
+
+	// Insert organizational levels - batched by levelIndex to ensure parents before children
 	const sortedLevels = [...allLevels].sort((a, b) => {
 		const aKey = levelSortKey(a);
 		const bKey = levelSortKey(b);
 		return compareLevelKeys(aKey, bKey);
 	});
 
-	// First pass: create identifier to level mapping for parent lookups
+	// Create identifier to level mapping for parent lookups
 	const levelByIdentifier = new Map<string, USCLevel>();
 	for (const level of sortedLevels) {
 		levelByIdentifier.set(level.identifier, level);
 	}
 
-	for (let i = 0; i < sortedLevels.length; i++) {
-		const level = sortedLevels[i];
-		const stringId = `usc/${level.levelType}/${level.identifier}`;
+	// Group levels by levelIndex for batched insertion
+	const levelsByIndex = new Map<number, USCLevel[]>();
+	for (const level of sortedLevels) {
+		const existing = levelsByIndex.get(level.levelIndex) ?? [];
+		existing.push(level);
+		levelsByIndex.set(level.levelIndex, existing);
+	}
 
-		// Determine parent node ID
-		let parentId: number | null = null;
+	// Helper to resolve parent ID for a level
+	const resolveLevelParentId = (level: USCLevel): number | null => {
 		if (level.parentIdentifier) {
-			// Check if parent is another level
 			const parentLevel = levelByIdentifier.get(level.parentIdentifier);
 			if (parentLevel) {
 				const parentStringId = `usc/${parentLevel.levelType}/${parentLevel.identifier}`;
-				parentId = nodeIdMap.get(parentStringId) || null;
+				const parentId = nodeIdMap.get(parentStringId);
+				if (parentId) return parentId;
 			}
-			// Check if parent is a title
-			if (!parentId && level.parentIdentifier.endsWith("-title")) {
+			if (level.parentIdentifier.endsWith("-title")) {
 				const titleStringId = `usc/title/${level.titleNum}`;
-				parentId = nodeIdMap.get(titleStringId) || null;
+				return nodeIdMap.get(titleStringId) ?? null;
 			}
 		}
-		// Fall back to title if no parent found
-		if (!parentId) {
-			const titleStringId = `usc/title/${level.titleNum}`;
-			parentId = nodeIdMap.get(titleStringId) || null;
+		// Fall back to title
+		const titleStringId = `usc/title/${level.titleNum}`;
+		return nodeIdMap.get(titleStringId) ?? null;
+	};
+
+	// Insert levels in waves by levelIndex (lower indices first = parents before children)
+	const sortedLevelIndices = [...levelsByIndex.keys()].sort((a, b) => a - b);
+	let levelSortOrder = 0;
+
+	for (const levelIndex of sortedLevelIndices) {
+		const levelsAtIndex = levelsByIndex.get(levelIndex) ?? [];
+
+		const levelNodes: NodeInsert[] = levelsAtIndex.map((level) => {
+			const stringId = `usc/${level.levelType}/${level.identifier}`;
+			const headingCitation = `${level.levelType.charAt(0).toUpperCase() + level.levelType.slice(1)} ${level.num}`;
+			const sortOrder = levelSortOrder++;
+
+			return {
+				source_version_id: versionId,
+				string_id: stringId,
+				parent_id: resolveLevelParentId(level),
+				level_name: level.levelType,
+				level_index: level.levelIndex,
+				sort_order: sortOrder,
+				name: level.heading,
+				path: `/statutes/usc/${level.levelType}/${level.titleNum}/${level.num}`,
+				readable_id: level.num,
+				heading_citation: headingCitation,
+				blob_hash: null,
+				source_url: null,
+				accessed_at: accessedAt,
+			};
+		});
+
+		const levelIdMap = await insertNodesBatched(env.DB, levelNodes);
+		for (const [stringId, nodeId] of levelIdMap) {
+			nodeIdMap.set(stringId, nodeId);
 		}
-
-		// Generate readable heading citation (e.g., "Chapter 21", "Subchapter I")
-		const headingCitation = `${level.levelType.charAt(0).toUpperCase() + level.levelType.slice(1)} ${level.num}`;
-
-		const nodeId = await insertNode(
-			env.DB,
-			versionId,
-			stringId,
-			parentId,
-			level.levelType,
-			level.levelIndex,
-			i,
-			level.heading,
-			`/statutes/usc/${level.levelType}/${level.titleNum}/${level.num}`,
-			level.num, // readable_id
-			headingCitation,
-			null,
-			null,
-			accessedAt,
-		);
-		nodeIdMap.set(stringId, nodeId);
-		nodesCreated++;
+		nodesCreated += levelNodes.length;
 	}
 
-	// Insert sections and store content in R2
+	// Insert sections and store content in R2 - batched
 	const sortedSections = allSections.sort((a, b) => {
 		const aKey = [titleSortKey(a.titleNum), sectionSortKey(a.sectionNum)];
 		const bKey = [titleSortKey(b.titleNum), sectionSortKey(b.sectionNum)];
@@ -264,44 +286,60 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		return compareKeys(aKey[1], bKey[1]);
 	});
 
-	for (let i = 0; i < sortedSections.length; i++) {
-		const section = sortedSections[i];
+	// Track seen section string_ids to detect duplicates
+	const seenSections = new Map<string, USCSectionData>();
 
-		// Determine parent from parentLevelId (format: lvl_usc_{levelType}_{identifier})
-		let parentId: number | null = null;
+	// Helper to resolve parent ID for a section
+	const resolveSectionParentId = (section: USCSectionData): number | null => {
 		const parentMatch = section.parentLevelId.match(/^lvl_usc_([^_]+)_(.+)$/);
 		if (parentMatch) {
 			const [, levelType, identifier] = parentMatch;
 			if (levelType === "title") {
-				const titleStringId = `usc/title/${identifier}`;
-				parentId = nodeIdMap.get(titleStringId) || null;
-			} else {
-				const levelStringId = `usc/${levelType}/${identifier}`;
-				parentId = nodeIdMap.get(levelStringId) || null;
+				return nodeIdMap.get(`usc/title/${identifier}`) ?? null;
 			}
+			return nodeIdMap.get(`usc/${levelType}/${identifier}`) ?? null;
 		}
-		// Fall back to title if no parent found
-		if (!parentId) {
-			const titleStringId = `usc/title/${section.titleNum}`;
-			parentId = nodeIdMap.get(titleStringId) || null;
+		// Fall back to title
+		return nodeIdMap.get(`usc/title/${section.titleNum}`) ?? null;
+	};
+
+	// First pass: store blobs and collect node data
+	console.log(
+		`Processing ${sortedSections.length} sections for blob storage...`,
+	);
+	const sectionNodes: NodeInsert[] = [];
+	let crossRefTime = 0;
+	let blobStoreTime = 0;
+
+	for (let i = 0; i < sortedSections.length; i++) {
+		const section = sortedSections[i];
+		const stringId = `usc/section/${section.titleNum}-${section.sectionNum}`;
+
+		// Check for duplicate
+		const existing = seenSections.get(stringId);
+		if (existing) {
+			console.error(`Duplicate section found: ${stringId}`);
+			console.error(`  First:  heading="${existing.heading}"`);
+			console.error(`  Second: heading="${section.heading}"`);
+			continue; // Skip duplicate
 		}
+		seenSections.set(stringId, section);
 
 		// Create content JSON
+		const crossRefStart = Date.now();
 		const crossReferences = extractSectionCrossReferences(
 			[section.body, section.citations].filter(Boolean).join("\n"),
 			section.titleNum,
 		);
+		crossRefTime += Date.now() - crossRefStart;
 		const content = {
-			version: 2,
-			doc_id: section.docId,
-			doc_type: "statute",
 			blocks: [
 				{ type: "body", content: section.body },
 				...(section.historyShort
 					? [
 							{
 								type: "history_short",
-								label: "History",
+								label: "Short History",
 								content: section.historyShort,
 							},
 						]
@@ -310,7 +348,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 					? [
 							{
 								type: "history_long",
-								label: "History Notes",
+								label: "Long History",
 								content: section.historyLong,
 							},
 						]
@@ -325,34 +363,42 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		};
 
 		// Store in packfile
+		const blobStart = Date.now();
 		const blobHash = await blobStore.storeJson(content);
+		blobStoreTime += Date.now() - blobStart;
 
-		// Insert node
-		const stringId = `usc/section/${section.titleNum}-${section.sectionNum}`;
+		// Collect node data for batch insert
 		const readableId = `${section.titleNum} USC ${section.sectionNum}`;
-		const nodeId = await insertNode(
-			env.DB,
-			versionId,
-			stringId,
-			parentId,
-			"section",
-			SECTION_LEVEL_INDEX,
-			i,
-			section.heading,
-			section.path,
-			readableId,
-			readableId, // heading_citation same as readableId for USC sections
-			blobHash,
-			null,
-			accessedAt,
-		);
-		nodeIdMap.set(stringId, nodeId);
-		nodesCreated++;
+		sectionNodes.push({
+			source_version_id: versionId,
+			string_id: stringId,
+			parent_id: resolveSectionParentId(section),
+			level_name: "section",
+			level_index: SECTION_LEVEL_INDEX,
+			sort_order: i,
+			name: section.heading,
+			path: section.path,
+			readable_id: readableId,
+			heading_citation: readableId,
+			blob_hash: blobHash,
+			source_url: null,
+			accessed_at: accessedAt,
+		});
 
-		if (nodesCreated % 100 === 0) {
-			console.log(`Created ${nodesCreated} nodes...`);
+		if ((i + 1) % 1000 === 0) {
+			console.log(
+				`Processed ${i + 1}/${sortedSections.length} sections (crossRef: ${crossRefTime}ms, blobStore: ${blobStoreTime}ms)`,
+			);
 		}
 	}
+
+	// Batch insert all section nodes
+	console.log(`Batch inserting ${sectionNodes.length} section nodes...`);
+	const sectionIdMap = await insertNodesBatched(env.DB, sectionNodes);
+	for (const [stringId, nodeId] of sectionIdMap) {
+		nodeIdMap.set(stringId, nodeId);
+	}
+	nodesCreated += sectionNodes.length;
 
 	// Flush any remaining blobs to packfiles
 	await blobStore.flush();

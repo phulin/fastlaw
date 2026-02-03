@@ -661,7 +661,7 @@ export function extractSectionsFromHtml(
 		const normalizedNumber = (
 			number || section.sectionId.replace(/^sec[s]?_/, "")
 		).replace(/\s+/g, "_");
-		const readableId = normalizedNumber.replace("_", " ");
+		const readableId = normalizedNumber.replaceAll("_", " ");
 
 		results.push({
 			stringId: `cgs/section/${normalizedNumber}`,

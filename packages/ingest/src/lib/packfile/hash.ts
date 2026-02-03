@@ -18,10 +18,17 @@ export async function hash64(data: Uint8Array): Promise<bigint> {
 }
 
 /**
- * Convert a 64-bit hash bigint to a hex string
+ * Convert a 64-bit hash bigint to a hex string (16 chars)
  */
 export function hash64ToHex(hash: bigint): string {
 	return hash.toString(16).padStart(16, "0");
+}
+
+/**
+ * Convert a 16-char hex string back to a 64-bit hash bigint
+ */
+export function hexToHash64(hex: string): bigint {
+	return BigInt(`0x${hex}`);
 }
 
 /**
@@ -48,26 +55,4 @@ export function verifyHashPrefix(prefix: Uint8Array, hash: bigint): boolean {
 		prefix[2] === expected[2] &&
 		prefix[3] === expected[3]
 	);
-}
-
-/**
- * Convert a 64-bit hash bigint to a signed 64-bit integer for SQLite storage.
- * SQLite stores integers as signed, so we need to handle the conversion.
- */
-export function hash64ToSqliteInt(hash: bigint): bigint {
-	// If the high bit is set, convert to negative (two's complement)
-	if (hash >= 0x8000000000000000n) {
-		return hash - 0x10000000000000000n;
-	}
-	return hash;
-}
-
-/**
- * Convert a signed 64-bit integer from SQLite back to unsigned bigint
- */
-export function sqliteIntToHash64(sqliteInt: bigint): bigint {
-	if (sqliteInt < 0n) {
-		return sqliteInt + 0x10000000000000000n;
-	}
-	return sqliteInt;
 }

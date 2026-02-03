@@ -87,7 +87,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	const nodeIdMap = new Map<string, number>();
 
 	// Initialize blob store for this source
-	const blobStore = new BlobStore(env.DB, env.STORAGE, SOURCE_CODE);
+	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
 
 	// Insert root node for source
 	const rootStringId = `cgs/root`;
