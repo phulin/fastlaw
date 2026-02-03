@@ -85,6 +85,15 @@ export function extractSectionCrossReferences(
 				continue;
 			}
 		}
+
+		if (isSectionNumber(token)) {
+			const sectionList = parseSectionList(tokens, index, true);
+			if (sectionList) {
+				references.push(...buildReferences(sectionList.items));
+				index = sectionList.nextIndex;
+				continue;
+			}
+		}
 		index += 1;
 	}
 

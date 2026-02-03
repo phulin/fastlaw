@@ -488,6 +488,13 @@ function parseSectionList(
 			nextIndex += 1;
 		}
 
+		if (
+			isTitleNumber(tokens[nextIndex]) &&
+			isUSCKeyword(tokens[nextIndex + 1])
+		) {
+			break;
+		}
+
 		const nextItem = parseSectionItem(tokens, nextIndex, defaultTitleNum);
 		if (!nextItem) break;
 
