@@ -15,9 +15,9 @@ const splitParagraphs = (text: string) =>
 		.map((paragraph) => paragraph.trim())
 		.filter(Boolean);
 
-const identifierToken = "(?:[ivxIVX]+|\\d+|[A-Za-z]{1,3})";
+const identifierToken = "(?:[ivxIVX]+|\\d+|[A-Z]{1,3}|[a-z]{1,3})";
 const identifierPattern = new RegExp(
-	`^(\\(${identifierToken}\\)|${identifierToken}\\.)(\\s+)`,
+	`^(((?:\\(${identifierToken}\\)|${identifierToken}\\.)\\s*)+)`,
 );
 
 const splitLeadingIdentifier = (text: string) => {
@@ -25,7 +25,7 @@ const splitLeadingIdentifier = (text: string) => {
 	const match = trimmed.match(identifierPattern);
 	if (!match) return { leading: null, rest: text };
 	return {
-		leading: match[1],
+		leading: match[1].trim(),
 		rest: trimmed.slice(match[0].length),
 	};
 };
