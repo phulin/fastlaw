@@ -80,7 +80,7 @@ app.get("*", async (c) => {
 	const sourceCode = pathParts[1]; // e.g., "cgs", "usc"
 
 	if (isDocumentRoute(url.pathname)) {
-		const path = url.pathname.replace(/^\/+/, "");
+		const path = url.pathname;
 
 		// Get source and version
 		const source = sourceCode ? await getSourceByCode(sourceCode) : null;

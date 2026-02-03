@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS nodes (
   sort_order INTEGER NOT NULL DEFAULT 0,
 
   -- Display info
-  label TEXT,                        -- e.g., '§ 1234'
   name TEXT,                         -- e.g., 'General Provisions'
   path TEXT,                         -- URL path segment
   readable_id TEXT,                  -- Human-readable identifier for breadcrumbs (e.g., '1-310' for CGA, '42 USC 5001' for USC)

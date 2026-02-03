@@ -21,7 +21,7 @@ interface TextParts {
 
 export interface SectionData {
 	sectionId: string;
-	label: string;
+	name: string;
 	parts: TextParts;
 }
 
@@ -77,6 +77,7 @@ export class ChapterParser {
 	private inScript = false;
 	private inStyle = false;
 	private inLabel = false;
+	private inLabelTrailing = false; // Capture text after </span> closes
 	private labelBuffer = "";
 	private currentSectionId: string | null = null;
 
@@ -124,6 +125,9 @@ export class ChapterParser {
 
 		parser.write(html);
 		parser.end();
+
+		// Finalize any pending label at end of parsing
+		this.finalizeLabel();
 	}
 
 	private handleOpenTag(tag: string, attribs: Record<string, string>): void {
@@ -173,8 +177,17 @@ export class ChapterParser {
 		}
 
 		if (tag === "br" || tag === "hr") {
+			// Finalize trailing label on line break
+			if (this.inLabelTrailing) {
+				this.finalizeLabel();
+			}
 			this.addNewline(this.currentTarget);
 			return;
+		}
+
+		// Finalize trailing label when hitting block elements
+		if (this.inLabelTrailing && ChapterParser.BLOCK_TAGS.has(tag)) {
+			this.finalizeLabel();
 		}
 
 		const newTarget = this.classifyTarget(attribs);
@@ -222,18 +235,9 @@ export class ChapterParser {
 		}
 
 		if (tag === "span" && this.inLabel) {
+			// Continue capturing trailing text after the span (e.g., "Reserved for future use.")
 			this.inLabel = false;
-			const label = decodeHtmlEntities(this.labelBuffer).trim();
-			if (this.currentSectionId && label) {
-				const section = this.sections.find(
-					(s) => s.sectionId === this.currentSectionId,
-				);
-				if (section) {
-					section.label = label;
-				}
-			}
-			this.currentSectionId = null;
-			this.labelBuffer = "";
+			this.inLabelTrailing = true;
 			return;
 		}
 
@@ -270,7 +274,7 @@ export class ChapterParser {
 		if (this.inScript || this.inStyle || this.ignoreDepth > 0) {
 			return;
 		}
-		if (this.inLabel) {
+		if (this.inLabel || this.inLabelTrailing) {
 			this.labelBuffer += text;
 			return;
 		}
@@ -281,18 +285,39 @@ export class ChapterParser {
 		// Skip HTML comments
 	}
 
+	private finalizeLabel(): void {
+		if (!this.currentSectionId) return;
+		const rawLabel = decodeHtmlEntities(this.labelBuffer).trim();
+		if (rawLabel) {
+			const section = this.sections.find(
+				(s) => s.sectionId === this.currentSectionId,
+			);
+			if (section) {
+				// Check if the label contains body content (subsection markers like (a), (1), etc.)
+				// Pattern: "Sec. X-Y. Title. (a) body content..." or similar
+				// We want to split at a subsection marker that appears after the title
+				const bodyMatch = rawLabel.match(
+					/^(Secs?\.\s+[^.]+\.\s*[^.]*\.)\s*(\([a-z0-9]+\).*)$/is,
+				);
+				if (bodyMatch?.[2]) {
+					section.name = bodyMatch[1].trim();
+					// Prepend the captured body content to the section body
+					section.parts.body.unshift(bodyMatch[2]);
+				} else {
+					section.name = rawLabel;
+				}
+			}
+		}
+		this.currentSectionId = null;
+		this.labelBuffer = "";
+		this.inLabelTrailing = false;
+	}
+
 	private startSection(sectionId: string | null): void {
 		if (!sectionId) return;
 
-		// Finish previous section's label if it was captured during parse
-		if (this.currentSectionId && this.labelBuffer) {
-			const prevSection = this.sections.find(
-				(s) => s.sectionId === this.currentSectionId,
-			);
-			if (prevSection && !prevSection.label) {
-				prevSection.label = decodeHtmlEntities(this.labelBuffer).trim();
-			}
-		}
+		// Finish previous section's label if still pending
+		this.finalizeLabel();
 
 		this.currentSectionId = sectionId;
 		this.inLabel = true;
@@ -301,7 +326,7 @@ export class ChapterParser {
 
 		this.sections.push({
 			sectionId,
-			label: "",
+			name: "",
 			parts: {
 				body: [],
 				history_short: [],
@@ -391,7 +416,7 @@ export class ChapterParser {
 	getSectionLabels(): Map<string, string> {
 		const map = new Map<string, string>();
 		for (const section of this.sections) {
-			map.set(section.sectionId, section.label || section.sectionId);
+			map.set(section.sectionId, section.name || section.sectionId);
 		}
 		return map;
 	}
@@ -638,8 +663,7 @@ export function extractSectionsFromHtml(
 			stringId: `cgs/section/${normalizedNumber}`,
 			levelName: "section",
 			levelIndex: 2,
-			label: title,
-			name: null,
+			name: title,
 			path: `/statutes/cgs/section/${derivedTitleId}/${normalizedNumber.replace(`${derivedTitleId}-`, "")}`,
 			readableId: normalizedNumber,
 			body: textBlocks.body,

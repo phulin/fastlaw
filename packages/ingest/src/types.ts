@@ -33,7 +33,6 @@ export interface Node {
 	level_name: string;
 	level_index: number;
 	sort_order: number;
-	label: string | null;
 	name: string | null;
 	path: string | null;
 	readable_id: string | null;
@@ -48,7 +47,6 @@ export interface ParsedSection {
 	stringId: string;
 	levelName: string;
 	levelIndex: number;
-	label: string | null;
 	name: string | null;
 	path: string;
 	readableId: string | null;
@@ -65,7 +63,6 @@ export interface ParsedLevel {
 	stringId: string;
 	levelName: string;
 	levelIndex: number;
-	label: string;
 	name: string | null;
 	path: string;
 	parentStringId: string | null;

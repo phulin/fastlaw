@@ -116,8 +116,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			stringId: `cgs/section/${normalizedSectionNum}`,
 			levelName: "section",
 			levelIndex: 2,
-			label: cleanTitle,
-			name: null,
+			name: cleanTitle,
 			path: `/statutes/cgs/section/${normalizedSectionNum}`,
 			readableId: normalizedSectionNum,
 			body: section.body,
@@ -151,7 +150,6 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		-1,
 		0,
 		SOURCE_NAME,
-		SOURCE_NAME,
 		`/statutes/cgs`,
 		"CGS", // readable_id for root
 		null,
@@ -184,7 +182,6 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			0,
 			i,
 			title.titleName,
-			null,
 			`/statutes/cgs/title/${normalizedTitleId}`,
 			normalizedTitleId, // readable_id
 			null,
@@ -223,7 +220,6 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			1,
 			i,
 			chapter.chapterTitle,
-			null,
 			`/statutes/cgs/chapter/${normalizedTitleId}/${normalizedChapterNum}`,
 			normalizedChapterNum, // readable_id
 			null,
@@ -308,7 +304,6 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			section.levelName,
 			section.levelIndex,
 			i,
-			section.label,
 			section.name,
 			section.path,
 			section.readableId,

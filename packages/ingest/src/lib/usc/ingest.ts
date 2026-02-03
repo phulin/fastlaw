@@ -140,7 +140,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		-1,
 		0,
 		SOURCE_NAME,
-		SOURCE_NAME,
 		`/statutes/usc`,
 		"USC", // readable_id for root
 		null,
@@ -171,7 +170,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			0,
 			i,
 			titleName,
-			null,
 			`/statutes/usc/title/${titleNum}`,
 			titleNum, // readable_id
 			null,
@@ -209,7 +207,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			1,
 			i,
 			heading,
-			null,
 			`/statutes/usc/chapter/${titleNum}/${chapterNum}`,
 			chapterNum, // readable_id
 			null,
@@ -293,7 +290,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			2,
 			i,
 			section.heading,
-			null,
 			section.path,
 			readableId,
 			blobKey,

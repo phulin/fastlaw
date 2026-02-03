@@ -48,9 +48,8 @@ const toSectionPath = (
 	return `/${node.path}`;
 };
 
-const navLabel = (
-	node: { label: string | null; name: string | null; string_id: string } | null,
-) => node?.label ?? node?.name ?? node?.string_id ?? "Section";
+const navLabel = (node: { label: string | null; string_id: string } | null) =>
+	node?.label ?? node?.string_id ?? "Section";
 
 const levelDisplayName = (levelName: string): string => {
 	const names: Record<string, string> = {
@@ -235,7 +234,7 @@ export function NodePage(props: NodePageProps) {
 											<span class="section-number">
 												{child.label ?? child.string_id}
 											</span>
-											<span class="section-title-text">{child.name}</span>
+											<span class="section-title-text">{child.label}</span>
 										</a>
 									)}
 								</For>

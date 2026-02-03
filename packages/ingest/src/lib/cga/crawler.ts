@@ -310,7 +310,7 @@ function parseChapterPage(
 function convertSection(
 	sectionData: {
 		sectionId: string;
-		label: string;
+		name: string;
 		parts: {
 			body: string[];
 			history_short: string[];
@@ -324,7 +324,7 @@ function convertSection(
 ): ParsedSectionData {
 	return {
 		sectionId: sectionData.sectionId,
-		label: sectionData.label || sectionData.sectionId,
+		label: sectionData.name || sectionData.sectionId,
 		body: formatText(sectionData.parts.body || []),
 		historyShort: formatText(sectionData.parts.history_short || []),
 		historyLong: formatText(sectionData.parts.history_long || []),

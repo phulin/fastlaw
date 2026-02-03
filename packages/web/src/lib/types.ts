@@ -29,7 +29,6 @@ export interface NodeRecord {
 	level_index: number;
 	sort_order: number;
 	label: string | null;
-	name: string | null;
 	path: string | null;
 	blob_key: string | null;
 	blob_offset: number | null;

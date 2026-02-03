@@ -1,7 +1,6 @@
 import { Show } from "solid-js";
 import type { PageData as PageDataType } from "~/lib/types";
 import DeepSearchPage from "~/pages/DeepSearch";
-import { DocumentStub } from "~/pages/DocumentStub";
 import Home from "~/pages/Home";
 import { NodePage } from "~/pages/Node";
 import SearchPage from "~/pages/Search";
@@ -32,30 +31,11 @@ export default function App(props: AppProps) {
 				<DeepSearchPage />
 			</Show>
 			<Show when={isDocumentRoute(props.pathname)} fallback={null}>
-				<Show
-					when={props.pageData?.status === "found"}
-					fallback={
-						<DocumentStub
-							path={props.pageData?.path ?? props.pathname}
-							status={props.pageData?.status ?? "missing"}
-						/>
-					}
-				>
+				<Show when={props.pageData?.status === "found"}>
 					<NodePage
 						data={props.pageData as Extract<PageData, { status: "found" }>}
 					/>
 				</Show>
-			</Show>
-			<Show
-				when={
-					props.pathname !== "/" &&
-					props.pathname !== "/search" &&
-					props.pathname !== "/deepsearch" &&
-					!isDocumentRoute(props.pathname)
-				}
-				fallback={null}
-			>
-				<DocumentStub path={props.pathname} status="missing" />
 			</Show>
 		</>
 	);
