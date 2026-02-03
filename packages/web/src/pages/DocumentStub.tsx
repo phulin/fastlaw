@@ -12,7 +12,7 @@ export function DocumentStub(props: DocumentStubProps) {
 		props.status === "missing" ? "Document not found" : "Document stub";
 	const statusCopy = () =>
 		props.status === "missing"
-			? "We could not locate a document record for this slug."
+			? "We could not locate a document record for this path."
 			: "Document rendering is not wired yet. The requested path is shown below.";
 
 	return (

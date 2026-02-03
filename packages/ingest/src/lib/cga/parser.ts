@@ -61,7 +61,11 @@ export function formatDesignatorPadded(
  */
 export function formatDesignatorDisplay(value: string | null): string | null {
 	if (!value) return value;
-	return value.toLowerCase();
+	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
+	if (!match) return value.toLowerCase();
+	const num = String(Number.parseInt(match[1], 10));
+	const suffix = match[2].toLowerCase();
+	return `${num}${suffix}`;
 }
 
 /**
@@ -162,8 +166,8 @@ export class ChapterParser {
 		if (tag === "table") {
 			const classes = this.parseClasses(attribs.class);
 			if (classes.has("nav_tbl")) {
+				// Ignore nav_tbl content but continue parsing - there are sections after each nav_tbl
 				this.ignoreDepth = 1;
-				this.stopParsing = true;
 				return;
 			}
 		}
@@ -634,9 +638,10 @@ export function extractSectionsFromHtml(
 			stringId: `cgs/section/${normalizedNumber}`,
 			levelName: "section",
 			levelIndex: 2,
-			label: label,
-			name: title,
-			slug: `statutes/cgs/section/${derivedTitleId}/${normalizedNumber.replace(`${derivedTitleId}-`, "")}`,
+			label: title,
+			name: null,
+			path: `/statutes/cgs/section/${derivedTitleId}/${normalizedNumber.replace(`${derivedTitleId}-`, "")}`,
+			readableId: normalizedNumber,
 			body: textBlocks.body,
 			historyShort: textBlocks.historyShort,
 			historyLong: textBlocks.historyLong,

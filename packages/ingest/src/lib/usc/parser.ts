@@ -31,7 +31,7 @@ interface USCSection {
 	historyShort: string;
 	historyLong: string;
 	citations: string;
-	slug: string;
+	path: string;
 	docId: string;
 	levelId: string;
 	parentLevelId: string;
@@ -115,7 +115,7 @@ export function parseUSCXml(
 			const historyShort = extractSourceCredit(elem);
 			const { historyLong, citations } = extractNotes(elem);
 
-			const slug = `statutes/usc/section/${titleNum}/${sectionNum}`;
+			const path = `/statutes/usc/section/${titleNum}/${sectionNum}`;
 			const docId = `doc_usc_${titleNum}-${sectionNum}`;
 			const levelId = `lvl_usc_section_${titleNum}-${sectionNum}`;
 			const parentLevelId = currentChapterId
@@ -132,7 +132,7 @@ export function parseUSCXml(
 				historyShort,
 				historyLong,
 				citations,
-				slug,
+				path,
 				docId,
 				levelId,
 				parentLevelId,
@@ -306,13 +306,24 @@ function getTitleName(
 	return `Title ${titleNum}`;
 }
 
+/**
+ * Strip leading zeros from a numeric string with optional letter suffix (e.g., "01" -> "1", "01a" -> "1a")
+ */
+function stripLeadingZeros(value: string): string {
+	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
+	if (!match) return value;
+	const num = String(Number.parseInt(match[1], 10));
+	const suffix = match[2].toLowerCase();
+	return `${num}${suffix}`;
+}
+
 function parseTitleFromIdentifier(ident: string | undefined): string | null {
 	if (!ident || !ident.startsWith("/us/usc/")) return null;
 	const rest = ident.substring("/us/usc/".length).replace(/^\/+|\/+$/g, "");
 	const parts = rest.split("/");
 	for (const part of parts) {
 		if (part.startsWith("t")) {
-			return part.substring(1);
+			return stripLeadingZeros(part.substring(1));
 		}
 	}
 	return null;
@@ -324,7 +335,7 @@ function parseChapterFromIdentifier(ident: string | undefined): string | null {
 	const parts = rest.split("/");
 	for (const part of parts) {
 		if (part.startsWith("ch")) {
-			return part.substring(2);
+			return stripLeadingZeros(part.substring(2));
 		}
 	}
 	return null;
@@ -336,7 +347,7 @@ function parseSectionFromIdentifier(ident: string | undefined): string | null {
 	const parts = rest.split("/");
 	for (const part of parts) {
 		if (part.startsWith("s")) {
-			return part.substring(1);
+			return stripLeadingZeros(part.substring(1));
 		}
 	}
 	return null;

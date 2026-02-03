@@ -35,7 +35,8 @@ export interface Node {
 	sort_order: number;
 	label: string | null;
 	name: string | null;
-	slug: string | null;
+	path: string | null;
+	readable_id: string | null;
 	blob_key: string | null;
 	blob_offset: number | null;
 	blob_size: number | null;
@@ -47,9 +48,10 @@ export interface ParsedSection {
 	stringId: string;
 	levelName: string;
 	levelIndex: number;
-	label: string;
+	label: string | null;
 	name: string | null;
-	slug: string;
+	path: string;
+	readableId: string | null;
 	body: string;
 	historyShort: string | null;
 	historyLong: string | null;
@@ -65,7 +67,7 @@ export interface ParsedLevel {
 	levelIndex: number;
 	label: string;
 	name: string | null;
-	slug: string;
+	path: string;
 	parentStringId: string | null;
 	sortOrder: number;
 	sourceUrl: string;

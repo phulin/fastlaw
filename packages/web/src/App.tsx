@@ -1,40 +1,16 @@
 import { Show } from "solid-js";
-import type {
-	LevelPageData,
-	NodeContent,
-	NodeRecord,
-	SourceRecord,
-	SourceVersionRecord,
-} from "~/lib/types";
+import type { PageData as PageDataType } from "~/lib/types";
 import DeepSearchPage from "~/pages/DeepSearch";
-import { DocumentPage } from "~/pages/Document";
 import { DocumentStub } from "~/pages/DocumentStub";
 import Home from "~/pages/Home";
-import { LevelPage } from "~/pages/Level";
+import { NodePage } from "~/pages/Node";
 import SearchPage from "~/pages/Search";
 
-export type DocData =
-	| {
-			status: "missing";
-			slug: string;
-	  }
-	| {
-			status: "found";
-			slug: string;
-			node: NodeRecord;
-			content: NodeContent;
-			nav: { prev: NodeRecord | null; next: NodeRecord | null } | null;
-			ancestors: NodeRecord[];
-			source: SourceRecord;
-			sourceVersion: SourceVersionRecord;
-	  };
-
-export type LevelData = LevelPageData;
+export type PageData = PageDataType;
 
 interface AppProps {
 	pathname: string;
-	docData: DocData | null;
-	levelData: LevelData | null;
+	pageData: PageData | null;
 }
 
 const isDocumentRoute = (path: string) =>
@@ -42,9 +18,6 @@ const isDocumentRoute = (path: string) =>
 	path.startsWith("/statutes/") ||
 	path === "/cases" ||
 	path.startsWith("/cases/");
-
-const isLevelRoute = (path: string) =>
-	/^\/statutes\/[^/]+\/(title|chapter|part|subchapter)\/[^/]+$/.test(path);
 
 export default function App(props: AppProps) {
 	return (
@@ -58,36 +31,18 @@ export default function App(props: AppProps) {
 			<Show when={props.pathname === "/deepsearch"} fallback={null}>
 				<DeepSearchPage />
 			</Show>
-			<Show when={isLevelRoute(props.pathname)} fallback={null}>
+			<Show when={isDocumentRoute(props.pathname)} fallback={null}>
 				<Show
-					when={props.levelData?.status === "found"}
+					when={props.pageData?.status === "found"}
 					fallback={
 						<DocumentStub
-							path={props.levelData?.slug ?? props.pathname}
-							status={props.levelData?.status ?? "missing"}
+							path={props.pageData?.path ?? props.pathname}
+							status={props.pageData?.status ?? "missing"}
 						/>
 					}
 				>
-					<LevelPage
-						data={props.levelData as Extract<LevelData, { status: "found" }>}
-					/>
-				</Show>
-			</Show>
-			<Show
-				when={isDocumentRoute(props.pathname) && !isLevelRoute(props.pathname)}
-				fallback={null}
-			>
-				<Show
-					when={props.docData?.status === "found"}
-					fallback={
-						<DocumentStub
-							path={props.docData?.slug ?? props.pathname}
-							status={props.docData?.status ?? "missing"}
-						/>
-					}
-				>
-					<DocumentPage
-						doc={props.docData as Extract<DocData, { status: "found" }>}
+					<NodePage
+						data={props.pageData as Extract<PageData, { status: "found" }>}
 					/>
 				</Show>
 			</Show>

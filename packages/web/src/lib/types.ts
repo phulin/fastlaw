@@ -23,13 +23,14 @@ export interface NodeRecord {
 	id: number;
 	source_version_id: number;
 	string_id: string;
+	readable_id: string | null;
 	parent_id: number | null;
 	level_name: string;
 	level_index: number;
 	sort_order: number;
 	label: string | null;
 	name: string | null;
-	slug: string | null;
+	path: string | null;
 	blob_key: string | null;
 	blob_offset: number | null;
 	blob_size: number | null;
@@ -46,17 +47,22 @@ export interface NodeWithSource extends NodeRecord {
 // Alias for backwards compatibility - LevelRecord is now NodeRecord
 export type LevelRecord = NodeRecord;
 
-export type LevelPageData =
-	| { status: "missing"; slug: string }
+export type PageData =
+	| { status: "missing"; path: string }
 	| {
 			status: "found";
-			slug: string;
+			path: string;
 			node: NodeRecord;
 			source: SourceRecord;
 			sourceVersion: SourceVersionRecord;
-			children: NodeRecord[];
 			ancestors: NodeRecord[];
+			content?: NodeContent;
+			nav?: { prev: NodeRecord | null; next: NodeRecord | null };
+			children?: NodeRecord[];
 	  };
+
+// Backwards compatibility alias
+export type LevelPageData = PageData;
 
 // R2 Content Types
 

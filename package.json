@@ -16,8 +16,8 @@
 		"format": "biome format --write .",
 		"check": "biome check .",
 		"check:fix": "biome check --write .",
-		"migrate:local": "wrangler d1 migrations apply fastlaw --local",
-		"migrate:remote": "wrangler d1 migrations apply fastlaw --remote"
+		"migrate:local": "wrangler d1 migrations apply --config packages/web/wrangler.toml fastlaw --local",
+		"migrate:remote": "wrangler d1 migrations apply --config packages/web/wrangler.toml fastlaw --remote"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.3.13",

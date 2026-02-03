@@ -94,16 +94,16 @@ export async function getNodeById(nodeId: number): Promise<NodeRecord | null> {
 		.first<NodeRecord>();
 }
 
-export async function getNodeBySlug(
+export async function getNodeByPath(
 	sourceVersionId: number,
-	slug: string,
+	path: string,
 ): Promise<NodeRecord | null> {
 	const db = getDB();
 	return db
 		.prepare(
-			"SELECT * FROM nodes WHERE source_version_id = ? AND slug = ? LIMIT 1",
+			"SELECT * FROM nodes WHERE source_version_id = ? AND path = ? LIMIT 1",
 		)
-		.bind(sourceVersionId, slug)
+		.bind(sourceVersionId, path)
 		.first<NodeRecord>();
 }
 
@@ -241,7 +241,7 @@ export async function getContentByBlobKey(
 
 export async function findNodeByPath(
 	sourceCode: string,
-	slugPath: string,
+	path: string,
 ): Promise<{
 	node: NodeRecord;
 	source: SourceRecord;
@@ -253,19 +253,19 @@ export async function findNodeByPath(
 	const sourceVersion = await getLatestSourceVersion(source.id);
 	if (!sourceVersion) return null;
 
-	const node = await getNodeBySlug(sourceVersion.id, slugPath);
+	const node = await getNodeByPath(sourceVersion.id, path);
 	if (!node) return null;
 
 	return { node, source, sourceVersion };
 }
 
 // Legacy compatibility aliases
-export const getLevelBySlug = async (
-	slug: string,
+export const getLevelByPath = async (
+	path: string,
 ): Promise<NodeRecord | null> => {
 	// Parse slug to extract source and path
-	// Expected format: statutes/{source}/{level_name}/{slug_part}
-	const parts = slug.split("/");
+	// Expected format: statutes/{source}/{level_name}/{slug}
+	const parts = path.slice(1).split("/");
 	if (parts.length < 4) return null;
 
 	const sourceCode = parts[1]; // e.g., "cgs" or "usc"
@@ -276,11 +276,11 @@ export const getLevelBySlug = async (
 	if (!sourceVersion) return null;
 
 	// Try to find by the full slug or just the last part
-	let node = await getNodeBySlug(sourceVersion.id, slug);
+	let node = await getNodeByPath(sourceVersion.id, path);
 	if (!node) {
 		// Try with just the identifying part
 		const slugPart = parts.slice(2).join("/");
-		node = await getNodeBySlug(sourceVersion.id, slugPart);
+		node = await getNodeByPath(sourceVersion.id, slugPart);
 	}
 	return node;
 };

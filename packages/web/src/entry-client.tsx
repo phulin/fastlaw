@@ -8,15 +8,10 @@ if (!app) {
 	throw new Error("Missing #app container for App.");
 }
 
-const docData = window.__DOC_DATA__;
-const levelData = window.__LEVEL_DATA__;
+const pageData = window.__PAGE_DATA__;
 
 const AppRoot = () => (
-	<App
-		pathname={window.location.pathname}
-		docData={docData ?? null}
-		levelData={levelData ?? null}
-	/>
+	<App pathname={window.location.pathname} pageData={pageData ?? null} />
 );
 
 if (window.__SSR__) {

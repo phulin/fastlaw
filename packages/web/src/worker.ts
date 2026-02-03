@@ -1,13 +1,12 @@
-import { parse as parseCSV } from "csv-parse/sync";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import type { DocData, LevelData } from "./App";
+import type { PageData } from "./App";
 import { render } from "./entry-server";
 import {
 	getAncestorNodes,
 	getChildNodes,
 	getLatestSourceVersion,
-	getNodeBySlug,
+	getNodeByPath,
 	getNodeContent,
 	getSiblingNodes,
 	getSourceByCode,
@@ -27,9 +26,6 @@ const isDocumentRoute = (pathname: string) =>
 	pathname.startsWith("/statutes/") ||
 	pathname === "/cases" ||
 	pathname.startsWith("/cases/");
-
-const isLevelRoute = (pathname: string) =>
-	/^\/statutes\/[^/]+\/(title|chapter|part|subchapter)\/[^/]+$/.test(pathname);
 
 const isAssetRequest = (pathname: string) =>
 	pathname.startsWith("/assets/") ||
@@ -64,125 +60,6 @@ app.post("/api/quicksearch", async (c) => handleQuickSearch(c.req.raw, c.env));
 app.options("/api/search", async (c) => handleSearch(c.req.raw, c.env));
 app.post("/api/search", async (c) => handleSearch(c.req.raw, c.env));
 
-// CSV upload for nodes table (local dev only)
-app.post("/api/upload-nodes", async (c) => {
-	const formData = await c.req.formData();
-	const file = formData.get("file");
-
-	if (!file || !(file instanceof File)) {
-		return c.json({ error: "No CSV file provided" }, 400);
-	}
-
-	const text = await file.text();
-
-	type NodeRow = {
-		id: string;
-		source_version_id: string;
-		string_id: string;
-		parent_id: string;
-		level_name: string;
-		level_index: string;
-		sort_order: string;
-		label: string;
-		name: string;
-		slug: string;
-		blob_key: string;
-		blob_offset: string;
-		blob_size: string;
-		source_url: string;
-		accessed_at: string;
-	};
-
-	let rows: NodeRow[];
-	try {
-		rows = parseCSV(text, {
-			columns: true,
-			skip_empty_lines: true,
-			relax_column_count: false,
-		}) as NodeRow[];
-	} catch (err) {
-		return c.json(
-			{
-				error: `CSV parse error: ${err instanceof Error ? err.message : String(err)}`,
-			},
-			400,
-		);
-	}
-
-	if (rows.length === 0) {
-		return c.json({ error: "CSV must have at least one data row" }, 400);
-	}
-
-	// Validate required columns from first row
-	const requiredColumns = [
-		"source_version_id",
-		"string_id",
-		"level_name",
-		"level_index",
-		"sort_order",
-	];
-	const firstRowKeys = Object.keys(rows[0]);
-	const missingColumns = requiredColumns.filter(
-		(col) => !firstRowKeys.includes(col),
-	);
-	if (missingColumns.length > 0) {
-		return c.json(
-			{ error: `Missing required columns: ${missingColumns.join(", ")}` },
-			400,
-		);
-	}
-
-	const db = c.env.DB;
-	let inserted = 0;
-	const errors: string[] = [];
-
-	for (let i = 0; i < rows.length; i++) {
-		const row = rows[i];
-		try {
-			await db
-				.prepare(`
-				INSERT OR REPLACE INTO nodes (
-					id, source_version_id, string_id, parent_id, level_name,
-					level_index, sort_order, label, name, slug,
-					blob_key, blob_offset, blob_size, source_url, accessed_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			`)
-				.bind(
-					row.id || null,
-					row.source_version_id
-						? Number.parseInt(row.source_version_id, 10)
-						: null,
-					row.string_id || null,
-					row.parent_id || null,
-					row.level_name || null,
-					row.level_index ? Number.parseInt(row.level_index, 10) : 0,
-					row.sort_order ? Number.parseInt(row.sort_order, 10) : 0,
-					row.label || null,
-					row.name || null,
-					row.slug || null,
-					row.blob_key || null,
-					row.blob_offset ? Number.parseInt(row.blob_offset, 10) : null,
-					row.blob_size ? Number.parseInt(row.blob_size, 10) : null,
-					row.source_url || null,
-					row.accessed_at || null,
-				)
-				.run();
-			inserted++;
-		} catch (err) {
-			errors.push(
-				`Row ${i + 2}: ${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
-	}
-
-	return c.json({
-		success: true,
-		inserted,
-		total: rows.length,
-		errors: errors.length > 0 ? errors : undefined,
-	});
-});
-
 app.get("*", async (c) => {
 	const url = new URL(c.req.url);
 	if (isAssetRequest(url.pathname) && c.env.ASSETS) {
@@ -195,104 +72,67 @@ app.get("*", async (c) => {
 		return c.text("Missing HTML template.", 500);
 	}
 
-	let docData: DocData | null = null;
-	let levelData: LevelData | null = null;
+	let pageData: PageData | null = null;
 
 	// Parse URL to extract source code and node path
-	// Format: /statutes/{source}/{level_name}/{slug} or /statutes/{source}/section/{title}/{section}
+	// Format: /statutes/{source}/{level_name}/{path} or /statutes/{source}/section/{title}/{section}
 	const pathParts = url.pathname.replace(/^\/+/, "").split("/");
 	const sourceCode = pathParts[1]; // e.g., "cgs", "usc"
 
-	if (isLevelRoute(url.pathname) || isDocumentRoute(url.pathname)) {
-		const slug = url.pathname.replace(/^\/+/, "");
+	if (isDocumentRoute(url.pathname)) {
+		const path = url.pathname.replace(/^\/+/, "");
 
 		// Get source and version
 		const source = sourceCode ? await getSourceByCode(sourceCode) : null;
 		if (!source) {
-			if (isLevelRoute(url.pathname)) {
-				levelData = { status: "missing", slug };
-			} else {
-				docData = { status: "missing", slug };
-			}
+			pageData = { status: "missing", path };
 		} else {
 			const sourceVersion = await getLatestSourceVersion(source.id);
 			if (!sourceVersion) {
-				if (isLevelRoute(url.pathname)) {
-					levelData = { status: "missing", slug };
-				} else {
-					docData = { status: "missing", slug };
-				}
+				pageData = { status: "missing", path };
 			} else {
-				// Build the node slug from path parts
-				// For levels: /statutes/cgs/title/21 -> title/21
-				// For sections: /statutes/cgs/section/21/1 -> section/21/1
-				const nodeSlug = pathParts.slice(2).join("/");
-
-				const node = await getNodeBySlug(sourceVersion.id, nodeSlug);
+				const node = await getNodeByPath(sourceVersion.id, path);
 				if (!node) {
-					if (isLevelRoute(url.pathname)) {
-						levelData = { status: "missing", slug };
-					} else {
-						docData = { status: "missing", slug };
-					}
-				} else if (isLevelRoute(url.pathname)) {
-					// Level route - show hierarchy
-					const children = await getChildNodes(node.id);
-					const ancestors = await getAncestorNodes(node.id);
-					levelData = {
+					pageData = { status: "missing", path };
+				} else {
+					// Fetch both content and children
+					const [content, children, ancestors] = await Promise.all([
+						getNodeContent(node),
+						getChildNodes(node.id),
+						getAncestorNodes(node.id),
+					]);
+					const nav =
+						node.parent_id != null
+							? await getSiblingNodes(node.parent_id, node.sort_order)
+							: undefined;
+					pageData = {
 						status: "found",
-						slug,
+						path,
 						node,
 						source,
 						sourceVersion,
-						children,
 						ancestors,
+						content: content ?? undefined,
+						nav,
+						children: children.length > 0 ? children : undefined,
 					};
-				} else {
-					// Document route - show content
-					const content = await getNodeContent(node);
-					if (!content) {
-						docData = { status: "missing", slug };
-					} else {
-						const nav =
-							node.parent_id != null
-								? await getSiblingNodes(node.parent_id, node.sort_order)
-								: null;
-						const ancestors = await getAncestorNodes(node.id);
-						docData = {
-							status: "found",
-							slug,
-							node,
-							content,
-							nav,
-							ancestors,
-							source,
-							sourceVersion,
-						};
-					}
 				}
 			}
 		}
 	}
 
-	const rendered = render(url.pathname, docData, levelData);
+	const rendered = render(url.pathname, pageData);
 	const ssrScript = "<script>window.__SSR__=true</script>";
-	const docScript = docData
-		? `<script>window.__DOC_DATA__=${JSON.stringify(docData)}</script>`
-		: "";
-	const levelScript = levelData
-		? `<script>window.__LEVEL_DATA__=${JSON.stringify(levelData)}</script>`
+	const pageScript = pageData
+		? `<script>window.__PAGE_DATA__=${JSON.stringify(pageData)}</script>`
 		: "";
 	const html = template
 		.replace(
 			"<!--app-head-->",
-			`${rendered.head ?? ""}${ssrScript}${docScript}${levelScript}`,
+			`${rendered.head ?? ""}${ssrScript}${pageScript}`,
 		)
 		.replace("<!--app-html-->", rendered.html ?? "");
-	const status =
-		docData?.status === "missing" || levelData?.status === "missing"
-			? 404
-			: 200;
+	const status = pageData?.status === "missing" ? 404 : 200;
 	return c.html(html, status);
 });
 

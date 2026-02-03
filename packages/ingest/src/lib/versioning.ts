@@ -200,7 +200,8 @@ export async function insertNode(
 	sortOrder: number,
 	label: string | null,
 	name: string | null,
-	slug: string | null,
+	path: string | null,
+	readableId: string | null,
 	blobKey: string | null,
 	blobOffset: number | null,
 	blobSize: number | null,
@@ -211,9 +212,9 @@ export async function insertNode(
 		.prepare(`
 			INSERT INTO nodes (
 				source_version_id, string_id, parent_id, level_name, level_index,
-				sort_order, label, name, slug, blob_key, blob_offset, blob_size,
+				sort_order, label, name, path, readable_id, blob_key, blob_offset, blob_size,
 				source_url, accessed_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		.bind(
 			versionId,
@@ -224,7 +225,8 @@ export async function insertNode(
 			sortOrder,
 			label,
 			name,
-			slug,
+			path,
+			readableId,
 			blobKey,
 			blobOffset,
 			blobSize,

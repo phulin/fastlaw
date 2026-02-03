@@ -33,7 +33,7 @@ interface USCSectionData {
 	historyShort: string;
 	historyLong: string;
 	citations: string;
-	slug: string;
+	path: string;
 	docId: string;
 	levelId: string;
 	parentLevelId: string;
@@ -141,7 +141,8 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		0,
 		SOURCE_NAME,
 		SOURCE_NAME,
-		"statutes/usc",
+		`/statutes/usc`,
+		"USC", // readable_id for root
 		null,
 		null,
 		null,
@@ -169,9 +170,10 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			"title",
 			0,
 			i,
-			titleNum,
 			titleName,
-			`statutes/usc/title/${titleNum}`,
+			null,
+			`/statutes/usc/title/${titleNum}`,
+			titleNum, // readable_id
 			null,
 			null,
 			null,
@@ -206,9 +208,10 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			"chapter",
 			1,
 			i,
-			chapterId,
 			heading,
-			`statutes/usc/chapter/${titleNum}/${chapterNum}`,
+			null,
+			`/statutes/usc/chapter/${titleNum}/${chapterNum}`,
+			chapterNum, // readable_id
 			null,
 			null,
 			null,
@@ -274,12 +277,13 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		};
 
 		// Store in R2
-		const blobKey = `${section.slug}.json`;
+		const blobKey = `${section.path}.json`;
 		const contentJson = JSON.stringify(content);
 		await env.STORAGE.put(blobKey, contentJson);
 
 		// Insert node
 		const stringId = `usc/section/${section.titleNum}-${section.sectionNum}`;
+		const readableId = `${section.titleNum} USC ${section.sectionNum}`;
 		const nodeId = await insertNode(
 			env.DB,
 			versionId,
@@ -288,9 +292,10 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			"section",
 			2,
 			i,
-			section.sectionNum,
 			section.heading,
-			section.slug,
+			null,
+			section.path,
+			readableId,
 			blobKey,
 			0,
 			contentJson.length,

@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   -- Display info
   label TEXT,                        -- e.g., '§ 1234'
   name TEXT,                         -- e.g., 'General Provisions'
-  slug TEXT,                         -- URL path segment
+  path TEXT,                         -- URL path segment
+  readable_id TEXT,                  -- Human-readable identifier for breadcrumbs (e.g., '1-310' for CGA, '42 USC 5001' for USC)
 
   -- Blob storage reference for body JSON
   blob_key TEXT,                     -- Object storage key (e.g., 'usc/2024/title-1.json')
@@ -53,7 +54,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 CREATE INDEX IF NOT EXISTS idx_nodes_version ON nodes(source_version_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id, sort_order);
-CREATE INDEX IF NOT EXISTS idx_nodes_slug ON nodes(source_version_id, slug);
+CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(source_version_id, path);
 CREATE INDEX IF NOT EXISTS idx_nodes_string_id ON nodes(string_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_source_url ON nodes(source_url);
 

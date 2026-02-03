@@ -8,7 +8,7 @@ export { extractLinks };
  */
 export interface CrawledPage {
 	url: string;
-	type: "title" | "chapter" | "index" | "other";
+	type: "title" | "chapter" | "article" | "index" | "other";
 	titleInfo?: TitleInfo;
 	chapterInfo?: ChapterInfo;
 	sections: ParsedSectionData[];
@@ -62,7 +62,7 @@ export async function crawlCGA(
 	startUrl: string,
 	fetcher?: Fetcher,
 	maxPages = 1000,
-	delayMs = 0,
+	_delayMs = 0,
 	concurrency = 20,
 ): Promise<CrawlResult> {
 	const seen = new Set<string>();
@@ -80,12 +80,12 @@ export async function crawlCGA(
 		: fetch;
 
 	// Semaphore for concurrency control
-	let activeCount = 0;
+	let _activeCount = 0;
 	const semaphore = new Semaphore(concurrency);
 
 	async function processUrl(url: string): Promise<void> {
 		await semaphore.acquire();
-		activeCount++;
+		_activeCount++;
 
 		try {
 			console.log(`Fetching: ${url}`);
@@ -145,19 +145,17 @@ export async function crawlCGA(
 				console.error(`Error fetching ${url}:`, error);
 			}
 		} finally {
-			activeCount--;
+			_activeCount--;
 			semaphore.release();
 		}
 	}
 
 	// Process queue with concurrency control
 	// First, process the start URL synchronously to get initial links
-	if (queue.length > 0) {
-		const startUrl = queue.shift()!;
-		if (!seen.has(startUrl)) {
-			seen.add(startUrl);
-			await processUrl(startUrl);
-		}
+	const nextUrl = queue.shift();
+	if (nextUrl && !seen.has(nextUrl)) {
+		seen.add(nextUrl);
+		await processUrl(nextUrl);
 	}
 
 	// Then process remaining queue with concurrency control
@@ -213,6 +211,9 @@ function parsePage(html: string, url: string): CrawledPage {
 		page.titleInfo = parseTitlePage(html, url);
 	} else if (filename.startsWith("chap_") && filename.endsWith(".htm")) {
 		page.type = "chapter";
+		page.chapterInfo = parseChapterPage(html, url, page.sections);
+	} else if (filename.startsWith("art_") && filename.endsWith(".htm")) {
+		page.type = "article";
 		page.chapterInfo = parseChapterPage(html, url, page.sections);
 	}
 

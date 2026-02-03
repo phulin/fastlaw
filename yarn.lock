@@ -25,7 +25,6 @@ __metadata:
     "@google/genai": "npm:^1.38.0"
     "@types/better-sqlite3": "npm:^7.6.12"
     better-sqlite3: "npm:^11.2.0"
-    csv-parse: "npm:^6.1.0"
     hono: "npm:^4.6.4"
     marked: "npm:^12.0.2"
     solid-js: "npm:^1.9.5"
@@ -2049,13 +2048,6 @@ __metadata:
   version: 3.2.3
   resolution: "csstype@npm:3.2.3"
   checksum: 10c0/cd29c51e70fa822f1cecd8641a1445bed7063697469d35633b516e60fe8c1bde04b08f6c5b6022136bb669b64c63d4173af54864510fbb4ee23281801841a3ce
-  languageName: node
-  linkType: hard
-
-"csv-parse@npm:^6.1.0":
-  version: 6.1.0
-  resolution: "csv-parse@npm:6.1.0"
-  checksum: 10c0/098c69e5b3b50d4bf65401dc3b2f1bd66f272fe985be99d7cb9f14ad33a7218f0f5695a03a82720cf47141d242bf44b4836ff32900751bef087057bc6e6715a2
   languageName: node
   linkType: hard
 
