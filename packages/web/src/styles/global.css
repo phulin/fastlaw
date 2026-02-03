@@ -48,9 +48,11 @@ body {
 }
 
 .logo {
-	font-weight: 600;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+	font-family: "Newsreader", serif;
+	font-size: 1.5rem;
+	font-weight: 500;
+	text-decoration: none;
+	color: var(--ink);
 }
 
 .nav {

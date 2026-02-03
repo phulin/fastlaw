@@ -2,7 +2,7 @@ export function Header() {
 	return (
 		<header class="site-header">
 			<a href="/" class="logo">
-				FastLaw
+				fast.law
 			</a>
 			<nav class="nav">
 				<a href="/#method">Method</a>

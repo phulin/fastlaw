@@ -1,4 +1,5 @@
 import type {
+	BlobRecord,
 	Env,
 	NodeContent,
 	NodeRecord,
@@ -25,6 +26,67 @@ function getDB(): D1Database {
 
 function getStorage(): R2Bucket {
 	return getEnv().STORAGE;
+}
+
+const NODE_SELECT = `
+	id,
+	source_version_id,
+	string_id,
+	readable_id,
+	parent_id,
+	level_name,
+	level_index,
+	sort_order,
+	name,
+	path,
+	CAST(blob_hash AS TEXT) AS blob_hash,
+	source_url,
+	accessed_at
+`;
+
+function sqliteIntToHash64(sqliteInt: bigint | number | string): bigint {
+	const val = BigInt(sqliteInt);
+	if (val < 0n) {
+		return val + 0x10000000000000000n;
+	}
+	return val;
+}
+
+function hash64ToPrefixBytes(hash: bigint): Uint8Array {
+	const bytes = new Uint8Array(8);
+	for (let i = 0; i < 8; i += 1) {
+		const shift = BigInt(56 - i * 8);
+		bytes[i] = Number((hash >> shift) & 0xffn);
+	}
+	return bytes;
+}
+
+function prefixMatches(prefix: Uint8Array, expected: Uint8Array): boolean {
+	if (prefix.length !== expected.length) return false;
+	for (let i = 0; i < prefix.length; i += 1) {
+		if (prefix[i] !== expected[i]) return false;
+	}
+	return true;
+}
+
+async function decompressGzip(data: Uint8Array): Promise<Uint8Array> {
+	const stream = new DecompressionStream("gzip");
+	const writer = stream.writable.getWriter();
+	const chunk = new Uint8Array(data) as Uint8Array<ArrayBuffer>;
+	await writer.write(chunk);
+	await writer.close();
+	const decompressed = await new Response(stream.readable).arrayBuffer();
+	return new Uint8Array(decompressed);
+}
+
+async function getBlobLocationByHash(hash: string): Promise<BlobRecord | null> {
+	const db = getDB();
+	return db
+		.prepare(
+			"SELECT hash, packfile_key, offset, size FROM blobs WHERE hash = ?",
+		)
+		.bind(hash)
+		.first<BlobRecord>();
 }
 
 // Sources
@@ -89,7 +151,7 @@ export async function getSourceVersionById(
 export async function getNodeById(nodeId: number): Promise<NodeRecord | null> {
 	const db = getDB();
 	return db
-		.prepare("SELECT * FROM nodes WHERE id = ?")
+		.prepare(`SELECT ${NODE_SELECT} FROM nodes WHERE id = ?`)
 		.bind(nodeId)
 		.first<NodeRecord>();
 }
@@ -101,7 +163,8 @@ export async function getNodeByPath(
 	const db = getDB();
 	return db
 		.prepare(
-			"SELECT * FROM nodes WHERE source_version_id = ? AND path = ? LIMIT 1",
+			`SELECT ${NODE_SELECT} FROM nodes
+       WHERE source_version_id = ? AND path = ? LIMIT 1`,
 		)
 		.bind(sourceVersionId, path)
 		.first<NodeRecord>();
@@ -114,7 +177,8 @@ export async function getNodeByStringId(
 	const db = getDB();
 	return db
 		.prepare(
-			"SELECT * FROM nodes WHERE source_version_id = ? AND string_id = ? LIMIT 1",
+			`SELECT ${NODE_SELECT} FROM nodes
+       WHERE source_version_id = ? AND string_id = ? LIMIT 1`,
 		)
 		.bind(sourceVersionId, stringId)
 		.first<NodeRecord>();
@@ -126,7 +190,8 @@ export async function getRootNode(
 	const db = getDB();
 	return db
 		.prepare(
-			"SELECT * FROM nodes WHERE source_version_id = ? AND parent_id IS NULL LIMIT 1",
+			`SELECT ${NODE_SELECT} FROM nodes
+       WHERE source_version_id = ? AND parent_id IS NULL LIMIT 1`,
 		)
 		.bind(sourceVersionId)
 		.first<NodeRecord>();
@@ -135,7 +200,10 @@ export async function getRootNode(
 export async function getChildNodes(parentId: number): Promise<NodeRecord[]> {
 	const db = getDB();
 	const result = await db
-		.prepare("SELECT * FROM nodes WHERE parent_id = ? ORDER BY sort_order")
+		.prepare(
+			`SELECT ${NODE_SELECT} FROM nodes
+       WHERE parent_id = ? ORDER BY sort_order`,
+		)
 		.bind(parentId)
 		.all<NodeRecord>();
 	return result.results;
@@ -147,7 +215,7 @@ export async function getTopLevelNodes(
 	const db = getDB();
 	const result = await db
 		.prepare(
-			`SELECT * FROM nodes
+			`SELECT ${NODE_SELECT} FROM nodes
        WHERE source_version_id = ? AND parent_id IS NULL
        ORDER BY sort_order`,
 		)
@@ -163,7 +231,7 @@ export async function getSiblingNodes(
 	const db = getDB();
 	const prev = await db
 		.prepare(
-			`SELECT * FROM nodes
+			`SELECT ${NODE_SELECT} FROM nodes
        WHERE parent_id = ? AND sort_order < ?
        ORDER BY sort_order DESC
        LIMIT 1`,
@@ -172,7 +240,7 @@ export async function getSiblingNodes(
 		.first<NodeRecord>();
 	const next = await db
 		.prepare(
-			`SELECT * FROM nodes
+			`SELECT ${NODE_SELECT} FROM nodes
        WHERE parent_id = ? AND sort_order > ?
        ORDER BY sort_order ASC
        LIMIT 1`,
@@ -192,7 +260,7 @@ export async function getAncestorNodes(nodeId: number): Promise<NodeRecord[]> {
         SELECT n.* FROM nodes n
         INNER JOIN ancestors a ON n.id = a.parent_id
       )
-      SELECT * FROM ancestors
+      SELECT ${NODE_SELECT} FROM ancestors
       ORDER BY level_index ASC`,
 		)
 		.bind(nodeId)
@@ -205,36 +273,34 @@ export async function getAncestorNodes(nodeId: number): Promise<NodeRecord[]> {
 export async function getNodeContent(
 	node: NodeRecord,
 ): Promise<NodeContent | null> {
-	if (!node.blob_key) return null;
-
 	const storage = getStorage();
+	if (node.blob_hash == null) return null;
 
-	// Use range read if offset and size are specified
-	if (node.blob_offset != null && node.blob_size != null) {
-		const object = await storage.get(node.blob_key, {
-			range: {
-				offset: node.blob_offset,
-				length: node.blob_size,
-			},
-		});
-		if (!object) return null;
-		const text = await object.text();
-		return JSON.parse(text) as NodeContent;
+	const blob = await getBlobLocationByHash(node.blob_hash);
+	if (!blob) return null;
+
+	const object = await storage.get(blob.packfile_key, {
+		range: {
+			offset: blob.offset,
+			length: blob.size,
+		},
+	});
+	if (!object) return null;
+
+	const entryData = new Uint8Array(await object.arrayBuffer());
+	if (entryData.length < 8) {
+		throw new Error(`Blob entry too small in ${blob.packfile_key}`);
 	}
 
-	// Otherwise read the whole blob
-	const object = await storage.get(node.blob_key);
-	if (!object) return null;
-	return object.json<NodeContent>();
-}
+	const expected = hash64ToPrefixBytes(sqliteIntToHash64(node.blob_hash));
+	const prefix = entryData.slice(0, 8);
+	if (!prefixMatches(prefix, expected)) {
+		throw new Error(`Blob hash prefix mismatch for ${blob.packfile_key}`);
+	}
 
-export async function getContentByBlobKey(
-	blobKey: string,
-): Promise<NodeContent | null> {
-	const storage = getStorage();
-	const object = await storage.get(blobKey);
-	if (!object) return null;
-	return object.json<NodeContent>();
+	const content = await decompressGzip(entryData.slice(8));
+	const text = new TextDecoder().decode(content);
+	return JSON.parse(text) as NodeContent;
 }
 
 // Convenience functions for URL-based lookups

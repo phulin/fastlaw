@@ -71,11 +71,12 @@ export async function crawlCGA(
 
 	async function processUrl(url: string): Promise<void> {
 		await semaphore.acquire();
+		let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 		try {
 			logger.info(`Fetching: ${url}`);
 			const controller = new AbortController();
-			const timeoutId = setTimeout(() => controller.abort(), cfg.timeoutMs);
+			timeoutId = setTimeout(() => controller.abort(), cfg.timeoutMs);
 			const response = await doFetch(url, {
 				signal: controller.signal,
 				headers: {
@@ -85,6 +86,7 @@ export async function crawlCGA(
 				},
 			});
 			clearTimeout(timeoutId);
+			timeoutId = null;
 
 			logger.debug(`Response status for ${url}: ${response.status}`);
 
@@ -131,6 +133,9 @@ export async function crawlCGA(
 				logger.error(`Error fetching ${url}:`, error);
 			}
 		} finally {
+			if (timeoutId !== null) {
+				clearTimeout(timeoutId);
+			}
 			semaphore.release();
 		}
 	}

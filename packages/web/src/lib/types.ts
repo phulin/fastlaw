@@ -19,7 +19,6 @@ export interface SourceVersionRecord {
 	created_at: string | null;
 }
 
-// Unified node record - replaces LevelRecord, DocumentRecord, TitleRecord, etc.
 export interface NodeRecord {
 	id: number;
 	source_version_id: number;
@@ -31,11 +30,17 @@ export interface NodeRecord {
 	sort_order: number;
 	name: string | null;
 	path: string | null;
-	blob_key: string | null;
-	blob_offset: number | null;
-	blob_size: number | null;
+	blob_hash: string | null; // xxhash64 stored as signed 64-bit int (string to avoid precision loss)
 	source_url: string | null;
 	accessed_at: string | null;
+}
+
+// Blob location from blobs table
+export interface BlobRecord {
+	hash: string;
+	packfile_key: string;
+	offset: number;
+	size: number;
 }
 
 // Extended node with source info for convenience

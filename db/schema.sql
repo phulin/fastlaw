@@ -1,5 +1,5 @@
--- Metadata only; body JSON stored in object storage with range reads
--- Blobs grouped by source + top-level division (e.g., usc/2024/title-1.json)
+-- Metadata only; body JSON stored in .pack packfiles in object storage
+-- Blobs indexed by xxhash64 for deduplication and efficient lookup
 
 CREATE TABLE IF NOT EXISTS sources (
   id INTEGER PRIMARY KEY,
@@ -9,6 +9,15 @@ CREATE TABLE IF NOT EXISTS sources (
   region TEXT NOT NULL,              -- 'US', 'CT', 'NY'
   doc_type TEXT NOT NULL             -- 'statute', 'regulation', 'case'
 );
+
+CREATE TABLE IF NOT EXISTS blobs (
+  hash INTEGER PRIMARY KEY,           -- xxhash64 of blob content (signed 64-bit)
+  packfile_key TEXT NOT NULL,         -- R2 key (e.g., 'cgs/pack-abc123def456.pack')
+  offset INTEGER NOT NULL,            -- Byte offset within uncompressed tar
+  size INTEGER NOT NULL               -- Blob compressed size in bytes
+);
+
+CREATE INDEX IF NOT EXISTS idx_blobs_packfile ON blobs(packfile_key);
 
 CREATE TABLE IF NOT EXISTS source_versions (
   id INTEGER PRIMARY KEY,
@@ -39,10 +48,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   path TEXT,                         -- URL path segment
   readable_id TEXT,                  -- Human-readable identifier for breadcrumbs (e.g., '1-310' for CGA, '42 USC 5001' for USC)
 
-  -- Blob storage reference for body JSON
-  blob_key TEXT,                     -- Object storage key (e.g., 'usc/2024/title-1.json')
-  blob_offset INTEGER,               -- Range read start byte
-  blob_size INTEGER,                 -- Range read length in bytes
+  -- Blob reference (hash into blobs table)
+  blob_hash INTEGER,
 
   -- Source tracking
   source_url TEXT,                   -- Original URL this data was fetched from
@@ -56,6 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_nodes_path ON nodes(source_version_id, path);
 CREATE INDEX IF NOT EXISTS idx_nodes_string_id ON nodes(string_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_source_url ON nodes(source_url);
+CREATE INDEX IF NOT EXISTS idx_nodes_blob_hash ON nodes(blob_hash);
 
 -- Add FK from source_versions.root_node_id after nodes table exists
 -- (SQLite doesn't enforce FKs by default anyway)

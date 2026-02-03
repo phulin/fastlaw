@@ -14,14 +14,14 @@
 	"dependencies": {
 		"@google/genai": "^1.38.0",
 		"@solidjs/meta": "^0.29.4",
+		"fzstd": "^0.1.1",
 		"hono": "^4.6.4",
 		"marked": "^12.0.2",
-		"solid-js": "^1.9.5"
+		"solid-js": "^1.9.5",
+		"xxhash-wasm": "^1.1.0"
 	},
 	"devDependencies": {
 		"@cloudflare/vite-plugin": "^1.22.1",
-		"@types/better-sqlite3": "^7.6.12",
-		"better-sqlite3": "^11.2.0",
 		"tsx": "^4.21.0",
 		"vite": "^6.1.1",
 		"vite-plugin-solid": "^2.10.0"

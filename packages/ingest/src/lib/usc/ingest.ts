@@ -1,4 +1,5 @@
 import type { Env, IngestionResult } from "../../types";
+import { BlobStore } from "../packfile";
 import {
 	computeDiff,
 	getLatestVersion,
@@ -131,6 +132,9 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	let nodesCreated = 0;
 	const nodeIdMap = new Map<string, number>();
 
+	// Initialize blob store for this source
+	const blobStore = new BlobStore(env.DB, env.STORAGE, SOURCE_CODE);
+
 	// Insert root node
 	const rootStringId = "usc/root";
 	const rootNodeId = await insertNode(
@@ -144,8 +148,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		SOURCE_NAME,
 		`/statutes/usc`,
 		"USC", // readable_id for root
-		null,
-		null,
 		null,
 		env.USC_DOWNLOAD_BASE,
 		accessedAt,
@@ -174,8 +176,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			titleName,
 			`/statutes/usc/title/${titleNum}`,
 			titleNum, // readable_id
-			null,
-			null,
 			null,
 			`https://uscode.house.gov/download/releasepoints/us/pl/usc${titleNum.padStart(2, "0")}.xml`,
 			accessedAt,
@@ -211,8 +211,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			heading,
 			`/statutes/usc/chapter/${titleNum}/${chapterNum}`,
 			chapterNum, // readable_id
-			null,
-			null,
 			null,
 			null,
 			accessedAt,
@@ -275,10 +273,8 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			],
 		};
 
-		// Store in R2
-		const blobKey = `${section.path}.json`;
-		const contentJson = JSON.stringify(content);
-		await env.STORAGE.put(blobKey, contentJson);
+		// Store in packfile
+		const blobHash = await blobStore.storeJson(content);
 
 		// Insert node
 		const stringId = `usc/section/${section.titleNum}-${section.sectionNum}`;
@@ -294,9 +290,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			section.heading,
 			section.path,
 			readableId,
-			blobKey,
-			0,
-			contentJson.length,
+			blobHash,
 			null,
 			accessedAt,
 		);
@@ -307,6 +301,9 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			console.log(`Created ${nodesCreated} nodes...`);
 		}
 	}
+
+	// Flush any remaining blobs to packfiles
+	await blobStore.flush();
 
 	// Set root node ID
 	await setRootNodeId(env.DB, versionId, rootNodeId);

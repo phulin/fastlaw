@@ -41,9 +41,7 @@ export interface NodeMeta {
 }
 
 export interface Node extends NodeMeta {
-	blob_key: string | null;
-	blob_offset: number | null;
-	blob_size: number | null;
+	blob_hash: bigint | null;
 }
 
 export interface DiffResult {

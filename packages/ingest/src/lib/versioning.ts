@@ -1,4 +1,7 @@
-import type { DiffResult, SourceVersion } from "../types";
+import type { DiffResult, Node, SourceVersion } from "../types";
+import { hash64ToSqliteInt } from "./packfile/hash";
+
+export type NodeInsert = Omit<Node, "id">;
 
 /**
  * Get or create a source by its code
@@ -132,6 +135,10 @@ export async function computeDiff(
 	oldVersionId: number,
 	newVersionId: number,
 ): Promise<DiffResult> {
+	if (oldVersionId === newVersionId) {
+		return { added: [], removed: [], modified: [] };
+	}
+
 	// Get all string_ids from old version
 	const oldNodes = await db
 		.prepare("SELECT string_id FROM nodes WHERE source_version_id = ?")
@@ -155,42 +162,22 @@ export async function computeDiff(
 
 	// For modified, we need to compare content
 	// This is more complex - for now, just check nodes that exist in both
-	const common = [...newSet].filter((id) => oldSet.has(id));
+	const modifiedRows = await db
+		.prepare(
+			`
+			SELECT new_nodes.string_id
+			FROM nodes new_nodes
+			JOIN nodes old_nodes
+				ON old_nodes.source_version_id = ?
+				AND old_nodes.string_id = new_nodes.string_id
+			WHERE new_nodes.source_version_id = ?
+				AND old_nodes.blob_hash IS NOT new_nodes.blob_hash
+		`,
+		)
+		.bind(oldVersionId, newVersionId)
+		.all<{ string_id: string }>();
 
-	// Compare blob references or content for modified detection
-	const modified: string[] = [];
-	for (const stringId of common) {
-		const oldNode = await db
-			.prepare(
-				"SELECT blob_key, blob_offset, blob_size FROM nodes WHERE source_version_id = ? AND string_id = ?",
-			)
-			.bind(oldVersionId, stringId)
-			.first<{
-				blob_key: string | null;
-				blob_offset: number | null;
-				blob_size: number | null;
-			}>();
-
-		const newNode = await db
-			.prepare(
-				"SELECT blob_key, blob_offset, blob_size FROM nodes WHERE source_version_id = ? AND string_id = ?",
-			)
-			.bind(newVersionId, stringId)
-			.first<{
-				blob_key: string | null;
-				blob_offset: number | null;
-				blob_size: number | null;
-			}>();
-
-		// If blob references differ, mark as modified
-		if (
-			oldNode?.blob_key !== newNode?.blob_key ||
-			oldNode?.blob_offset !== newNode?.blob_offset ||
-			oldNode?.blob_size !== newNode?.blob_size
-		) {
-			modified.push(stringId);
-		}
-	}
+	const modified = modifiedRows.results.map((row) => row.string_id);
 
 	return { added, removed, modified };
 }
@@ -209,19 +196,20 @@ export async function insertNode(
 	name: string | null,
 	path: string | null,
 	readableId: string | null,
-	blobKey: string | null,
-	blobOffset: number | null,
-	blobSize: number | null,
+	blobHash: bigint | null,
 	sourceUrl: string | null,
 	accessedAt: string | null,
 ): Promise<number> {
+	const blobHashValue =
+		blobHash !== null ? hash64ToSqliteInt(blobHash).toString() : null;
+
 	const result = await db
 		.prepare(`
 			INSERT INTO nodes (
 				source_version_id, string_id, parent_id, level_name, level_index,
-				sort_order, name, path, readable_id, blob_key, blob_offset, blob_size,
+				sort_order, name, path, readable_id, blob_hash,
 				source_url, accessed_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		.bind(
 			versionId,
@@ -233,9 +221,7 @@ export async function insertNode(
 			name,
 			path,
 			readableId,
-			blobKey,
-			blobOffset,
-			blobSize,
+			blobHashValue,
 			sourceUrl,
 			accessedAt,
 		)
@@ -260,4 +246,63 @@ export async function getNodeIdByStringId(
 		.first<{ id: number }>();
 
 	return result?.id ?? null;
+}
+
+const BATCH_SIZE = 50;
+
+/**
+ * Insert multiple nodes in batches for better performance.
+ * Returns a map from stringId to nodeId.
+ */
+export async function insertNodesBatched(
+	db: D1Database,
+	nodes: NodeInsert[],
+): Promise<Map<string, number>> {
+	const nodeIdMap = new Map<string, number>();
+
+	for (let i = 0; i < nodes.length; i += BATCH_SIZE) {
+		const batch = nodes.slice(i, i + BATCH_SIZE);
+		const statements = batch.map((node) => {
+			const blobHashValue =
+				node.blob_hash !== null
+					? hash64ToSqliteInt(node.blob_hash).toString()
+					: null;
+
+			return db
+				.prepare(
+					`INSERT INTO nodes (
+						source_version_id, string_id, parent_id, level_name, level_index,
+						sort_order, name, path, readable_id, blob_hash,
+						source_url, accessed_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.bind(
+					node.source_version_id,
+					node.string_id,
+					node.parent_id,
+					node.level_name,
+					node.level_index,
+					node.sort_order,
+					node.name,
+					node.path,
+					node.readable_id,
+					blobHashValue,
+					node.source_url,
+					node.accessed_at,
+				);
+		});
+
+		const results = await db.batch(statements);
+
+		for (let j = 0; j < batch.length; j++) {
+			const nodeId = results[j].meta.last_row_id as number;
+			nodeIdMap.set(batch[j].string_id, nodeId);
+		}
+
+		if ((i + batch.length) % 1000 === 0 || i + batch.length === nodes.length) {
+			console.log(`Inserted ${i + batch.length}/${nodes.length} nodes...`);
+		}
+	}
+
+	return nodeIdMap;
 }

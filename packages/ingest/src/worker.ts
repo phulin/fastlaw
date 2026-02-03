@@ -42,14 +42,24 @@ app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
 
 // Trigger CGA ingestion
 app.post("/api/ingest/cga", async (c) => {
-	const result = await ingestCGA(c.env);
-	return c.json(result);
+	try {
+		const result = await ingestCGA(c.env);
+		return c.json(result);
+	} catch (error) {
+		console.error("CGA ingest failed:", error);
+		return c.json({ error: "CGA ingest failed" }, 500);
+	}
 });
 
 // Trigger USC ingestion
 app.post("/api/ingest/usc", async (c) => {
-	const result = await ingestUSC(c.env);
-	return c.json(result);
+	try {
+		const result = await ingestUSC(c.env);
+		return c.json(result);
+	} catch (error) {
+		console.error("USC ingest failed:", error);
+		return c.json({ error: "USC ingest failed" }, 500);
+	}
 });
 
 export default app;

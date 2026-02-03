@@ -1,10 +1,13 @@
 import type { Env, IngestionResult } from "../../types";
+import { BlobStore } from "../packfile";
 import {
 	computeDiff,
 	getLatestVersion,
 	getOrCreateSource,
 	getOrCreateSourceVersion,
 	insertNode,
+	insertNodesBatched,
+	type NodeInsert,
 	setRootNodeId,
 } from "../versioning";
 import { crawlCGA } from "./crawler";
@@ -14,6 +17,18 @@ const SOURCE_CODE = "cgs";
 const SOURCE_NAME = "Connecticut General Statutes";
 const SECTION_NAME_TEMPLATE = "CGS § %ID%";
 
+async function withContext<T>(
+	label: string,
+	action: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await action();
+	} catch (error) {
+		console.error(`[CGA] ${label} failed:`, error);
+		throw error;
+	}
+}
+
 /**
  * Main CGA ingestion function
  */
@@ -22,33 +37,37 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	const accessedAt = new Date().toISOString();
 
 	// Get or create source
-	const sourceId = await getOrCreateSource(
-		env.DB,
-		SOURCE_CODE,
-		SOURCE_NAME,
-		"state",
-		"CT",
-		"statute",
-		SECTION_NAME_TEMPLATE,
+	const sourceId = await withContext("getOrCreateSource", () =>
+		getOrCreateSource(
+			env.DB,
+			SOURCE_CODE,
+			SOURCE_NAME,
+			"state",
+			"CT",
+			"statute",
+			SECTION_NAME_TEMPLATE,
+		),
 	);
 
 	// Get latest version for diff comparison
-	const previousVersion = await getLatestVersion(env.DB, sourceId);
+	const previousVersion = await withContext("getLatestVersion", () =>
+		getLatestVersion(env.DB, sourceId),
+	);
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
-	const versionId = await getOrCreateSourceVersion(
-		env.DB,
-		sourceId,
-		versionDate,
+	const versionId = await withContext("getOrCreateSourceVersion", () =>
+		getOrCreateSourceVersion(env.DB, sourceId, versionDate),
 	);
 
 	// Crawl CGA website - now returns structured data directly
 	console.log(`Starting CGA crawl from ${startUrl}`);
-	const result = await crawlCGA(startUrl, env.GODADDY_CA, {
-		maxPages: 2000,
-		concurrency: 20,
-	});
+	const result = await withContext("crawlCGA", () =>
+		crawlCGA(startUrl, env.GODADDY_CA, {
+			maxPages: 2000,
+			concurrency: 20,
+		}),
+	);
 	console.log(
 		`Crawled ${result.titles.size} titles, ${result.chapters.size} chapters, ${result.sections.length} sections`,
 	);
@@ -68,24 +87,27 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	let nodesCreated = 0;
 	const nodeIdMap = new Map<string, number>();
 
+	// Initialize blob store for this source
+	const blobStore = new BlobStore(env.DB, env.STORAGE, SOURCE_CODE);
+
 	// Insert root node for source
 	const rootStringId = `cgs/root`;
-	const rootNodeId = await insertNode(
-		env.DB,
-		versionId,
-		rootStringId,
-		null,
-		"root",
-		-1,
-		0,
-		SOURCE_NAME,
-		`/statutes/cgs`,
-		"CGS", // readable_id for root
-		null,
-		null,
-		null,
-		startUrl,
-		accessedAt,
+	const rootNodeId = await withContext("insertNode(root)", () =>
+		insertNode(
+			env.DB,
+			versionId,
+			rootStringId,
+			null,
+			"root",
+			-1,
+			0,
+			SOURCE_NAME,
+			`/statutes/cgs`,
+			"CGS", // readable_id for root
+			null,
+			startUrl,
+			accessedAt,
+		),
 	);
 	nodeIdMap.set(rootStringId, rootNodeId);
 	nodesCreated++;
@@ -112,22 +134,22 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		}
 		seenTitleIds.add(stringId);
 
-		const nodeId = await insertNode(
-			env.DB,
-			versionId,
-			stringId,
-			rootNodeId,
-			"title",
-			0,
-			i,
-			title.titleName,
-			`/statutes/cgs/title/${normalizedTitleId}`,
-			normalizedTitleId, // readable_id
-			null,
-			null,
-			null,
-			title.sourceUrl,
-			accessedAt,
+		const nodeId = await withContext(`insertNode(title:${stringId})`, () =>
+			insertNode(
+				env.DB,
+				versionId,
+				stringId,
+				rootNodeId,
+				"title",
+				0,
+				i,
+				title.titleName,
+				`/statutes/cgs/title/${normalizedTitleId}`,
+				normalizedTitleId, // readable_id
+				null,
+				title.sourceUrl,
+				accessedAt,
+			),
 		);
 		nodeIdMap.set(stringId, nodeId);
 		nodesCreated++;
@@ -163,31 +185,35 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			`Adding ${chapter.type}: ${stringId} (raw chapterId: ${chapter.chapterId}, normalized: ${normalizedChapterNum})`,
 		);
 
-		const nodeId = await insertNode(
-			env.DB,
-			versionId,
-			stringId,
-			parentId,
-			chapter.type,
-			1,
-			i,
-			chapter.chapterTitle,
-			`/statutes/cgs/${chapter.type}/${normalizedTitleId}/${normalizedChapterNum}`,
-			normalizedChapterNum, // readable_id
-			null,
-			null,
-			null,
-			chapter.sourceUrl,
-			accessedAt,
+		const nodeId = await withContext(
+			`insertNode(${chapter.type}:${stringId})`,
+			() =>
+				insertNode(
+					env.DB,
+					versionId,
+					stringId,
+					parentId,
+					chapter.type,
+					1,
+					i,
+					chapter.chapterTitle,
+					`/statutes/cgs/${chapter.type}/${normalizedTitleId}/${normalizedChapterNum}`,
+					normalizedChapterNum, // readable_id
+					null,
+					chapter.sourceUrl,
+					accessedAt,
+				),
 		);
 		nodeIdMap.set(stringId, nodeId);
 		nodesCreated++;
 	}
 
-	// Insert sections and store content in R2
+	// Process sections: store content in R2 and prepare for batched insert
 	// Track seen section stringIds to detect duplicates
 	const seenSectionIds = new Set<string>();
+	const sectionNodes: NodeInsert[] = [];
 
+	console.log(`Processing ${result.sections.length} sections...`);
 	for (let i = 0; i < result.sections.length; i++) {
 		const section = result.sections[i];
 
@@ -206,9 +232,6 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 		// Create content JSON
 		const content = {
-			version: 2,
-			doc_id: `doc_${section.stringId.replace(/\//g, "_")}`,
-			doc_type: "statute",
 			blocks: [
 				{ type: "body", content: section.body },
 				...(section.historyShort
@@ -241,50 +264,65 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			],
 		};
 
-		// Store in R2
-		const blobKey = `${section.path}.json`;
-		const contentJson = JSON.stringify(content);
-		const contentBytes = new TextEncoder().encode(contentJson);
-		await env.STORAGE.put(blobKey, contentBytes);
-
-		// Insert node with blob reference
-		const nodeId = await insertNode(
-			env.DB,
-			versionId,
-			section.stringId,
-			parentId,
-			section.levelName,
-			section.levelIndex,
-			i,
-			section.name,
-			section.path,
-			section.readableId,
-			blobKey,
-			0,
-			contentBytes.length,
-			section.sourceUrl,
-			accessedAt,
+		// Store in packfile
+		const blobHash = await withContext(`storeJson(${section.stringId})`, () =>
+			blobStore.storeJson(content),
 		);
-		nodeIdMap.set(section.stringId, nodeId);
-		nodesCreated++;
 
-		if (nodesCreated % 100 === 0) {
-			console.log(`Created ${nodesCreated} nodes...`);
+		// Collect node for batched insert
+		sectionNodes.push({
+			source_version_id: versionId,
+			string_id: section.stringId,
+			parent_id: parentId,
+			level_name: section.levelName,
+			level_index: section.levelIndex,
+			sort_order: i,
+			name: section.name,
+			path: section.path,
+			readable_id: section.readableId,
+			blob_hash: blobHash,
+			source_url: section.sourceUrl,
+			accessed_at: accessedAt,
+		});
+
+		if ((i + 1) % 1000 === 0) {
+			console.log(`Processed ${i + 1}/${result.sections.length} sections...`);
 		}
 	}
 
+	// Batch insert all section nodes
+	console.log(`Inserting ${sectionNodes.length} section nodes in batches...`);
+	const sectionNodeIds = await withContext("insertNodesBatched", () =>
+		insertNodesBatched(env.DB, sectionNodes),
+	);
+	for (const [stringId, nodeId] of sectionNodeIds) {
+		nodeIdMap.set(stringId, nodeId);
+	}
+	nodesCreated += sectionNodes.length;
+
+	// Flush any remaining blobs to packfiles
+	await withContext("blobStore.flush", () => blobStore.flush());
+	console.log("Flushed all blobs to storage.");
+
 	// Set root node ID
-	await setRootNodeId(env.DB, versionId, rootNodeId);
+	await withContext("setRootNodeId", () =>
+		setRootNodeId(env.DB, versionId, rootNodeId),
+	);
+	console.log("Set root note ID.");
 
 	// Compute diff if there was a previous version
 	let diff = null;
 	if (previousVersion) {
-		diff = await computeDiff(env.DB, previousVersion.id, versionId);
+		console.log("Computing diff...");
+		diff = await withContext("computeDiff", () =>
+			computeDiff(env.DB, previousVersion.id, versionId),
+		);
 		console.log(
 			`Diff: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.modified.length} modified`,
 		);
 	}
 
+	console.log("Ingestion complete!");
 	return {
 		sourceVersionId: versionId,
 		nodesCreated,
