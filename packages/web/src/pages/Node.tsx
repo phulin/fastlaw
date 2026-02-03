@@ -1,3 +1,4 @@
+import { Title } from "@solidjs/meta";
 import { For, Show } from "solid-js";
 import { Breadcrumbs } from "~/components/Breadcrumbs";
 import { Footer } from "~/components/Footer";
@@ -36,38 +37,12 @@ const getIndentClass = (text: string) => {
 	if (/^[a-z]$/i.test(token)) return "indent-1";
 	if (/^\d+$/.test(token)) return "indent-2";
 	if (/^[ivx]+$/i.test(token)) return "indent-3";
-	if (/^[A-Z]$/.test(token)) return "indent-4";
+	if (/^[A-Z]$/i.test(token)) return "indent-4";
 	return "indent-1";
 };
 
-const toSectionPath = (
-	node: { path: string | null; string_id: string } | null,
-	sourceCode: string,
-) => {
-	if (!node?.path) return null;
-	return `/${node.path}`;
-};
-
-const navLabel = (node: { label: string | null; string_id: string } | null) =>
-	node?.label ?? node?.string_id ?? "Section";
-
-const levelDisplayName = (levelName: string): string => {
-	const names: Record<string, string> = {
-		title: "Titles",
-		chapter: "Chapters",
-		section: "Sections",
-		part: "Parts",
-		subchapter: "Subchapters",
-	};
-	return names[levelName] ?? levelName;
-};
-
-const childUrl = (child: NodeRecord): string => {
-	if (child.path) {
-		return `/${child.path}`;
-	}
-	return "#";
-};
+const navLabel = (node: NodeRecord | null) =>
+	node?.name ?? node?.string_id ?? "Section";
 
 type NodePageProps = {
 	data: Extract<PageData, { status: "found" }>;
@@ -85,13 +60,44 @@ export function NodePage(props: NodePageProps) {
 
 	const heading = () => {
 		const n = node();
+		const s = source();
 		const levelType = capitalizeWords(n.level_name);
+
+		// Use section_name_template for section pages if available
+		if (isSection() && s.section_name_template && n.readable_id) {
+			const sectionTitle = s.section_name_template.replace(
+				/%ID%/g,
+				n.readable_id,
+			);
+			return n.name ? `${sectionTitle}. ${n.name}` : `${sectionTitle}.`;
+		}
+
 		if (n.readable_id) {
-			return n.label
-				? `${levelType} ${n.readable_id}. ${n.label}`
+			return n.name
+				? `${levelType} ${n.readable_id}. ${n.name}`
 				: `${levelType} ${n.readable_id}.`;
 		}
 		return levelType;
+	};
+
+	const pageTitle = () => {
+		const h = heading();
+		const title = isSection() ? h.replace(/^Section\s+/i, "") : h;
+		const suffix = " - fast.law";
+		const maxTitleLen = 55 - 3 - suffix.length; // room for ellipsis
+		const words = title.split(" ");
+		let result = "";
+		for (const word of words) {
+			if (`${result} ${word}`.trim().length <= maxTitleLen) {
+				result = result ? `${result} ${word}` : word;
+			} else {
+				break;
+			}
+		}
+		if (result !== title) {
+			return `${result}...${suffix}`;
+		}
+		return `${title}${suffix}`;
 	};
 
 	const bodyBlocks = () =>
@@ -133,6 +139,7 @@ export function NodePage(props: NodePageProps) {
 
 	return (
 		<>
+			<Title>{pageTitle()}</Title>
 			<Header />
 			<main class={`section-page${tocItems().length > 1 ? " with-toc" : ""}`}>
 				<Show when={tocItems().length > 1}>
@@ -226,15 +233,15 @@ export function NodePage(props: NodePageProps) {
 					{/* Children */}
 					<Show when={children().length > 0}>
 						<div id="children" class="level-children">
-							<h2>{levelDisplayName(childLevelName())}</h2>
+							<h2>{capitalizeWords(childLevelName())}</h2>
 							<div class="section-list">
 								<For each={children()}>
 									{(child) => (
-										<a class="section-row" href={childUrl(child)}>
+										<a class="section-row" href={child.path ?? "#"}>
 											<span class="section-number">
-												{child.label ?? child.string_id}
+												{child.readable_id ?? child.string_id}
 											</span>
-											<span class="section-title-text">{child.label}</span>
+											<span class="section-title-text">{child.name}</span>
 										</a>
 									)}
 								</For>
@@ -246,19 +253,13 @@ export function NodePage(props: NodePageProps) {
 					<Show when={nav()}>
 						<div class="statute-nav">
 							<Show when={prevNode()}>
-								<a
-									class="statute-nav-link"
-									href={toSectionPath(prevNode(), source().code) ?? "#"}
-								>
+								<a class="statute-nav-link" href={prevNode()?.path ?? "#"}>
 									<span class="statute-nav-label">Previous</span>
 									<span>{navLabel(prevNode())}</span>
 								</a>
 							</Show>
 							<Show when={nextNode()}>
-								<a
-									class="statute-nav-link"
-									href={toSectionPath(nextNode(), source().code) ?? "#"}
-								>
+								<a class="statute-nav-link" href={nextNode()?.path ?? "#"}>
 									<span class="statute-nav-label">Next</span>
 									<span>{navLabel(nextNode())}</span>
 								</a>

@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { For } from "solid-js";
 import type { NodeRecord, SourceRecord } from "~/lib/types";
 
 interface BreadcrumbsProps {
@@ -10,8 +10,8 @@ interface BreadcrumbsProps {
 const formatAncestorLabel = (ancestor: NodeRecord): string => {
 	const levelType =
 		ancestor.level_name.charAt(0).toUpperCase() + ancestor.level_name.slice(1);
-	if (ancestor.label && ancestor.level_index < 0) {
-		return ancestor.label;
+	if (ancestor.name && ancestor.level_index < 0) {
+		return ancestor.name;
 	} else if (ancestor.readable_id) {
 		return `${levelType} ${ancestor.readable_id}`;
 	} else {
@@ -32,7 +32,7 @@ export function Breadcrumbs(props: BreadcrumbsProps) {
 				{(ancestor, index) => (
 					<>
 						{index() > 0 && <span class="crumb-sep">/</span>}
-						<a href={`/${ancestor.path}`}>{formatAncestorLabel(ancestor)}</a>
+						<a href={ancestor.path ?? ""}>{formatAncestorLabel(ancestor)}</a>
 					</>
 				)}
 			</For>

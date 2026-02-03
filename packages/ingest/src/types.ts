@@ -25,7 +25,7 @@ export interface SourceVersion {
 	created_at: string;
 }
 
-export interface Node {
+export interface NodeMeta {
 	id: number;
 	source_version_id: number;
 	string_id: string;
@@ -36,38 +36,14 @@ export interface Node {
 	name: string | null;
 	path: string | null;
 	readable_id: string | null;
-	blob_key: string | null;
-	blob_offset: number | null;
-	blob_size: number | null;
 	source_url: string | null;
 	accessed_at: string | null;
 }
 
-export interface ParsedSection {
-	stringId: string;
-	levelName: string;
-	levelIndex: number;
-	name: string | null;
-	path: string;
-	readableId: string | null;
-	body: string;
-	historyShort: string | null;
-	historyLong: string | null;
-	citations: string | null;
-	parentStringId: string | null;
-	sortOrder: number;
-	sourceUrl: string;
-}
-
-export interface ParsedLevel {
-	stringId: string;
-	levelName: string;
-	levelIndex: number;
-	name: string | null;
-	path: string;
-	parentStringId: string | null;
-	sortOrder: number;
-	sourceUrl: string;
+export interface Node extends NodeMeta {
+	blob_key: string | null;
+	blob_offset: number | null;
+	blob_size: number | null;
 }
 
 export interface DiffResult {

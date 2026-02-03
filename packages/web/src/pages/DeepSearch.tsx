@@ -1,3 +1,4 @@
+import { Title } from "@solidjs/meta";
 import { marked } from "marked";
 import { createSignal, For, Show } from "solid-js";
 import { Header } from "~/components/Header";
@@ -221,6 +222,7 @@ export default function DeepSearchPage() {
 
 	return (
 		<>
+			<Title>Deep Search - fast.law</Title>
 			<Header />
 			<main class="chat-layout">
 				<section class="chat-panel">

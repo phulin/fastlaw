@@ -7,6 +7,7 @@ export interface SourceRecord {
 	jurisdiction: string;
 	region: string;
 	doc_type: string;
+	section_name_template: string | null;
 }
 
 export interface SourceVersionRecord {
@@ -28,7 +29,7 @@ export interface NodeRecord {
 	level_name: string;
 	level_index: number;
 	sort_order: number;
-	label: string | null;
+	name: string | null;
 	path: string | null;
 	blob_key: string | null;
 	blob_offset: number | null;
@@ -43,9 +44,6 @@ export interface NodeWithSource extends NodeRecord {
 	source_name: string;
 }
 
-// Alias for backwards compatibility - LevelRecord is now NodeRecord
-export type LevelRecord = NodeRecord;
-
 export type PageData =
 	| { status: "missing"; path: string }
 	| {
@@ -59,9 +57,6 @@ export type PageData =
 			nav?: { prev: NodeRecord | null; next: NodeRecord | null };
 			children?: NodeRecord[];
 	  };
-
-// Backwards compatibility alias
-export type LevelPageData = PageData;
 
 // R2 Content Types
 

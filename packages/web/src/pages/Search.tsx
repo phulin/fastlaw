@@ -1,3 +1,4 @@
+import { Title } from "@solidjs/meta";
 import { createSignal, For, Show } from "solid-js";
 import { Header } from "~/components/Header";
 
@@ -61,6 +62,7 @@ export default function SearchPage() {
 
 	return (
 		<>
+			<Title>Search - fast.law</Title>
 			<Header />
 			<main class="search-layout">
 				<section class="search-panel">

@@ -1,4 +1,4 @@
-import type { Env, IngestionResult, ParsedSection } from "../../types";
+import type { Env, IngestionResult } from "../../types";
 import {
 	computeDiff,
 	getLatestVersion,
@@ -10,46 +10,9 @@ import {
 import { crawlCGA } from "./crawler";
 import { formatDesignatorPadded, normalizeDesignator } from "./parser";
 
-/**
- * Normalize a compound ID like "04-125" -> "4-125" or "01a-200" -> "1a-200"
- */
-function normalizeCompoundId(id: string): string {
-	return id
-		.split("-")
-		.map((part) => normalizeDesignator(part) || part)
-		.join("-");
-}
-
-/**
- * Parse a section label like "Sec. 4-125. Title of section." into parts
- * Returns the section number and the clean title (no trailing period)
- */
-function parseSectionLabel(label: string): {
-	sectionNumber: string | null;
-	title: string | null;
-} {
-	// Match patterns like:
-	// "Sec. 4-125. Title of section."
-	// "Secs. 4-125 to 4-130. Title of section range."
-	const match = label.match(/^Secs?\.\s+([^.]+)\.\s*(.*)$/);
-	if (!match) {
-		return { sectionNumber: null, title: label.replace(/\.$/, "").trim() };
-	}
-
-	const sectionNumber = match[1].trim();
-	let title = match[2].trim();
-
-	// Remove trailing period from title
-	title = title.replace(/\.$/, "").trim();
-
-	return {
-		sectionNumber,
-		title: title || null,
-	};
-}
-
 const SOURCE_CODE = "cgs";
 const SOURCE_NAME = "Connecticut General Statutes";
+const SECTION_NAME_TEMPLATE = "CGS § %ID%";
 
 /**
  * Main CGA ingestion function
@@ -66,6 +29,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		"state",
 		"CT",
 		"statute",
+		SECTION_NAME_TEMPLATE,
 	);
 
 	// Get latest version for diff comparison
@@ -88,51 +52,13 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	const titles = result.titles;
 	const chapters = result.chapters;
-
-	// Convert crawled sections to ParsedSection format with parentStringId
-	const allSections: ParsedSection[] = [];
-	for (const section of result.sections) {
-		// Find chapter info to get chapterId
-		let chapterId: string | null = null;
-		for (const [chapId, chapter] of chapters.entries()) {
-			if (chapter.sourceUrl === section.sourceUrl) {
-				chapterId = chapId;
-				break;
-			}
-		}
-
-		// Normalize section ID (strip leading zeros from numeric parts, no sec_ prefix)
-		const rawSectionNum = section.sectionId.replace(/^sec[s]?_/, "");
-		const normalizedSectionNum = normalizeCompoundId(rawSectionNum);
-		const normalizedChapterNum = chapterId
-			? normalizeDesignator(chapterId.replace("chap_", "")) ||
-				chapterId.replace("chap_", "")
-			: null;
-
-		// Parse label to extract section number and clean title
-		const { title: cleanTitle } = parseSectionLabel(section.label);
-
-		allSections.push({
-			stringId: `cgs/section/${normalizedSectionNum}`,
-			levelName: "section",
-			levelIndex: 2,
-			name: cleanTitle,
-			path: `/statutes/cgs/section/${normalizedSectionNum}`,
-			readableId: normalizedSectionNum,
-			body: section.body,
-			historyShort: section.historyShort,
-			historyLong: section.historyLong,
-			citations: section.citations,
-			parentStringId: normalizedChapterNum
-				? `cgs/chapter/${normalizedChapterNum}`
-				: null,
-			sortOrder: 0,
-			sourceUrl: section.sourceUrl,
-		});
+	const chapterIdBySourceUrl = new Map<string, string>();
+	for (const [id, chapter] of chapters.entries()) {
+		chapterIdBySourceUrl.set(chapter.sourceUrl, id);
 	}
 
 	console.log(
-		`Found ${titles.size} titles, ${chapters.size} chapters, ${allSections.length} sections`,
+		`Found ${titles.size} titles, ${chapters.size} chapters, ${result.sections.length} sections`,
 	);
 
 	// Insert nodes into database
@@ -236,8 +162,8 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	// Track seen section stringIds to detect duplicates
 	const seenSectionIds = new Set<string>();
 
-	for (let i = 0; i < allSections.length; i++) {
-		const section = allSections[i];
+	for (let i = 0; i < result.sections.length; i++) {
+		const section = result.sections[i];
 
 		// Skip duplicate sections
 		if (seenSectionIds.has(section.stringId)) {
@@ -263,7 +189,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 					? [
 							{
 								type: "history_short",
-								label: "History",
+								label: "Short History",
 								content: section.historyShort,
 							},
 						]
@@ -272,7 +198,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 					? [
 							{
 								type: "history_long",
-								label: "History Notes",
+								label: "Long History",
 								content: section.historyLong,
 							},
 						]

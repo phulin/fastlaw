@@ -10,6 +10,7 @@ export async function getOrCreateSource(
 	jurisdiction: string,
 	region: string,
 	docType: string,
+	sectionNameTemplate: string | null = null,
 ): Promise<number> {
 	// Try to get existing source
 	const existing = await db
@@ -18,16 +19,23 @@ export async function getOrCreateSource(
 		.first<{ id: number }>();
 
 	if (existing) {
+		// Update section_name_template if provided and different
+		if (sectionNameTemplate !== null) {
+			await db
+				.prepare("UPDATE sources SET section_name_template = ? WHERE id = ?")
+				.bind(sectionNameTemplate, existing.id)
+				.run();
+		}
 		return existing.id;
 	}
 
 	// Create new source
 	const result = await db
 		.prepare(`
-			INSERT INTO sources (code, name, jurisdiction, region, doc_type)
-			VALUES (?, ?, ?, ?, ?)
+			INSERT INTO sources (code, name, jurisdiction, region, doc_type, section_name_template)
+			VALUES (?, ?, ?, ?, ?, ?)
 		`)
-		.bind(code, name, jurisdiction, region, docType)
+		.bind(code, name, jurisdiction, region, docType, sectionNameTemplate)
 		.run();
 
 	return result.meta.last_row_id as number;

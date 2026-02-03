@@ -1,7 +1,9 @@
-import { ChapterParser, extractLinks, formatText } from "./parser";
-
-// Re-export extractLinks for backward compatibility
-export { extractLinks };
+import {
+	ChapterParser,
+	extractLinks,
+	formatText,
+	type ParsedSection,
+} from "./parser";
 
 /**
  * Unified crawled page data - parsed during crawl, no raw HTML stored
@@ -11,20 +13,7 @@ export interface CrawledPage {
 	type: "title" | "chapter" | "article" | "index" | "other";
 	titleInfo?: TitleInfo;
 	chapterInfo?: ChapterInfo;
-	sections: ParsedSectionData[];
-}
-
-/**
- * Section data extracted during crawl
- */
-export interface ParsedSectionData {
-	sectionId: string;
-	label: string;
-	body: string;
-	historyShort: string | null;
-	historyLong: string | null;
-	citations: string | null;
-	sourceUrl: string;
+	sections: ParsedSection[];
 }
 
 /**
@@ -33,7 +22,7 @@ export interface ParsedSectionData {
 export interface CrawlResult {
 	titles: Map<string, TitleInfo>;
 	chapters: Map<string, ChapterInfo>;
-	sections: ParsedSectionData[];
+	sections: ParsedSection[];
 }
 
 export interface TitleInfo {
@@ -257,7 +246,7 @@ function parseTitlePage(html: string, url: string): TitleInfo {
 function parseChapterPage(
 	html: string,
 	url: string,
-	sections: ParsedSectionData[],
+	sections: ParsedSection[],
 ): ChapterInfo {
 	const parser = new ChapterParser();
 	parser.parse(html);
@@ -273,8 +262,8 @@ function parseChapterPage(
 
 	// Try to extract title ID from section IDs
 	for (const section of rawSections) {
-		// Match patterns like sec_4-125, secs_4-125, sec_04-125, sec_4a-125
-		const match = section.sectionId.match(/sec[s]?_(\d+)/);
+		// Match patterns like sec_4-125, secs_4-125, sec_04-125, sec_19a-125
+		const match = section.sectionId.match(/sec[s]?_([\da-zA-Z]+)/);
 		if (match) {
 			titleId = match[1];
 			break;
@@ -291,8 +280,8 @@ function parseChapterPage(
 	}
 
 	// Convert parsed sections to our format
-	for (const rawSection of rawSections) {
-		const sectionData = convertSection(rawSection, url, chapterId);
+	for (let i = 0; i < rawSections.length; i++) {
+		const sectionData = convertSection(rawSections[i], url, chapterId, i);
 		sections.push(sectionData);
 	}
 
@@ -305,7 +294,36 @@ function parseChapterPage(
 }
 
 /**
- * Convert ChapterParser section data to our format
+ * Parse a section label like "Sec. 4-125. Title of section." into parts
+ */
+function parseSectionLabel(label: string): {
+	sectionNumber: string | null;
+	title: string | null;
+} {
+	const match = label.match(/^Secs?\.\s+([^.]+)\.\s*(.*)$/);
+	if (!match) {
+		return { sectionNumber: null, title: label.replace(/\.$/, "").trim() };
+	}
+	const sectionNumber = match[1].trim();
+	let title = match[2].trim();
+	title = title.replace(/\.$/, "").trim();
+	return { sectionNumber, title: title || null };
+}
+
+/**
+ * Normalize designator (strip leading zeros, lowercase)
+ */
+function normalizeDesignator(value: string | null): string | null {
+	if (!value) return value;
+	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
+	if (!match) return value.toLowerCase();
+	const num = String(Number.parseInt(match[1], 10));
+	const suffix = match[2].toLowerCase();
+	return `${num}${suffix}`;
+}
+
+/**
+ * Convert ChapterParser section data to ParsedSection
  */
 function convertSection(
 	sectionData: {
@@ -320,15 +338,31 @@ function convertSection(
 		};
 	},
 	sourceUrl: string,
-	_chapterId: string,
-): ParsedSectionData {
+	chapterId: string,
+	sortOrder: number,
+): ParsedSection {
+	const label = sectionData.name || sectionData.sectionId;
+	const { sectionNumber, title: cleanTitle } = parseSectionLabel(label);
+	const normalizedChapterNum = chapterId
+		? normalizeDesignator(chapterId.replace("chap_", "")) ||
+			chapterId.replace("chap_", "")
+		: null;
+
 	return {
-		sectionId: sectionData.sectionId,
-		label: sectionData.name || sectionData.sectionId,
+		stringId: `cgs/section/${sectionData.sectionId}`,
+		levelName: "section",
+		levelIndex: 2,
+		name: cleanTitle,
+		path: `/statutes/cgs/section/${sectionData.sectionId}`,
+		readableId: sectionNumber,
 		body: formatText(sectionData.parts.body || []),
-		historyShort: formatText(sectionData.parts.history_short || []),
-		historyLong: formatText(sectionData.parts.history_long || []),
-		citations: formatText(sectionData.parts.citations || []),
+		historyShort: formatText(sectionData.parts.history_short || []) || null,
+		historyLong: formatText(sectionData.parts.history_long || []) || null,
+		citations: formatText(sectionData.parts.citations || []) || null,
+		parentStringId: normalizedChapterNum
+			? `cgs/chapter/${normalizedChapterNum}`
+			: null,
+		sortOrder,
 		sourceUrl,
 	};
 }

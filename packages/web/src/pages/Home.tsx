@@ -1,9 +1,11 @@
+import { Title } from "@solidjs/meta";
 import { Footer } from "~/components/Footer";
 import { Header } from "~/components/Header";
 
 export default function Home() {
 	return (
 		<>
+			<Title>Home - fast.law</Title>
 			<Header />
 			<main>
 				<section class="hero">

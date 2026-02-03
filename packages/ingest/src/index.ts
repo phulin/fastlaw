@@ -48,8 +48,7 @@ export type {
 	Env,
 	IngestionResult,
 	Node,
-	ParsedLevel,
-	ParsedSection,
+	NodeMeta,
 	Source,
 	SourceVersion,
 } from "./types";

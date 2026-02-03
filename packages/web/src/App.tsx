@@ -1,3 +1,4 @@
+import { MetaProvider } from "@solidjs/meta";
 import { Show } from "solid-js";
 import type { PageData as PageDataType } from "~/lib/types";
 import DeepSearchPage from "~/pages/DeepSearch";
@@ -20,7 +21,7 @@ const isDocumentRoute = (path: string) =>
 
 export default function App(props: AppProps) {
 	return (
-		<>
+		<MetaProvider>
 			<Show when={props.pathname === "/"} fallback={null}>
 				<Home />
 			</Show>
@@ -37,6 +38,6 @@ export default function App(props: AppProps) {
 					/>
 				</Show>
 			</Show>
-		</>
+		</MetaProvider>
 	);
 }

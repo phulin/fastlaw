@@ -1,5 +1,4 @@
 import { Parser } from "htmlparser2";
-import type { ParsedSection } from "../../types";
 
 const BASE_URL = "https://www.cga.ct.gov";
 const ALLOWED_PREFIX = "/current/pub/";
@@ -19,6 +18,22 @@ interface TextParts {
 	see_also: string[];
 }
 
+export interface ParsedSection {
+	stringId: string;
+	levelName: string;
+	levelIndex: number;
+	name: string | null;
+	path: string;
+	readableId: string | null;
+	body: string;
+	historyShort: string | null;
+	historyLong: string | null;
+	citations: string | null;
+	parentStringId: string | null;
+	sortOrder: number;
+	sourceUrl: string;
+}
+
 export interface SectionData {
 	sectionId: string;
 	name: string;
@@ -35,8 +50,7 @@ function decodeHtmlEntities(text: string): string {
 		">": ">",
 		'"': '"',
 		"'": "'",
-		"&apos;": "'",
-		" ": " ",
+		"\xa0": " ",
 	};
 	return text.replace(/&[^;]+;/g, (entity) => entities[entity] || entity);
 }
@@ -69,32 +83,28 @@ export function formatDesignatorDisplay(value: string | null): string | null {
 }
 
 /**
- * Single-pass HTML parser that extracts all section data, chapter title, and labels
+ * Two-pass HTML parser for chapter content
+ *
+ * Pass 1: Extract TOC entries (sectionId -> label) from p.toc_catchln > a[href^="#"]
+ * Pass 2: Extract body content, skipping text inside span.catchln
  */
 export class ChapterParser {
-	private currentTarget: ContentTarget = "body";
-	private targetStack: Array<{ tag: string; target: ContentTarget }> = [];
-	private inScript = false;
-	private inStyle = false;
-	private inLabel = false;
-	private inLabelTrailing = false; // Capture text after </span> closes
-	private labelBuffer = "";
-	private currentSectionId: string | null = null;
-
-	// Section tracking
 	private sections: SectionData[] = [];
 	private currentSectionIndex = -1;
-
-	// Chapter title tracking
 	private titleBuffer = "";
 	private foundTitle = false;
 	private metaDescription: string | null = null;
-
-	// Parsing state
+	private inScript = false;
+	private inStyle = false;
+	private inCatchln = false;
 	private ignoreDepth = 0;
-	private stopParsing = false;
-	private inRow = false;
-	private rowCells = 0;
+	private currentTarget: ContentTarget = "body";
+	private targetStack: Array<{ tag: string; target: ContentTarget }> = [];
+
+	// TOC pass state
+	private tocMap: Map<string, string[]> = new Map();
+	private inToc = false;
+	private tocAnchorId: string | null = null;
 
 	private static BLOCK_TAGS = new Set([
 		"p",
@@ -125,14 +135,9 @@ export class ChapterParser {
 
 		parser.write(html);
 		parser.end();
-
-		// Finalize any pending label at end of parsing
-		this.finalizeLabel();
 	}
 
 	private handleOpenTag(tag: string, attribs: Record<string, string>): void {
-		if (this.stopParsing) return;
-
 		// Track title from <title> tag
 		if (tag === "title" && !this.foundTitle) {
 			this.titleBuffer = "";
@@ -144,6 +149,32 @@ export class ChapterParser {
 			this.metaDescription = attribs.content || null;
 		}
 
+		// ============ PASS 1: TOC extraction ============
+		// Detect start of TOC (h4.chap_toc_hd)
+		if (tag === "h4") {
+			const classes = this.parseClasses(attribs.class);
+			if (classes.has("chap_toc_hd")) {
+				this.inToc = true;
+				this.tocAnchorId = null;
+			}
+		}
+
+		// In TOC: capture a[href^="#"] elements
+		if (this.inToc && tag === "a" && attribs.href?.startsWith("#")) {
+			const href = attribs.href;
+			this.tocAnchorId = href.substring(1); // strip leading #
+			return;
+		}
+
+		// End TOC after hr.chaps_pg_bar
+		if (tag === "hr") {
+			const classes = this.parseClasses(attribs.class);
+			if (classes.has("chaps_pg_bar")) {
+				this.inToc = false;
+			}
+		}
+
+		// ============ PASS 2: Body extraction ============
 		if (this.ignoreDepth > 0) {
 			this.ignoreDepth++;
 			return;
@@ -161,8 +192,9 @@ export class ChapterParser {
 		if (tag === "span") {
 			const classes = this.parseClasses(attribs.class);
 			if (classes.has("catchln")) {
-				// Start new section
-				this.startSection(attribs.id || null);
+				// Start new section - use ID from span or TOC map
+				const sectionId = attribs.id || this.tocAnchorId || null;
+				this.startSection(sectionId);
 				return;
 			}
 		}
@@ -170,24 +202,15 @@ export class ChapterParser {
 		if (tag === "table") {
 			const classes = this.parseClasses(attribs.class);
 			if (classes.has("nav_tbl")) {
-				// Ignore nav_tbl content but continue parsing - there are sections after each nav_tbl
+				// Ignore nav_tbl content but continue parsing
 				this.ignoreDepth = 1;
 				return;
 			}
 		}
 
 		if (tag === "br" || tag === "hr") {
-			// Finalize trailing label on line break
-			if (this.inLabelTrailing) {
-				this.finalizeLabel();
-			}
 			this.addNewline(this.currentTarget);
 			return;
-		}
-
-		// Finalize trailing label when hitting block elements
-		if (this.inLabelTrailing && ChapterParser.BLOCK_TAGS.has(tag)) {
-			this.finalizeLabel();
 		}
 
 		const newTarget = this.classifyTarget(attribs);
@@ -197,15 +220,15 @@ export class ChapterParser {
 		}
 
 		if (tag === "tr") {
-			this.inRow = true;
-			this.rowCells = 0;
+			this.addNewline(this.currentTarget);
+			return;
 		}
 
-		if ((tag === "td" || tag === "th") && this.inRow) {
-			if (this.rowCells > 0) {
-				this.getCurrentParts()[this.currentTarget].push(" | ");
+		if (tag === "td" || tag === "th") {
+			const parts = this.getCurrentParts();
+			if (parts[this.currentTarget].length > 0) {
+				parts[this.currentTarget].push(" | ");
 			}
-			this.rowCells++;
 		}
 
 		if (ChapterParser.BLOCK_TAGS.has(tag)) {
@@ -219,7 +242,13 @@ export class ChapterParser {
 			this.foundTitle = true;
 		}
 
-		if (this.stopParsing) return;
+		// ============ PASS 1: TOC extraction ============
+		if (tag === "a" && this.tocAnchorId) {
+			// TOC link closed - text content was captured by handleText
+			this.tocAnchorId = null;
+		}
+
+		// ============ PASS 2: Body extraction ============
 		if (this.ignoreDepth > 0) {
 			this.ignoreDepth--;
 			return;
@@ -234,16 +263,8 @@ export class ChapterParser {
 			return;
 		}
 
-		if (tag === "span" && this.inLabel) {
-			// Continue capturing trailing text after the span (e.g., "Reserved for future use.")
-			this.inLabel = false;
-			this.inLabelTrailing = true;
-			return;
-		}
-
-		if (tag === "tr") {
-			this.inRow = false;
-			this.addNewline(this.currentTarget);
+		if (tag === "span" && this.inCatchln) {
+			this.inCatchln = false;
 			return;
 		}
 
@@ -263,19 +284,30 @@ export class ChapterParser {
 	}
 
 	private handleText(text: string): void {
-		if (this.stopParsing) return;
+		// ============ PASS 1: TOC extraction ============
+		// Capture TOC link text (must check before title capture)
+		if (this.inToc && this.tocAnchorId) {
+			const decoded = decodeHtmlEntities(text);
+			if (decoded) {
+				const existing = this.tocMap.get(this.tocAnchorId) || [];
+				existing.push(decoded);
+				this.tocMap.set(this.tocAnchorId, existing);
+			}
+			return;
+		}
 
-		// Capture title text
+		// Capture title text (only if we're inside the <title> tag)
 		if (this.titleBuffer !== undefined && !this.foundTitle) {
 			this.titleBuffer += text;
 			return;
 		}
 
+		// ============ PASS 2: Body extraction ============
 		if (this.inScript || this.inStyle || this.ignoreDepth > 0) {
 			return;
 		}
-		if (this.inLabel || this.inLabelTrailing) {
-			this.labelBuffer += text;
+		if (this.inCatchln) {
+			// Skip text inside span.catchln - label comes from TOC
 			return;
 		}
 		this.getCurrentParts()[this.currentTarget].push(text);
@@ -285,48 +317,16 @@ export class ChapterParser {
 		// Skip HTML comments
 	}
 
-	private finalizeLabel(): void {
-		if (!this.currentSectionId) return;
-		const rawLabel = decodeHtmlEntities(this.labelBuffer).trim();
-		if (rawLabel) {
-			const section = this.sections.find(
-				(s) => s.sectionId === this.currentSectionId,
-			);
-			if (section) {
-				// Check if the label contains body content (subsection markers like (a), (1), etc.)
-				// Pattern: "Sec. X-Y. Title. (a) body content..." or similar
-				// We want to split at a subsection marker that appears after the title
-				const bodyMatch = rawLabel.match(
-					/^(Secs?\.\s+[^.]+\.\s*[^.]*\.)\s*(\([a-z0-9]+\).*)$/is,
-				);
-				if (bodyMatch?.[2]) {
-					section.name = bodyMatch[1].trim();
-					// Prepend the captured body content to the section body
-					section.parts.body.unshift(bodyMatch[2]);
-				} else {
-					section.name = rawLabel;
-				}
-			}
-		}
-		this.currentSectionId = null;
-		this.labelBuffer = "";
-		this.inLabelTrailing = false;
-	}
-
 	private startSection(sectionId: string | null): void {
 		if (!sectionId) return;
 
-		// Finish previous section's label if still pending
-		this.finalizeLabel();
-
-		this.currentSectionId = sectionId;
-		this.inLabel = true;
-		this.labelBuffer = "";
+		this.inCatchln = true;
 		this.currentSectionIndex = this.sections.length;
 
 		this.sections.push({
 			sectionId,
-			name: "",
+			name:
+				this.tocMap.get(sectionId)?.join("").replace(/\s+/g, " ").trim() || "", // Use label from TOC
 			parts: {
 				body: [],
 				history_short: [],
@@ -341,7 +341,6 @@ export class ChapterParser {
 		if (this.currentSectionIndex >= 0) {
 			return this.sections[this.currentSectionIndex].parts;
 		}
-		// Return a dummy object if no section is active (shouldn't happen)
 		return {
 			body: [],
 			history_short: [],
@@ -593,27 +592,6 @@ export function parseLabel(label: string | null): {
 }
 
 /**
- * Extract title ID from section ID or number
- */
-export function extractTitleId(
-	sectionId: string,
-	sectionNumber: string | null,
-	rangeStart: string | null,
-): string | null {
-	const candidate = rangeStart || sectionNumber;
-	if (!candidate) return null;
-
-	if (!candidate.includes("-")) {
-		const cleanedId = sectionId.replace(/secs?_/g, "");
-		if (cleanedId.includes("-")) {
-			return cleanedId.split("-")[0].trim();
-		}
-		return candidate.trim();
-	}
-	return candidate.split("-")[0].trim();
-}
-
-/**
  * Normalize designator (strip leading zeros, lowercase)
  */
 export function normalizeDesignator(value: string | null): string | null {
@@ -626,7 +604,7 @@ export function normalizeDesignator(value: string | null): string | null {
 }
 
 /**
- * Extract all sections from a chapter HTML file - single pass parsing
+ * Extract all sections from a chapter HTML file - two-pass parsing
  */
 export function extractSectionsFromHtml(
 	html: string,
@@ -638,14 +616,23 @@ export function extractSectionsFromHtml(
 
 	const sections = parser.getSections();
 	const labelMap = parser.getSectionLabels();
-	const _chapterTitle = parser.getChapterTitle();
 
 	const results: ParsedSection[] = [];
 
 	for (let i = 0; i < sections.length; i++) {
 		const section = sections[i];
 		const label = labelMap.get(section.sectionId) || section.sectionId;
-		const { number, title, rangeStart } = parseLabel(label);
+		const { number, title } = parseLabel(label);
+
+		// Fall back to full label if parseLabel returns null for title
+		const sectionName =
+			title ||
+			(label
+				? label
+						.replace(/^Secs?\.\s+/, "")
+						.replace(/\.$/, "")
+						.trim()
+				: null);
 
 		const textBlocks = {
 			body: trimTrailingHeadings(formatText(section.parts.body)),
@@ -655,17 +642,18 @@ export function extractSectionsFromHtml(
 			seeAlso: formatText(section.parts.see_also) || null,
 		};
 
-		const titleId = extractTitleId(section.sectionId, number, rangeStart);
-		const normalizedNumber = number || section.sectionId.replace(/secs?_/, "");
-		const derivedTitleId = titleId || normalizedNumber.split("-")[0];
+		const normalizedNumber = (
+			number || section.sectionId.replace(/^sec[s]?_/, "")
+		).replace(/\s+/g, "_");
+		const readableId = normalizedNumber.replace("_", " ");
 
 		results.push({
 			stringId: `cgs/section/${normalizedNumber}`,
 			levelName: "section",
 			levelIndex: 2,
-			name: title,
-			path: `/statutes/cgs/section/${derivedTitleId}/${normalizedNumber.replace(`${derivedTitleId}-`, "")}`,
-			readableId: normalizedNumber,
+			name: sectionName,
+			path: `/statutes/cgs/section/${normalizedNumber}`,
+			readableId,
 			body: textBlocks.body,
 			historyShort: textBlocks.historyShort,
 			historyLong: textBlocks.historyLong,
@@ -680,7 +668,7 @@ export function extractSectionsFromHtml(
 }
 
 /**
- * Extract chapter title from HTML - uses the single-pass parser
+ * Extract chapter title from HTML - uses the two-pass parser
  */
 export function extractChapterTitle(html: string): string | null {
 	const parser = new ChapterParser();

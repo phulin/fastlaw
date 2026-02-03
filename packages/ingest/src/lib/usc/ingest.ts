@@ -22,6 +22,7 @@ import {
 
 const SOURCE_CODE = "usc";
 const SOURCE_NAME = "United States Code";
+const SECTION_NAME_TEMPLATE = "%ID%";
 
 interface USCSectionData {
 	titleNum: string;
@@ -53,6 +54,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		"federal",
 		"US",
 		"statute",
+		SECTION_NAME_TEMPLATE,
 	);
 
 	// Get latest version for diff comparison
