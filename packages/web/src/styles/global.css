@@ -249,6 +249,19 @@ body {
 	display: none;
 }
 
+.toc-header {
+	font-weight: 600;
+	padding: 12px 14px 18px;
+	background: rgba(255, 253, 250, 0.95);
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	border-bottom: 1px solid var(--line);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
 .toc-list {
 	margin: 0;
 	padding: 12px 14px 16px;

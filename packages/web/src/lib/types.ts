@@ -56,6 +56,7 @@ export type PageData =
 			content?: NodeContent;
 			nav?: { prev: NodeRecord | null; next: NodeRecord | null };
 			children?: NodeRecord[];
+			siblings?: NodeRecord[];
 	  };
 
 // R2 Content Types

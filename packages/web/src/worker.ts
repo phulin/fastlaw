@@ -101,10 +101,12 @@ app.get("*", async (c) => {
 						getChildNodes(node.id),
 						getAncestorNodes(node.id),
 					]);
-					const nav =
+					const [nav, siblings] = await Promise.all([
 						node.parent_id != null
-							? await getSiblingNodes(node.parent_id, node.sort_order)
-							: undefined;
+							? getSiblingNodes(node.parent_id, node.sort_order)
+							: undefined,
+						node.parent_id != null ? getChildNodes(node.parent_id) : undefined,
+					]);
 					pageData = {
 						status: "found",
 						path,
@@ -115,6 +117,7 @@ app.get("*", async (c) => {
 						content: content ?? undefined,
 						nav,
 						children: children.length > 0 ? children : undefined,
+						siblings: siblings && siblings.length > 0 ? siblings : undefined,
 					};
 				}
 			}

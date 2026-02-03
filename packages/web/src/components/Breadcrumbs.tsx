@@ -1,4 +1,4 @@
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import type { NodeRecord, SourceRecord } from "~/lib/types";
 
 interface BreadcrumbsProps {
@@ -32,7 +32,12 @@ export function Breadcrumbs(props: BreadcrumbsProps) {
 				{(ancestor, index) => (
 					<>
 						{index() > 0 && <span class="crumb-sep">/</span>}
-						<a href={ancestor.path ?? ""}>{formatAncestorLabel(ancestor)}</a>
+						<Show
+							when={index() < props.ancestors.length - 1}
+							fallback={formatAncestorLabel(ancestor)}
+						>
+							<a href={ancestor.path ?? ""}>{formatAncestorLabel(ancestor)}</a>
+						</Show>
 					</>
 				)}
 			</For>

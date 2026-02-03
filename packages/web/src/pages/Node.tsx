@@ -1,5 +1,5 @@
 import { Title } from "@solidjs/meta";
-import { For, Show } from "solid-js";
+import { For, onMount, Show } from "solid-js";
 import { Breadcrumbs } from "~/components/Breadcrumbs";
 import { Footer } from "~/components/Footer";
 import { Header } from "~/components/Header";
@@ -55,6 +55,7 @@ export function NodePage(props: NodePageProps) {
 	const children = () => props.data.children ?? [];
 	const ancestors = () => props.data.ancestors ?? [];
 	const nav = () => props.data.nav;
+	const siblings = () => props.data.siblings ?? [];
 
 	const isSection = () => node().level_name === "section";
 
@@ -62,6 +63,10 @@ export function NodePage(props: NodePageProps) {
 		const n = node();
 		const s = source();
 		const levelType = capitalizeWords(n.level_name);
+
+		if (n.name && n.level_index < 0) {
+			return n.name;
+		}
 
 		// Use section_name_template for section pages if available
 		if (isSection() && s.section_name_template && n.readable_id) {
@@ -129,6 +134,21 @@ export function NodePage(props: NodePageProps) {
 		return items;
 	};
 
+	const hasSiblingToc = () => isSection() && siblings().length > 1;
+
+	const parentNode = () => {
+		const ancs = ancestors();
+		return ancs.length > 1 ? ancs[ancs.length - 2] : null;
+	};
+
+	const parentLabel = () => {
+		const parent = parentNode();
+		if (!parent) return null;
+		const id = parent.readable_id ?? parent.string_id;
+		const levelType = capitalizeWords(parent.level_name);
+		return parent.name ? `${levelType} ${id}. ${parent.name}` : id;
+	};
+
 	const childLevelName = () => {
 		const first = children()[0];
 		return first?.level_name ?? "item";
@@ -137,12 +157,46 @@ export function NodePage(props: NodePageProps) {
 	const prevNode = () => nav()?.prev ?? null;
 	const nextNode = () => nav()?.next ?? null;
 
+	let tocListRef: HTMLDivElement | undefined;
+	onMount(() => {
+		const list = tocListRef;
+		const active = list?.querySelector<HTMLElement>(".toc-item.active");
+		if (list && active) {
+			list.scrollTop =
+				active.offsetTop - list.clientHeight / 2 + active.clientHeight / 2;
+		}
+	});
+
 	return (
 		<>
 			<Title>{pageTitle()}</Title>
 			<Header />
-			<main class={`section-page${tocItems().length > 1 ? " with-toc" : ""}`}>
-				<Show when={tocItems().length > 1}>
+			<main
+				class={`section-page${hasSiblingToc() || tocItems().length > 1 ? " with-toc" : ""}`}
+			>
+				<Show when={hasSiblingToc()}>
+					<aside class="toc">
+						<div class="toc-panel">
+							<div class="toc-header">{parentLabel()}</div>
+							<div class="toc-list" ref={tocListRef}>
+								<For each={siblings()}>
+									{(sibling) => (
+										<a
+											class={`toc-item${sibling.id === node().id ? " active" : ""}`}
+											href={sibling.path ?? "#"}
+										>
+											<span class="toc-title">
+												{sibling.readable_id ?? sibling.string_id}
+												{sibling.name ? `. ${sibling.name}` : ""}
+											</span>
+										</a>
+									)}
+								</For>
+							</div>
+						</div>
+					</aside>
+				</Show>
+				<Show when={!hasSiblingToc() && tocItems().length > 1}>
 					<aside class="toc">
 						<details class="toc-panel" open>
 							<summary class="toc-summary">On this page</summary>
