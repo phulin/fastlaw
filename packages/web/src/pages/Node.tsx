@@ -159,12 +159,8 @@ export function NodePage(props: NodePageProps) {
 
 	let tocListRef: HTMLDivElement | undefined;
 	onMount(() => {
-		const list = tocListRef;
-		const active = list?.querySelector<HTMLElement>(".toc-item.active");
-		if (list && active) {
-			list.scrollTop =
-				active.offsetTop - list.clientHeight / 2 + active.clientHeight / 2;
-		}
+		const active = tocListRef?.querySelector(".toc-item.active");
+		active?.scrollIntoView({ block: "center" });
 	});
 
 	return (
