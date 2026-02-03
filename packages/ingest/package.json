@@ -1,5 +1,5 @@
 {
-	"name": "@authority/ingest",
+	"name": "@fastlaw/ingest",
 	"private": true,
 	"version": "0.1.0",
 	"type": "module",
@@ -7,7 +7,9 @@
 		"dev": "NODE_EXTRA_CA_CERTS=certs/godaddy-g2.pem wrangler dev --persist-to ../web/.wrangler/state",
 		"build": "wrangler deploy --dry-run --outdir=dist",
 		"deploy": "wrangler deploy",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"dependencies": {
 		"fast-xml-parser": "^4.5.1",
@@ -16,6 +18,7 @@
 	},
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20250129.0",
+		"vitest": "^3.0.0",
 		"wrangler": "^4.61.1"
 	}
 }

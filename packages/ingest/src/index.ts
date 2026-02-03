@@ -2,7 +2,6 @@
 
 export {
 	crawlCGA,
-	extractLinks,
 	getChapterIdFromUrl,
 	getTitleIdFromUrl,
 	isChapterUrl,
@@ -12,7 +11,7 @@ export {
 export { ingestCGA } from "./lib/cga/ingest";
 export {
 	extractChapterTitle as extractCGAChapterTitle,
-	extractSectionsFromHtml as extractCGASections,
+	extractLinks,
 	formatDesignatorDisplay,
 	formatDesignatorPadded,
 	normalizeDesignator,

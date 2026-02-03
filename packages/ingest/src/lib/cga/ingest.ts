@@ -45,7 +45,10 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Crawl CGA website - now returns structured data directly
 	console.log(`Starting CGA crawl from ${startUrl}`);
-	const result = await crawlCGA(startUrl, env.GODADDY_CA, 2000, 0, 20);
+	const result = await crawlCGA(startUrl, env.GODADDY_CA, {
+		maxPages: 2000,
+		concurrency: 20,
+	});
 	console.log(
 		`Crawled ${result.titles.size} titles, ${result.chapters.size} chapters, ${result.sections.length} sections`,
 	);
@@ -94,11 +97,21 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		return aPadded.localeCompare(bPadded);
 	});
 
+	const seenTitleIds = new Set<string>();
 	for (let i = 0; i < sortedTitles.length; i++) {
 		const title = sortedTitles[i];
 		const normalizedTitleId =
 			normalizeDesignator(title.titleId) || title.titleId;
 		const stringId = `cgs/title/${normalizedTitleId}`;
+
+		if (seenTitleIds.has(stringId)) {
+			console.log(
+				`Skipping duplicate title: ${stringId} (titleId: ${title.titleId}, sourceUrl: ${title.sourceUrl})`,
+			);
+			continue;
+		}
+		seenTitleIds.add(stringId);
+
 		const nodeId = await insertNode(
 			env.DB,
 			versionId,
@@ -127,6 +140,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		return aKey.localeCompare(bKey);
 	});
 
+	const seenChapterIds = new Set<string>();
 	for (let i = 0; i < sortedChapters.length; i++) {
 		const chapter = sortedChapters[i];
 		const normalizedTitleId =
@@ -136,17 +150,29 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 		const chapterNum = chapter.chapterId.replace("chap_", "");
 		const normalizedChapterNum = normalizeDesignator(chapterNum) || chapterNum;
-		const stringId = `cgs/chapter/${normalizedChapterNum}`;
+		const stringId = `cgs/${chapter.type}/${normalizedChapterNum}`;
+
+		if (seenChapterIds.has(stringId)) {
+			console.log(
+				`Skipping duplicate ${chapter.type}: ${stringId} (raw chapterId: ${chapter.chapterId}, normalized: ${normalizedChapterNum}, titleId: ${chapter.titleId}, sourceUrl: ${chapter.sourceUrl})`,
+			);
+			continue;
+		}
+		seenChapterIds.add(stringId);
+		console.log(
+			`Adding ${chapter.type}: ${stringId} (raw chapterId: ${chapter.chapterId}, normalized: ${normalizedChapterNum})`,
+		);
+
 		const nodeId = await insertNode(
 			env.DB,
 			versionId,
 			stringId,
 			parentId,
-			"chapter",
+			chapter.type,
 			1,
 			i,
 			chapter.chapterTitle,
-			`/statutes/cgs/chapter/${normalizedTitleId}/${normalizedChapterNum}`,
+			`/statutes/cgs/${chapter.type}/${normalizedTitleId}/${normalizedChapterNum}`,
 			normalizedChapterNum, // readable_id
 			null,
 			null,

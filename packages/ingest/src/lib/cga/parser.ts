@@ -1,5 +1,7 @@
 import { Parser } from "htmlparser2";
 
+import { decodeHtmlEntities } from "./utils";
+
 const BASE_URL = "https://www.cga.ct.gov";
 const ALLOWED_PREFIX = "/current/pub/";
 
@@ -41,21 +43,6 @@ export interface SectionData {
 }
 
 /**
- * Decode common HTML entities
- */
-function decodeHtmlEntities(text: string): string {
-	const entities: Record<string, string> = {
-		"&": "&",
-		"<": "<",
-		">": ">",
-		'"': '"',
-		"'": "'",
-		"\xa0": " ",
-	};
-	return text.replace(/&[^;]+;/g, (entity) => entities[entity] || entity);
-}
-
-/**
  * Format designator with zero-padding for sorting
  */
 export function formatDesignatorPadded(
@@ -94,6 +81,7 @@ export class ChapterParser {
 	private titleBuffer = "";
 	private foundTitle = false;
 	private metaDescription: string | null = null;
+	private metaNumber: string | null = null;
 	private inScript = false;
 	private inStyle = false;
 	private inCatchln = false;
@@ -147,6 +135,11 @@ export class ChapterParser {
 		// Track meta description
 		if (tag === "meta" && attribs.name === "description") {
 			this.metaDescription = attribs.content || null;
+		}
+
+		// Track meta Number (chapter/article number from page)
+		if (tag === "meta" && attribs.name === "Number") {
+			this.metaNumber = attribs.content || null;
 		}
 
 		// ============ PASS 1: TOC extraction ============
@@ -401,12 +394,12 @@ export class ChapterParser {
 			const title = this.titleBuffer.replace(/<[^>]+>/g, "");
 			const decoded = decodeHtmlEntities(title).trim();
 			if (decoded) {
-				return decoded.replace(/^Chapter\s+[^-]+-\s+/i, "").trim();
+				return decoded.replace(/^(Article|Chapter)\s+[^-]+-\s+/i, "").trim();
 			}
 		}
 		if (this.metaDescription) {
 			return decodeHtmlEntities(this.metaDescription)
-				.replace(/^Chapter\s+[^-]+-\s+/i, "")
+				.replace(/^(Article|Chapter)\s+[^-]+-\s+/i, "")
 				.trim();
 		}
 		return null;
@@ -418,6 +411,23 @@ export class ChapterParser {
 			map.set(section.sectionId, section.name || section.sectionId);
 		}
 		return map;
+	}
+
+	/**
+	 * Get the chapter/article number from the meta Number tag.
+	 * Returns the number portion (e.g., "377a" from "377a" or "2A" from "ARTICLE 2A")
+	 */
+	getChapterNumber(): string | null {
+		if (!this.metaNumber) return null;
+		// Handle "ARTICLE 2A" or "CHAPTER 377a" format
+		const match = this.metaNumber.match(
+			/(?:ARTICLE|CHAPTER)\s+([0-9]+[a-zA-Z]*)/i,
+		);
+		if (match) {
+			return match[1];
+		}
+		// Otherwise return as-is (e.g., "377a")
+		return this.metaNumber;
 	}
 }
 
@@ -513,6 +523,10 @@ export function normalizeLink(href: string, baseUrl: string): string | null {
 		return null;
 	}
 
+	// Normalize pathname to lowercase (CGA server is case-insensitive,
+	// but pages may link using inconsistent case like art_002A.htm vs art_002a.htm)
+	parsed.pathname = parsed.pathname.toLowerCase();
+
 	// Strip fragment
 	parsed.hash = "";
 	return parsed.toString();
@@ -592,14 +606,14 @@ export function parseLabel(label: string | null): {
 }
 
 /**
- * Normalize designator (strip leading zeros, lowercase)
+ * Normalize designator (strip leading zeros, preserve case)
  */
 export function normalizeDesignator(value: string | null): string | null {
 	if (!value) return value;
-	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
-	if (!match) return value.toLowerCase();
+	const match = value.match(/^0*([0-9]+)([a-zA-Z]*)$/);
+	if (!match) return value;
 	const num = String(Number.parseInt(match[1], 10));
-	const suffix = match[2].toLowerCase();
+	const suffix = match[2];
 	return `${num}${suffix}`;
 }
 
@@ -610,6 +624,7 @@ export function extractSectionsFromHtml(
 	html: string,
 	chapterId: string,
 	sourceUrl: string,
+	type: "chapter" | "article" = "chapter",
 ): ParsedSection[] {
 	const parser = new ChapterParser();
 	parser.parse(html);
@@ -658,7 +673,7 @@ export function extractSectionsFromHtml(
 			historyShort: textBlocks.historyShort,
 			historyLong: textBlocks.historyLong,
 			citations: textBlocks.citations,
-			parentStringId: `cgs/chapter/${chapterId}`,
+			parentStringId: `cgs/${type}/${chapterId}`,
 			sortOrder: i,
 			sourceUrl,
 		});
@@ -674,4 +689,108 @@ export function extractChapterTitle(html: string): string | null {
 	const parser = new ChapterParser();
 	parser.parse(html);
 	return parser.getChapterTitle();
+}
+
+// ============ Page-Level Parsing ============
+
+export interface TitleInfo {
+	titleId: string;
+	titleName: string | null;
+	sourceUrl: string;
+}
+
+export interface ChapterInfo {
+	chapterId: string;
+	chapterTitle: string | null;
+	titleId: string;
+	sourceUrl: string;
+	type: "chapter" | "article";
+}
+
+export interface ChapterParseResult {
+	info: ChapterInfo;
+	sections: ParsedSection[];
+}
+
+/**
+ * Parse a title page to extract title name
+ */
+export function parseTitlePage(html: string, url: string): TitleInfo {
+	const titleIdMatch = url.match(/title_([^.]+)\.htm/i);
+	const titleId = titleIdMatch?.[1] || "";
+
+	// Extract title from <title> tag
+	const titleMatch = html.match(/<title>(.*?)<\/title>/is);
+	let titleName: string | null = null;
+
+	if (titleMatch) {
+		const titleText = titleMatch[1].replace(/<[^>]+>/g, "");
+		titleName = decodeHtmlEntities(titleText).trim();
+
+		// Extract name from "Title X - Name" format
+		const match = titleName.match(/^Title\s+[\w]+?\s*-\s*(.+)$/i);
+		if (match) {
+			titleName = match[1].trim() || null;
+		} else {
+			titleName = null;
+		}
+	}
+
+	return {
+		titleId,
+		titleName,
+		sourceUrl: url,
+	};
+}
+
+/**
+ * Parse a chapter page to extract chapter title and sections
+ * Returns both the chapter info and the parsed sections
+ */
+export function parseChapterPage(
+	html: string,
+	url: string,
+	urlChapterId: string,
+	type: "chapter" | "article",
+): ChapterParseResult {
+	// Parse HTML first to extract chapter number from meta tag
+	const parser = new ChapterParser();
+	parser.parse(html);
+	const chapterTitle = parser.getChapterTitle();
+
+	// Use chapter number from meta tag, fallback to URL-based ID
+	const chapterId = parser.getChapterNumber() || urlChapterId;
+
+	// Extract sections using the shared function
+	const sections = extractSectionsFromHtml(html, chapterId, url, type);
+
+	// Extract title ID from section data
+	let titleId: string | null = null;
+	for (const section of sections) {
+		// Match patterns like sec_4-125, secs_4-125, sec_04-125, sec_19a-125
+		const match = section.stringId.match(/cgs\/section\/([\da-zA-Z]+)/);
+		if (match) {
+			titleId = match[1];
+			break;
+		}
+	}
+
+	// If no title ID from sections, try to extract from chapter title
+	if (!titleId && chapterTitle) {
+		const titleMatch = chapterTitle.match(/\(title\s*(\d+)\)|title\s*(\d+)/i);
+		if (titleMatch) {
+			titleId = titleMatch[1] || titleMatch[2];
+		}
+	}
+
+	return {
+		info: {
+			chapterId,
+			chapterTitle,
+			titleId: titleId || "",
+			sourceUrl: url,
+			type,
+		},
+		sections,
+	};
 }

@@ -1,9 +1,20 @@
 import {
-	ChapterParser,
+	type ChapterInfo,
+	type ChapterParseResult,
 	extractLinks,
-	formatText,
 	type ParsedSection,
+	parseChapterPage,
+	parseTitlePage,
+	type TitleInfo,
 } from "./parser";
+import {
+	type CrawlerConfig,
+	consoleLogger,
+	DEFAULT_CRAWLER_CONFIG,
+	type Logger,
+	parsePageUrl,
+	Semaphore,
+} from "./utils";
 
 /**
  * Unified crawled page data - parsed during crawl, no raw HTML stored
@@ -25,35 +36,23 @@ export interface CrawlResult {
 	sections: ParsedSection[];
 }
 
-export interface TitleInfo {
-	titleId: string;
-	titleName: string | null;
-	sourceUrl: string;
-}
-
-export interface ChapterInfo {
-	chapterId: string;
-	chapterTitle: string | null;
-	titleId: string;
-	sourceUrl: string;
-}
-
 /**
  * BFS crawl of CGA statute pages with integrated parsing.
  * Returns structured data instead of raw HTML.
  *
+ * @param startUrl - URL to start crawling from
  * @param fetcher - CF Workers CA fetcher binding (deployed) or undefined (local dev with NODE_EXTRA_CA_CERTS)
- * @param maxPages - Maximum number of pages to crawl
- * @param delayMs - Delay between requests (not used with concurrency)
- * @param concurrency - Number of concurrent requests
+ * @param config - Crawler configuration (optional, uses defaults)
+ * @param logger - Logger instance (optional, uses console logger)
  */
 export async function crawlCGA(
 	startUrl: string,
 	fetcher?: Fetcher,
-	maxPages = 1000,
-	_delayMs = 0,
-	concurrency = 20,
+	config: Partial<CrawlerConfig> = {},
+	logger: Logger = consoleLogger,
 ): Promise<CrawlResult> {
+	const cfg = { ...DEFAULT_CRAWLER_CONFIG, ...config };
+
 	const seen = new Set<string>();
 	const queue: string[] = [startUrl];
 	const result: CrawlResult = {
@@ -68,39 +67,36 @@ export async function crawlCGA(
 		? (url: string, init?: RequestInit) => fetcher.fetch(url, init)
 		: fetch;
 
-	// Semaphore for concurrency control
-	let _activeCount = 0;
-	const semaphore = new Semaphore(concurrency);
+	const semaphore = new Semaphore(cfg.concurrency);
 
 	async function processUrl(url: string): Promise<void> {
 		await semaphore.acquire();
-		_activeCount++;
 
 		try {
-			console.log(`Fetching: ${url}`);
+			logger.info(`Fetching: ${url}`);
 			const controller = new AbortController();
-			const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+			const timeoutId = setTimeout(() => controller.abort(), cfg.timeoutMs);
 			const response = await doFetch(url, {
 				signal: controller.signal,
 				headers: {
-					"User-Agent": "fastlaw-ingest/1.0",
+					"User-Agent": cfg.userAgent,
 					Accept: "text/html,application/xhtml+xml",
 					"Accept-Encoding": "gzip, deflate",
 				},
 			});
 			clearTimeout(timeoutId);
 
-			console.log(`Response status for ${url}: ${response.status}`);
+			logger.debug(`Response status for ${url}: ${response.status}`);
 
 			if (!response.ok) {
-				console.warn(
+				logger.warn(
 					`Failed to fetch ${url}: ${response.status} ${response.statusText}`,
 				);
 				return;
 			}
 
 			const html = await response.text();
-			console.log(`Got ${html.length} bytes from ${url}`);
+			logger.debug(`Got ${html.length} bytes from ${url}`);
 
 			pagesCrawled++;
 
@@ -110,14 +106,15 @@ export async function crawlCGA(
 			// Store the parsed data
 			if (crawledPage.type === "title" && crawledPage.titleInfo) {
 				result.titles.set(crawledPage.titleInfo.titleId, crawledPage.titleInfo);
-			} else if (crawledPage.type === "chapter" && crawledPage.chapterInfo) {
-				result.chapters.set(
-					crawledPage.chapterInfo.chapterId,
-					crawledPage.chapterInfo,
-				);
-				// Add sections with correct parent
+			} else if (
+				(crawledPage.type === "chapter" || crawledPage.type === "article") &&
+				crawledPage.chapterInfo
+			) {
+				const chapterKey = `${crawledPage.chapterInfo.type}_${crawledPage.chapterInfo.chapterId}`;
+				result.chapters.set(chapterKey, crawledPage.chapterInfo);
+				// Add sections with correct source URL
 				for (const section of crawledPage.sections) {
-					section.sourceUrl = url; // Ensure source URL is set
+					section.sourceUrl = url;
 					result.sections.push(section);
 				}
 			}
@@ -129,12 +126,11 @@ export async function crawlCGA(
 			}
 		} catch (error) {
 			if (error instanceof Error && error.name === "AbortError") {
-				console.error(`Timeout fetching ${url}`);
+				logger.error(`Timeout fetching ${url}`);
 			} else {
-				console.error(`Error fetching ${url}:`, error);
+				logger.error(`Error fetching ${url}:`, error);
 			}
 		} finally {
-			_activeCount--;
 			semaphore.release();
 		}
 	}
@@ -148,12 +144,12 @@ export async function crawlCGA(
 	}
 
 	// Then process remaining queue with concurrency control
-	while (queue.length > 0 && pagesCrawled < maxPages) {
+	while (queue.length > 0 && pagesCrawled < cfg.maxPages) {
 		const batch: string[] = [];
 		const pendingPromises: Promise<void>[] = [];
 
 		// Collect up to 'concurrency' URLs for this batch
-		while (batch.length < concurrency && queue.length > 0) {
+		while (batch.length < cfg.concurrency && queue.length > 0) {
 			const url = queue.shift();
 			if (!url) continue;
 			if (seen.has(url)) continue;
@@ -173,7 +169,7 @@ export async function crawlCGA(
 
 		// Log progress
 		if (pagesCrawled % 50 === 0) {
-			console.log(
+			logger.info(
 				`Progress: ${pagesCrawled} pages crawled, ${queue.length} URLs in queue, ${seen.size} total seen`,
 			);
 		}
@@ -187,250 +183,45 @@ export async function crawlCGA(
  * This is called during the crawl, so we parse HTML only once.
  */
 function parsePage(html: string, url: string): CrawledPage {
+	const urlInfo = parsePageUrl(url);
+
 	const page: CrawledPage = {
 		url,
-		type: "other",
+		type: urlInfo.type === "index" ? "index" : urlInfo.type,
 		sections: [],
 	};
 
-	// Determine page type from URL
-	const filename = url.split("/").pop() || "";
-	if (filename.startsWith("title_") && filename.endsWith(".htm")) {
-		page.type = "title";
-		page.titleInfo = parseTitlePage(html, url);
-	} else if (filename.startsWith("chap_") && filename.endsWith(".htm")) {
-		page.type = "chapter";
-		page.chapterInfo = parseChapterPage(html, url, page.sections);
-	} else if (filename.startsWith("art_") && filename.endsWith(".htm")) {
-		page.type = "article";
-		page.chapterInfo = parseChapterPage(html, url, page.sections);
+	switch (urlInfo.type) {
+		case "title":
+			page.titleInfo = parseTitlePage(html, url);
+			break;
+		case "chapter":
+		case "article": {
+			const result: ChapterParseResult = parseChapterPage(
+				html,
+				url,
+				urlInfo.id,
+				urlInfo.type,
+			);
+			page.chapterInfo = result.info;
+			page.sections = result.sections;
+			break;
+		}
 	}
 
 	return page;
 }
 
-/**
- * Parse a title page to extract title name
- */
-function parseTitlePage(html: string, url: string): TitleInfo {
-	const titleIdMatch = url.match(/title_([^.]+)\.htm/i);
-	const titleId = titleIdMatch?.[1] || "";
-
-	// Extract title from <title> tag
-	const titleMatch = html.match(/<title>(.*?)<\/title>/is);
-	let titleName: string | null = null;
-
-	if (titleMatch) {
-		const titleText = titleMatch[1].replace(/<[^>]+>/g, "");
-		titleName = decodeHtmlEntities(titleText).trim();
-
-		// Extract name from "Title X - Name" format
-		const match = titleName.match(/^Title\s+[\w]+?\s*-\s*(.+)$/i);
-		if (match) {
-			titleName = match[1].trim() || null;
-		} else {
-			titleName = null;
-		}
-	}
-
-	return {
-		titleId,
-		titleName,
-		sourceUrl: url,
-	};
-}
-
-/**
- * Parse a chapter page to extract chapter title and sections
- */
-function parseChapterPage(
-	html: string,
-	url: string,
-	sections: ParsedSection[],
-): ChapterInfo {
-	const parser = new ChapterParser();
-	parser.parse(html);
-
-	// Extract chapter info
-	const chapterTitle = parser.getChapterTitle();
-	const chapterIdMatch = url.match(/chap_([^.]+)\.htm/i);
-	const chapterId = chapterIdMatch?.[1] || "";
-
-	// Extract title ID from section data
-	let titleId: string | null = null;
-	const rawSections = parser.getSections();
-
-	// Try to extract title ID from section IDs
-	for (const section of rawSections) {
-		// Match patterns like sec_4-125, secs_4-125, sec_04-125, sec_19a-125
-		const match = section.sectionId.match(/sec[s]?_([\da-zA-Z]+)/);
-		if (match) {
-			titleId = match[1];
-			break;
-		}
-	}
-
-	// If no title ID from sections, try to extract from chapter title
-	// Chapter titles are like "Department of Administrative Services (title 4)" or "Chapter 4 - ..."
-	if (!titleId && chapterTitle) {
-		const titleMatch = chapterTitle.match(/\(title\s*(\d+)\)|title\s*(\d+)/i);
-		if (titleMatch) {
-			titleId = titleMatch[1] || titleMatch[2];
-		}
-	}
-
-	// Convert parsed sections to our format
-	for (let i = 0; i < rawSections.length; i++) {
-		const sectionData = convertSection(rawSections[i], url, chapterId, i);
-		sections.push(sectionData);
-	}
-
-	return {
-		chapterId,
-		chapterTitle,
-		titleId: titleId || "",
-		sourceUrl: url,
-	};
-}
-
-/**
- * Parse a section label like "Sec. 4-125. Title of section." into parts
- */
-function parseSectionLabel(label: string): {
-	sectionNumber: string | null;
-	title: string | null;
-} {
-	const match = label.match(/^Secs?\.\s+([^.]+)\.\s*(.*)$/);
-	if (!match) {
-		return { sectionNumber: null, title: label.replace(/\.$/, "").trim() };
-	}
-	const sectionNumber = match[1].trim();
-	let title = match[2].trim();
-	title = title.replace(/\.$/, "").trim();
-	return { sectionNumber, title: title || null };
-}
-
-/**
- * Normalize designator (strip leading zeros, lowercase)
- */
-function normalizeDesignator(value: string | null): string | null {
-	if (!value) return value;
-	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
-	if (!match) return value.toLowerCase();
-	const num = String(Number.parseInt(match[1], 10));
-	const suffix = match[2].toLowerCase();
-	return `${num}${suffix}`;
-}
-
-/**
- * Convert ChapterParser section data to ParsedSection
- */
-function convertSection(
-	sectionData: {
-		sectionId: string;
-		name: string;
-		parts: {
-			body: string[];
-			history_short: string[];
-			history_long: string[];
-			citations: string[];
-			see_also: string[];
-		};
-	},
-	sourceUrl: string,
-	chapterId: string,
-	sortOrder: number,
-): ParsedSection {
-	const label = sectionData.name || sectionData.sectionId;
-	const { sectionNumber, title: cleanTitle } = parseSectionLabel(label);
-	const normalizedChapterNum = chapterId
-		? normalizeDesignator(chapterId.replace("chap_", "")) ||
-			chapterId.replace("chap_", "")
-		: null;
-
-	return {
-		stringId: `cgs/section/${sectionData.sectionId}`,
-		levelName: "section",
-		levelIndex: 2,
-		name: cleanTitle,
-		path: `/statutes/cgs/section/${sectionData.sectionId}`,
-		readableId: sectionNumber,
-		body: formatText(sectionData.parts.body || []),
-		historyShort: formatText(sectionData.parts.history_short || []) || null,
-		historyLong: formatText(sectionData.parts.history_long || []) || null,
-		citations: formatText(sectionData.parts.citations || []) || null,
-		parentStringId: normalizedChapterNum
-			? `cgs/chapter/${normalizedChapterNum}`
-			: null,
-		sortOrder,
-		sourceUrl,
-	};
-}
-
-/**
- * Decode common HTML entities
- */
-function decodeHtmlEntities(text: string): string {
-	const entities: Record<string, string> = {
-		"&amp;": "&",
-		"&lt;": "<",
-		"&gt;": ">",
-		"&quot;": '"',
-		"&#39;": "'",
-		"&apos;": "'",
-		"&nbsp;": " ",
-	};
-	return text.replace(/&[^;]+;/g, (entity) => entities[entity] || entity);
-}
-
-/**
- * Simple semaphore for concurrency control
- */
-class Semaphore {
-	private permits: number;
-	private waiters: Array<() => void> = [];
-
-	constructor(permits: number) {
-		this.permits = permits;
-	}
-
-	acquire(): Promise<void> {
-		return new Promise((resolve) => {
-			if (this.permits > 0) {
-				this.permits--;
-				resolve();
-			} else {
-				this.waiters.push(resolve);
-			}
-		});
-	}
-
-	release(): void {
-		if (this.waiters.length > 0) {
-			const next = this.waiters.shift();
-			if (next) {
-				next(); // Give permit directly to waiter
-			}
-		} else {
-			this.permits++;
-		}
-	}
-}
+// ============ URL Helper Functions (for backwards compatibility) ============
 
 /**
  * Determine the chapter ID from a URL path
  */
 export function getChapterIdFromUrl(url: string): string | null {
-	const parsed = new URL(url);
-	const filename = parsed.pathname.split("/").pop();
-	if (!filename) return null;
-
-	// Match chap_*.htm files
-	const match = filename.match(/^(chap_[^.]+)\.htm$/i);
-	if (match) {
-		return match[1];
+	const info = parsePageUrl(url);
+	if (info.type === "chapter") {
+		return `chap_${info.id}`;
 	}
-
 	return null;
 }
 
@@ -438,16 +229,10 @@ export function getChapterIdFromUrl(url: string): string | null {
  * Determine the title ID from a URL path
  */
 export function getTitleIdFromUrl(url: string): string | null {
-	const parsed = new URL(url);
-	const filename = parsed.pathname.split("/").pop();
-	if (!filename) return null;
-
-	// Match title_*.htm files
-	const match = filename.match(/^title_([^.]+)\.htm$/i);
-	if (match) {
-		return match[1];
+	const info = parsePageUrl(url);
+	if (info.type === "title") {
+		return info.id;
 	}
-
 	return null;
 }
 
@@ -455,12 +240,12 @@ export function getTitleIdFromUrl(url: string): string | null {
  * Check if URL is a chapter file
  */
 export function isChapterUrl(url: string): boolean {
-	return getChapterIdFromUrl(url) !== null;
+	return parsePageUrl(url).type === "chapter";
 }
 
 /**
  * Check if URL is a title file
  */
 export function isTitleUrl(url: string): boolean {
-	return getTitleIdFromUrl(url) !== null;
+	return parsePageUrl(url).type === "title";
 }
