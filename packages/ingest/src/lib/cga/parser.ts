@@ -1,6 +1,10 @@
-import { Parser } from "htmlparser2";
-
-import { decodeHtmlEntities } from "./utils";
+import {
+	type ExtractedAttribute,
+	parseXmlStreamWithHandler,
+	parseXmlWithHandler,
+	type SaxEvent,
+} from "../sax-parser";
+import { decodeHtmlEntities, parsePageUrl } from "./utils";
 
 const BASE_URL = "https://www.cga.ct.gov";
 const ALLOWED_PREFIX = "/current/pub/";
@@ -111,19 +115,33 @@ export class ChapterParser {
 		"h6",
 	]);
 
-	parse(html: string): void {
-		const parser = new Parser(
-			{
-				onopentag: (name, attribs) => this.handleOpenTag(name, attribs),
-				onclosetag: (name) => this.handleCloseTag(name),
-				ontext: (text) => this.handleText(text),
-				oncomment: (comment) => this.handleComment(comment),
-			},
-			{ decodeEntities: true },
-		);
+	async parse(input: string | AsyncIterable<Uint8Array>): Promise<void> {
+		const handler = (event: SaxEvent) =>
+			routeSaxEvent(
+				event,
+				(tag, attribs) => this.handleOpenTag(tag, attribs),
+				(tag) => this.handleCloseTag(tag),
+				(text) => this.handleText(text),
+			);
 
-		parser.write(html);
-		parser.end();
+		if (typeof input === "string") {
+			await parseXmlWithHandler(input, handler);
+			return;
+		}
+
+		await parseXmlStreamWithHandler(input, handler);
+	}
+
+	applyOpenTag(tag: string, attribs: Record<string, string>): void {
+		this.handleOpenTag(tag, attribs);
+	}
+
+	applyCloseTag(tag: string): void {
+		this.handleCloseTag(tag);
+	}
+
+	applyText(text: string): void {
+		this.handleText(text);
 	}
 
 	private handleOpenTag(tag: string, attribs: Record<string, string>): void {
@@ -307,10 +325,6 @@ export class ChapterParser {
 		this.getCurrentParts()[this.currentTarget].push(text);
 	}
 
-	private handleComment(_comment: string): void {
-		// Skip HTML comments
-	}
-
 	private startSection(sectionId: string | null): void {
 		if (!sectionId) return;
 
@@ -467,26 +481,33 @@ export function formatText(parts: string[]): string {
 /**
  * Extract links from HTML content
  */
-export function extractLinks(html: string, baseUrl: string): string[] {
+export async function extractLinks(
+	input: string | AsyncIterable<Uint8Array>,
+	baseUrl: string,
+): Promise<string[]> {
 	const links: string[] = [];
 
-	const parser = new Parser(
-		{
-			onopentag: (name, attribs) => {
-				if (name === "a" && attribs.href) {
+	const handler = (event: SaxEvent) =>
+		routeSaxEvent(
+			event,
+			(tag, attribs) => {
+				if (tag === "a" && attribs.href) {
 					const normalized = normalizeLink(attribs.href, baseUrl);
 					if (normalized) {
 						links.push(normalized);
 					}
 				}
 			},
-		},
-		{ decodeEntities: true },
-	);
+			() => {},
+			() => {},
+		);
 
-	parser.write(html);
-	parser.end();
+	if (typeof input === "string") {
+		await parseXmlWithHandler(input, handler);
+		return links;
+	}
 
+	await parseXmlStreamWithHandler(input, handler);
 	return links;
 }
 
@@ -621,18 +642,252 @@ export function normalizeDesignator(value: string | null): string | null {
 /**
  * Extract all sections from a chapter HTML file - two-pass parsing
  */
-export function extractSectionsFromHtml(
-	html: string,
+export async function extractSectionsFromHtml(
+	input: string | AsyncIterable<Uint8Array>,
 	chapterId: string,
 	sourceUrl: string,
 	type: "chapter" | "article" = "chapter",
-): ParsedSection[] {
+): Promise<ParsedSection[]> {
 	const parser = new ChapterParser();
-	parser.parse(html);
+	await parser.parse(input);
 
-	const sections = parser.getSections();
-	const labelMap = parser.getSectionLabels();
+	return buildSectionsFromParsedData(
+		parser.getSections(),
+		parser.getSectionLabels(),
+		chapterId,
+		sourceUrl,
+		type,
+	);
+}
 
+/**
+ * Extract chapter title from HTML - uses the two-pass parser
+ */
+export async function extractChapterTitle(
+	input: string | AsyncIterable<Uint8Array>,
+): Promise<string | null> {
+	const parser = new ChapterParser();
+	await parser.parse(input);
+	return parser.getChapterTitle();
+}
+
+// ============ Page-Level Parsing ============
+
+export interface TitleInfo {
+	titleId: string;
+	titleName: string | null;
+	sourceUrl: string;
+}
+
+export interface ChapterInfo {
+	chapterId: string;
+	chapterTitle: string | null;
+	titleId: string;
+	sourceUrl: string;
+	type: "chapter" | "article";
+}
+
+export interface ChapterParseResult {
+	info: ChapterInfo;
+	sections: ParsedSection[];
+}
+
+/**
+ * Parse a title page to extract title name
+ */
+export async function parseTitlePage(
+	input: string | AsyncIterable<Uint8Array>,
+	url: string,
+): Promise<TitleInfo> {
+	const titleIdMatch = url.match(/title_([^.]+)\.htm/i);
+	const titleId = titleIdMatch?.[1] || "";
+
+	const titleText = await parseTitleFromHtml(input);
+	let titleName: string | null = null;
+
+	if (titleText) {
+		titleName = decodeHtmlEntities(titleText).trim();
+		// Extract name from "Title X - Name" format
+		const match = titleName.match(/^Title\s+[\w]+?\s*-\s*(.+)$/i);
+		if (match) {
+			titleName = match[1].trim() || null;
+		} else {
+			titleName = null;
+		}
+	}
+
+	return {
+		titleId,
+		titleName,
+		sourceUrl: url,
+	};
+}
+
+/**
+ * Parse a chapter page to extract chapter title and sections
+ * Returns both the chapter info and the parsed sections
+ */
+export async function parseChapterPage(
+	input: string | AsyncIterable<Uint8Array>,
+	url: string,
+	urlChapterId: string,
+	type: "chapter" | "article",
+): Promise<ChapterParseResult> {
+	const parser = new ChapterParser();
+	await parser.parse(input);
+	const chapterTitle = parser.getChapterTitle();
+
+	const chapterId = parser.getChapterNumber() || urlChapterId;
+
+	const sections = buildSectionsFromParsedData(
+		parser.getSections(),
+		parser.getSectionLabels(),
+		chapterId,
+		url,
+		type,
+	);
+
+	// Extract title ID from section data
+	let titleId: string | null = null;
+	for (const section of sections) {
+		// Match patterns like sec_4-125, secs_4-125, sec_04-125, sec_19a-125
+		const match = section.stringId.match(/cgs\/section\/([\da-zA-Z]+)/);
+		if (match) {
+			titleId = match[1];
+			break;
+		}
+	}
+
+	// If no title ID from sections, try to extract from chapter title
+	if (!titleId && chapterTitle) {
+		const titleMatch = chapterTitle.match(/\(title\s*(\d+)\)|title\s*(\d+)/i);
+		if (titleMatch) {
+			titleId = titleMatch[1] || titleMatch[2];
+		}
+	}
+
+	return {
+		info: {
+			chapterId,
+			chapterTitle,
+			titleId: titleId || "",
+			sourceUrl: url,
+			type,
+		},
+		sections,
+	};
+}
+
+export interface CgaPageParseResult {
+	url: string;
+	type: "title" | "chapter" | "article" | "index" | "other";
+	titleInfo?: TitleInfo;
+	chapterInfo?: ChapterInfo;
+	sections: ParsedSection[];
+	links: string[];
+}
+
+export async function parseCgaPage(
+	input: string | AsyncIterable<Uint8Array>,
+	url: string,
+): Promise<CgaPageParseResult> {
+	const urlInfo = parsePageUrl(url);
+
+	const page: CgaPageParseResult = {
+		url,
+		type: urlInfo.type === "index" ? "index" : urlInfo.type,
+		sections: [],
+		links: [],
+	};
+
+	const chapterParser =
+		page.type === "chapter" || page.type === "article"
+			? new ChapterParser()
+			: null;
+
+	let inTitle = false;
+	let titleBuffer = "";
+
+	const handler = (event: SaxEvent) =>
+		routeSaxEvent(
+			event,
+			(tag, attribs) => {
+				if (tag === "a" && attribs.href) {
+					const normalized = normalizeLink(attribs.href, url);
+					if (normalized) {
+						page.links.push(normalized);
+					}
+				}
+
+				if (page.type === "title" && tag === "title") {
+					inTitle = true;
+					titleBuffer = "";
+				}
+
+				chapterParser?.applyOpenTag(tag, attribs);
+			},
+			(tag) => {
+				if (page.type === "title" && tag === "title") {
+					inTitle = false;
+				}
+				chapterParser?.applyCloseTag(tag);
+			},
+			(text) => {
+				if (page.type === "title" && inTitle) {
+					titleBuffer += text;
+				}
+				chapterParser?.applyText(text);
+			},
+		);
+
+	if (typeof input === "string") {
+		await parseXmlWithHandler(input, handler);
+	} else {
+		await parseXmlStreamWithHandler(input, handler);
+	}
+
+	if (page.type === "title") {
+		page.titleInfo = buildTitleInfo(titleBuffer, url);
+	}
+
+	if (page.type === "chapter" || page.type === "article") {
+		const chapterTitle = chapterParser?.getChapterTitle() ?? null;
+		const chapterIdFromUrl =
+			urlInfo.type === "chapter" || urlInfo.type === "article"
+				? urlInfo.id
+				: "";
+		const chapterId = chapterParser?.getChapterNumber() || chapterIdFromUrl;
+		const sections = chapterParser
+			? buildSectionsFromParsedData(
+					chapterParser.getSections(),
+					chapterParser.getSectionLabels(),
+					chapterId,
+					url,
+					page.type,
+				)
+			: [];
+		const titleId = inferTitleId(sections, chapterTitle);
+
+		page.chapterInfo = {
+			chapterId,
+			chapterTitle,
+			titleId,
+			sourceUrl: url,
+			type: page.type,
+		};
+		page.sections = sections;
+	}
+
+	return page;
+}
+
+function buildSectionsFromParsedData(
+	sections: SectionData[],
+	labelMap: Map<string, string>,
+	chapterId: string,
+	sourceUrl: string,
+	type: "chapter" | "article",
+): ParsedSection[] {
 	const results: ParsedSection[] = [];
 
 	for (let i = 0; i < sections.length; i++) {
@@ -640,7 +895,6 @@ export function extractSectionsFromHtml(
 		const label = labelMap.get(section.sectionId) || section.sectionId;
 		const { number, title } = parseLabel(label);
 
-		// Fall back to full label if parseLabel returns null for title
 		const sectionName =
 			title ||
 			(label
@@ -684,52 +938,49 @@ export function extractSectionsFromHtml(
 	return results;
 }
 
-/**
- * Extract chapter title from HTML - uses the two-pass parser
- */
-export function extractChapterTitle(html: string): string | null {
-	const parser = new ChapterParser();
-	parser.parse(html);
-	return parser.getChapterTitle();
+async function parseTitleFromHtml(
+	input: string | AsyncIterable<Uint8Array>,
+): Promise<string> {
+	let inTitle = false;
+	let buffer = "";
+
+	const handler = (event: SaxEvent) =>
+		routeSaxEvent(
+			event,
+			(tag) => {
+				if (tag === "title") {
+					inTitle = true;
+					buffer = "";
+				}
+			},
+			(tag) => {
+				if (tag === "title") {
+					inTitle = false;
+				}
+			},
+			(text) => {
+				if (inTitle) {
+					buffer += text;
+				}
+			},
+		);
+
+	if (typeof input === "string") {
+		await parseXmlWithHandler(input, handler);
+		return buffer;
+	}
+
+	await parseXmlStreamWithHandler(input, handler);
+	return buffer;
 }
 
-// ============ Page-Level Parsing ============
-
-export interface TitleInfo {
-	titleId: string;
-	titleName: string | null;
-	sourceUrl: string;
-}
-
-export interface ChapterInfo {
-	chapterId: string;
-	chapterTitle: string | null;
-	titleId: string;
-	sourceUrl: string;
-	type: "chapter" | "article";
-}
-
-export interface ChapterParseResult {
-	info: ChapterInfo;
-	sections: ParsedSection[];
-}
-
-/**
- * Parse a title page to extract title name
- */
-export function parseTitlePage(html: string, url: string): TitleInfo {
+function buildTitleInfo(titleText: string, url: string): TitleInfo {
 	const titleIdMatch = url.match(/title_([^.]+)\.htm/i);
 	const titleId = titleIdMatch?.[1] || "";
-
-	// Extract title from <title> tag
-	const titleMatch = html.match(/<title>(.*?)<\/title>/is);
 	let titleName: string | null = null;
 
-	if (titleMatch) {
-		const titleText = titleMatch[1].replace(/<[^>]+>/g, "");
+	if (titleText) {
 		titleName = decodeHtmlEntities(titleText).trim();
-
-		// Extract name from "Title X - Name" format
 		const match = titleName.match(/^Title\s+[\w]+?\s*-\s*(.+)$/i);
 		if (match) {
 			titleName = match[1].trim() || null;
@@ -745,31 +996,12 @@ export function parseTitlePage(html: string, url: string): TitleInfo {
 	};
 }
 
-/**
- * Parse a chapter page to extract chapter title and sections
- * Returns both the chapter info and the parsed sections
- */
-export function parseChapterPage(
-	html: string,
-	url: string,
-	urlChapterId: string,
-	type: "chapter" | "article",
-): ChapterParseResult {
-	// Parse HTML first to extract chapter number from meta tag
-	const parser = new ChapterParser();
-	parser.parse(html);
-	const chapterTitle = parser.getChapterTitle();
-
-	// Use chapter number from meta tag, fallback to URL-based ID
-	const chapterId = parser.getChapterNumber() || urlChapterId;
-
-	// Extract sections using the shared function
-	const sections = extractSectionsFromHtml(html, chapterId, url, type);
-
-	// Extract title ID from section data
+function inferTitleId(
+	sections: ParsedSection[],
+	chapterTitle: string | null,
+): string {
 	let titleId: string | null = null;
 	for (const section of sections) {
-		// Match patterns like sec_4-125, secs_4-125, sec_04-125, sec_19a-125
 		const match = section.stringId.match(/cgs\/section\/([\da-zA-Z]+)/);
 		if (match) {
 			titleId = match[1];
@@ -777,7 +1009,6 @@ export function parseChapterPage(
 		}
 	}
 
-	// If no title ID from sections, try to extract from chapter title
 	if (!titleId && chapterTitle) {
 		const titleMatch = chapterTitle.match(/\(title\s*(\d+)\)|title\s*(\d+)/i);
 		if (titleMatch) {
@@ -785,14 +1016,46 @@ export function parseChapterPage(
 		}
 	}
 
-	return {
-		info: {
-			chapterId,
-			chapterTitle,
-			titleId: titleId || "",
-			sourceUrl: url,
-			type,
-		},
-		sections,
-	};
+	return titleId || "";
+}
+
+function normalizeTagName(tagName: string): string {
+	const colonIndex = tagName.indexOf(":");
+	if (colonIndex !== -1) {
+		return tagName.substring(colonIndex + 1).toLowerCase();
+	}
+	return tagName.toLowerCase();
+}
+
+function normalizeAttributes(
+	attributes: ExtractedAttribute[],
+): Record<string, string> {
+	const result: Record<string, string> = {};
+	for (const attr of attributes) {
+		result[attr.name.toLowerCase()] = attr.value;
+	}
+	return result;
+}
+
+function routeSaxEvent(
+	event: SaxEvent,
+	onOpen: (tag: string, attribs: Record<string, string>) => void,
+	onClose: (tag: string) => void,
+	onText: (text: string) => void,
+): void {
+	switch (event.type) {
+		case "openTag": {
+			const tag = normalizeTagName(event.tag.name);
+			const attribs = normalizeAttributes(event.tag.attributes);
+			onOpen(tag, attribs);
+			break;
+		}
+		case "closeTag": {
+			onClose(normalizeTagName(event.tag.name));
+			break;
+		}
+		case "text":
+			onText(event.text.value);
+			break;
+	}
 }

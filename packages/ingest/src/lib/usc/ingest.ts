@@ -1,4 +1,5 @@
 import type { Env, IngestionResult } from "../../types";
+import { NodeBatcher } from "../node-batcher";
 import { BlobStore } from "../packfile";
 import {
 	computeDiff,
@@ -6,8 +7,6 @@ import {
 	getOrCreateSource,
 	getOrCreateSourceVersion,
 	insertNode,
-	insertNodesBatched,
-	type NodeInsert,
 	setRootNodeId,
 } from "../versioning";
 import { extractSectionCrossReferences } from "./cross-references";
@@ -121,7 +120,16 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	const seenLevelIds = new Set<string>();
 	const levelTypeByIdentifier = new Map<string, USCLevelType>();
 	const seenSections = new Set<string>();
-	const sectionNodes: NodeInsert[] = [];
+	const sectionBatcher = new NodeBatcher(
+		env.DB,
+		SECTION_BATCH_SIZE,
+		(batch) => {
+			for (const [stringId, nodeId] of batch) {
+				nodeIdMap.set(stringId, nodeId);
+			}
+			nodesCreated += batch.size;
+		},
+	);
 	let levelSortOrder = 0;
 	let sectionSortOrder = 0;
 	let crossRefTime = 0;
@@ -181,16 +189,6 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			return nodeIdMap.get(`usc/${levelType}/${identifier}`) ?? null;
 		}
 		return nodeIdMap.get(`usc/title/${section.titleNum}`) ?? null;
-	};
-
-	const flushSectionNodes = async () => {
-		if (sectionNodes.length === 0) return;
-		const batch = sectionNodes.splice(0, sectionNodes.length);
-		const sectionIdMap = await insertNodesBatched(env.DB, batch);
-		for (const [stringId, nodeId] of sectionIdMap) {
-			nodeIdMap.set(stringId, nodeId);
-		}
-		nodesCreated += batch.length;
 	};
 
 	for (const titleEntry of sortedTitles) {
@@ -308,7 +306,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 					blobStoreTime += Date.now() - blobStart;
 
 					const readableId = `${section.titleNum} USC ${section.sectionNum}`;
-					sectionNodes.push({
+					await sectionBatcher.add({
 						source_version_id: versionId,
 						string_id: stringId,
 						parent_id: resolveSectionParentId(section),
@@ -327,8 +325,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 					titleSections += 1;
 					totalSections += 1;
 
-					if (sectionNodes.length >= SECTION_BATCH_SIZE) {
-						await flushSectionNodes();
+					if (sectionBatcher.size === 0 && totalSections > 0) {
 						console.log(
 							`Inserted ${totalSections} sections so far (crossRef: ${crossRefTime}ms, blobStore: ${blobStoreTime}ms)`,
 						);
@@ -344,7 +341,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		}
 	}
 
-	await flushSectionNodes();
+	await sectionBatcher.flush();
 
 	// Flush any remaining blobs to packfiles
 	await blobStore.flush();

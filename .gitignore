@@ -31,3 +31,4 @@ data/
 # Build outputs (Astro legacy)
 dist/
 .turbo/
+packages/ingest/src/benchmarks

@@ -130,13 +130,13 @@ describe("CGA Parser - Label Parsing", () => {
 describe("CGA Parser - Basic Sections", () => {
 	const html = loadFixture("basic_chapter.htm");
 
-	it("extracts chapter title", () => {
-		const title = extractChapterTitle(html);
+	it("extracts chapter title", async () => {
+		const title = await extractChapterTitle(html);
 		expect(title).toBe("Doulas");
 	});
 
-	it("extracts sections from HTML", () => {
-		const sections = extractSectionsFromHtml(
+	it("extracts sections from HTML", async () => {
+		const sections = await extractSectionsFromHtml(
 			html,
 			"377a",
 			"https://www.cga.ct.gov/current/pub/chap_377a.htm",
@@ -144,46 +144,46 @@ describe("CGA Parser - Basic Sections", () => {
 		expect(sections.length).toBe(2);
 	});
 
-	it("extracts section stringId correctly", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("extracts section stringId correctly", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].stringId).toBe("cgs/section/20-86aa");
 		expect(sections[1].stringId).toBe("cgs/section/20-86bb");
 	});
 
-	it("extracts section name from TOC", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("extracts section name from TOC", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].name).toContain("Doula advisory committee");
 	});
 
-	it("extracts history_short (source class)", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("extracts history_short (source class)", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].historyShort).toContain("P.A. 23-147");
 	});
 
-	it("extracts history_long (history class)", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("extracts history_long (history class)", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].historyLong).toContain("effective July 1, 2023");
 	});
 
-	it("extracts citations (annotation class)", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("extracts citations (annotation class)", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		// Second section has annotation
 		expect(sections[1].citations).toContain("doula certification standards");
 	});
 
-	it("sets correct parent stringId", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("sets correct parent stringId", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].parentStringId).toBe("cgs/chapter/377a");
 	});
 
-	it("sets correct sortOrder", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("sets correct sortOrder", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].sortOrder).toBe(0);
 		expect(sections[1].sortOrder).toBe(1);
 	});
 
-	it("excludes nav_tbl content from body", () => {
-		const sections = extractSectionsFromHtml(html, "377a", "");
+	it("excludes nav_tbl content from body", async () => {
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].body).not.toContain("Return to Chapter");
 	});
 });
@@ -191,23 +191,23 @@ describe("CGA Parser - Basic Sections", () => {
 describe("CGA Parser - Reserved Sections", () => {
 	const html = loadFixture("reserved_sections.htm");
 
-	it("extracts reserved sections", () => {
-		const sections = extractSectionsFromHtml(html, "001", "");
+	it("extracts reserved sections", async () => {
+		const sections = await extractSectionsFromHtml(html, "001", "");
 		const reservedSections = sections.filter((s) =>
 			s.body.includes("Reserved for future use"),
 		);
 		expect(reservedSections.length).toBe(2);
 	});
 
-	it("marks reserved sections with correct stringId pattern", () => {
-		const sections = extractSectionsFromHtml(html, "001", "");
+	it("marks reserved sections with correct stringId pattern", async () => {
+		const sections = await extractSectionsFromHtml(html, "001", "");
 		const reserved = sections.find((s) => s.stringId.includes("1-1o_to_1-1s"));
 		expect(reserved).toBeDefined();
 	});
 
-	it("extracts TOC label with Reserved marker", () => {
+	it("extracts TOC label with Reserved marker", async () => {
 		const parser = new ChapterParser();
-		parser.parse(html);
+		await parser.parse(html);
 		const labels = parser.getSectionLabels();
 		// The section labels are built from TOC anchors
 		expect(labels.size).toBeGreaterThan(0);
@@ -217,16 +217,16 @@ describe("CGA Parser - Reserved Sections", () => {
 describe("CGA Parser - Transferred Sections", () => {
 	const html = loadFixture("transferred_sections.htm");
 
-	it("extracts transferred sections", () => {
-		const sections = extractSectionsFromHtml(html, "003", "");
+	it("extracts transferred sections", async () => {
+		const sections = await extractSectionsFromHtml(html, "003", "");
 		const transferred = sections.filter((s) =>
 			s.body.includes("Transferred to Chapter"),
 		);
 		expect(transferred.length).toBe(3);
 	});
 
-	it("includes transfer destination in body", () => {
-		const sections = extractSectionsFromHtml(html, "003", "");
+	it("includes transfer destination in body", async () => {
+		const sections = await extractSectionsFromHtml(html, "003", "");
 		const sec115 = sections.find((s) => s.stringId === "cgs/section/1-15");
 		expect(sec115?.body).toContain("Transferred to Chapter 14, Sec. 1-212");
 	});
@@ -235,14 +235,14 @@ describe("CGA Parser - Transferred Sections", () => {
 describe("CGA Parser - Repealed Subsections", () => {
 	const html = loadFixture("repealed_subsection.htm");
 
-	it("includes repealed subsection text in body", () => {
-		const sections = extractSectionsFromHtml(html, "005", "");
+	it("includes repealed subsection text in body", async () => {
+		const sections = await extractSectionsFromHtml(html, "005", "");
 		expect(sections.length).toBe(1);
 		expect(sections[0].body).toContain("Repealed by P.A. 76-186");
 	});
 
-	it("extracts history mentioning the repeal", () => {
-		const sections = extractSectionsFromHtml(html, "005", "");
+	it("extracts history mentioning the repeal", async () => {
+		const sections = await extractSectionsFromHtml(html, "005", "");
 		expect(sections[0].historyLong).toContain("repealed Subsec. (c)");
 	});
 });
@@ -250,20 +250,20 @@ describe("CGA Parser - Repealed Subsections", () => {
 describe("CGA Parser - Tables", () => {
 	const html = loadFixture("tables_chapter.htm");
 
-	it("extracts sections containing tables", () => {
-		const sections = extractSectionsFromHtml(html, "229", "");
+	it("extracts sections containing tables", async () => {
+		const sections = await extractSectionsFromHtml(html, "229", "");
 		expect(sections.length).toBe(1);
 	});
 
-	it("converts table cells with pipe separators", () => {
-		const sections = extractSectionsFromHtml(html, "229", "");
+	it("converts table cells with pipe separators", async () => {
+		const sections = await extractSectionsFromHtml(html, "229", "");
 		const body = sections[0].body;
 		// Tables should have | separators between cells
 		expect(body).toContain("|");
 	});
 
-	it("preserves table content like tax rates", () => {
-		const sections = extractSectionsFromHtml(html, "229", "");
+	it("preserves table content like tax rates", async () => {
+		const sections = await extractSectionsFromHtml(html, "229", "");
 		const body = sections[0].body;
 		expect(body).toContain("Connecticut Taxable Income");
 		expect(body).toContain("Rate of Tax");
@@ -271,8 +271,8 @@ describe("CGA Parser - Tables", () => {
 		expect(body).toContain("$2,250");
 	});
 
-	it("preserves multiple tables in one section", () => {
-		const sections = extractSectionsFromHtml(html, "229", "");
+	it("preserves multiple tables in one section", async () => {
+		const sections = await extractSectionsFromHtml(html, "229", "");
 		const body = sections[0].body;
 		// Second table has $3,500 threshold
 		expect(body).toContain("$3,500");
@@ -281,9 +281,9 @@ describe("CGA Parser - Tables", () => {
 });
 
 describe("CGA Parser - Nonstandard Level Names", () => {
-	it("handles chapter designators with letter suffixes", () => {
+	it("handles chapter designators with letter suffixes", async () => {
 		const html = loadFixture("basic_chapter.htm");
-		const sections = extractSectionsFromHtml(html, "377a", "");
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		expect(sections[0].parentStringId).toBe("cgs/chapter/377a");
 	});
 
@@ -409,34 +409,34 @@ describe("CGA Crawler - URL Parsing", () => {
 // ============================================================
 
 describe("ChapterParser", () => {
-	it("parses chapter title from HTML title tag", () => {
+	it("parses chapter title from HTML title tag", async () => {
 		const html = loadFixture("basic_chapter.htm");
 		const parser = new ChapterParser();
-		parser.parse(html);
+		await parser.parse(html);
 		expect(parser.getChapterTitle()).toBe("Doulas");
 	});
 
-	it("extracts sections with correct data", () => {
+	it("extracts sections with correct data", async () => {
 		const html = loadFixture("basic_chapter.htm");
 		const parser = new ChapterParser();
-		parser.parse(html);
+		await parser.parse(html);
 		const sections = parser.getSections();
 		expect(sections.length).toBe(2);
 		expect(sections[0].sectionId).toBe("sec_20-86aa");
 	});
 
-	it("builds TOC map from anchor links", () => {
+	it("builds TOC map from anchor links", async () => {
 		const html = loadFixture("basic_chapter.htm");
 		const parser = new ChapterParser();
-		parser.parse(html);
+		await parser.parse(html);
 		const labels = parser.getSectionLabels();
 		expect(labels.get("sec_20-86aa")).toContain("Doula advisory committee");
 	});
 
-	it("separates content into parts (body, history, citations)", () => {
+	it("separates content into parts (body, history, citations)", async () => {
 		const html = loadFixture("basic_chapter.htm");
 		const parser = new ChapterParser();
-		parser.parse(html);
+		await parser.parse(html);
 		const sections = parser.getSections();
 
 		// First section should have body content
@@ -451,9 +451,9 @@ describe("ChapterParser", () => {
 // ============================================================
 
 describe("CGA Parser - Title 42a Articles", () => {
-	it("extracts article links from title_42a page", () => {
+	it("extracts article links from title_42a page", async () => {
 		const html = loadFixture("title_42a.htm");
-		const links = extractLinks(
+		const links = await extractLinks(
 			html,
 			"https://www.cga.ct.gov/current/pub/title_42a.htm",
 		);
@@ -464,9 +464,9 @@ describe("CGA Parser - Title 42a Articles", () => {
 		expect(articleLinks.some((l) => l.includes("art_002.htm"))).toBe(true);
 	});
 
-	it("extracts sections from article page", () => {
+	it("extracts sections from article page", async () => {
 		const html = loadFixture("art_001.htm");
-		const sections = extractSectionsFromHtml(
+		const sections = await extractSectionsFromHtml(
 			html,
 			"001",
 			"https://www.cga.ct.gov/current/pub/art_001.htm",
@@ -474,39 +474,39 @@ describe("CGA Parser - Title 42a Articles", () => {
 		expect(sections.length).toBe(2);
 	});
 
-	it("extracts correct stringId for 42a sections", () => {
+	it("extracts correct stringId for 42a sections", async () => {
 		const html = loadFixture("art_001.htm");
-		const sections = extractSectionsFromHtml(html, "001", "");
+		const sections = await extractSectionsFromHtml(html, "001", "");
 		// Section IDs should preserve the 42a- prefix
 		expect(sections[0].stringId).toBe("cgs/section/42a-1-101");
 		expect(sections[1].stringId).toBe("cgs/section/42a-1-102");
 	});
 
-	it("extracts section name from TOC for 42a sections", () => {
+	it("extracts section name from TOC for 42a sections", async () => {
 		const html = loadFixture("art_001.htm");
-		const sections = extractSectionsFromHtml(html, "001", "");
+		const sections = await extractSectionsFromHtml(html, "001", "");
 		expect(sections[0].name).toContain("Short titles");
 		expect(sections[1].name).toContain("Scope of article");
 	});
 
-	it("extracts history and citations for 42a sections", () => {
+	it("extracts history and citations for 42a sections", async () => {
 		const html = loadFixture("art_001.htm");
-		const sections = extractSectionsFromHtml(html, "001", "");
+		const sections = await extractSectionsFromHtml(html, "001", "");
 		expect(sections[0].historyShort).toContain("1959, P.A. 133");
 		expect(sections[0].historyLong).toContain("P.A. 05-109");
 		expect(sections[1].citations).toContain("172 C. 112");
 	});
 
-	it("sets correct parent stringId for articles", () => {
+	it("sets correct parent stringId for articles", async () => {
 		const html = loadFixture("art_001.htm");
-		const sections = extractSectionsFromHtml(html, "1", "", "article");
+		const sections = await extractSectionsFromHtml(html, "1", "", "article");
 		// For articles, parentStringId should reference cgs/article/...
 		expect(sections[0].parentStringId).toBe("cgs/article/1");
 	});
 
-	it("sets correct parent stringId for chapters (default)", () => {
+	it("sets correct parent stringId for chapters (default)", async () => {
 		const html = loadFixture("basic_chapter.htm");
-		const sections = extractSectionsFromHtml(html, "377a", "");
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		// For chapters, parentStringId should reference cgs/chapter/...
 		expect(sections[0].parentStringId).toBe("cgs/chapter/377a");
 	});
@@ -519,9 +519,9 @@ describe("CGA Parser - Title 42a Articles", () => {
 describe("Crawler Framework - Extension Points", () => {
 	// These tests document the interface that other crawlers should implement
 
-	it("ParsedSection interface has required fields", () => {
+	it("ParsedSection interface has required fields", async () => {
 		const html = loadFixture("basic_chapter.htm");
-		const sections = extractSectionsFromHtml(
+		const sections = await extractSectionsFromHtml(
 			html,
 			"377a",
 			"http://example.com",
@@ -547,9 +547,9 @@ describe("Crawler Framework - Extension Points", () => {
 		expect(section).toHaveProperty("seeAlso");
 	});
 
-	it("Section levelIndex is consistent", () => {
+	it("Section levelIndex is consistent", async () => {
 		const html = loadFixture("basic_chapter.htm");
-		const sections = extractSectionsFromHtml(html, "377a", "");
+		const sections = await extractSectionsFromHtml(html, "377a", "");
 		// All sections should have levelIndex 2 (after root=0, title/chapter=1)
 		for (const section of sections) {
 			expect(section.levelIndex).toBe(2);

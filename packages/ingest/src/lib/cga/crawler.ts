@@ -1,10 +1,8 @@
+import { streamFromReadableStream } from "../streaming";
 import {
 	type ChapterInfo,
-	type ChapterParseResult,
-	extractLinks,
 	type ParsedSection,
-	parseChapterPage,
-	parseTitlePage,
+	parseCgaPage,
 	type TitleInfo,
 } from "./parser";
 import {
@@ -13,7 +11,6 @@ import {
 	DEFAULT_CRAWLER_CONFIG,
 	type Logger,
 	parsePageUrl,
-	Semaphore,
 } from "./utils";
 
 /**
@@ -50,11 +47,12 @@ export async function crawlCGA(
 	fetcher?: Fetcher,
 	config: Partial<CrawlerConfig> = {},
 	logger: Logger = consoleLogger,
+	onPage?: (page: CrawledPage) => Promise<void>,
 ): Promise<CrawlResult> {
 	const cfg = { ...DEFAULT_CRAWLER_CONFIG, ...config };
 
 	const seen = new Set<string>();
-	const queue: string[] = [startUrl];
+	const stack: string[] = [startUrl];
 	const result: CrawlResult = {
 		titles: new Map(),
 		chapters: new Map(),
@@ -67,10 +65,7 @@ export async function crawlCGA(
 		? (url: string, init?: RequestInit) => fetcher.fetch(url, init)
 		: fetch;
 
-	const semaphore = new Semaphore(cfg.concurrency);
-
 	async function processUrl(url: string): Promise<void> {
-		await semaphore.acquire();
 		let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 		try {
@@ -97,13 +92,23 @@ export async function crawlCGA(
 				return;
 			}
 
-			const html = await response.text();
-			logger.debug(`Got ${html.length} bytes from ${url}`);
+			if (!response.body) {
+				throw new Error(`Empty response body for ${url}`);
+			}
 
 			pagesCrawled++;
 
-			// Parse the HTML once to extract content AND links
-			const crawledPage = parsePage(html, url);
+			const parsedPage = await parseCgaPage(
+				streamFromReadableStream(response.body),
+				url,
+			);
+			const crawledPage: CrawledPage = {
+				url: parsedPage.url,
+				type: parsedPage.type,
+				titleInfo: parsedPage.titleInfo,
+				chapterInfo: parsedPage.chapterInfo,
+				sections: parsedPage.sections,
+			};
 
 			// Store the parsed data
 			if (crawledPage.type === "title" && crawledPage.titleInfo) {
@@ -121,10 +126,25 @@ export async function crawlCGA(
 				}
 			}
 
+			if (onPage) {
+				await onPage(crawledPage);
+			}
+
 			// Extract and queue new links
-			const links = extractLinks(html, url);
-			if (links.length > 0) {
-				queue.push(...links.filter((link) => !seen.has(link)));
+			for (const link of parsedPage.links) {
+				const linkType = parsePageUrl(link).type;
+				if (
+					linkType !== "title" &&
+					linkType !== "chapter" &&
+					linkType !== "article"
+				) {
+					continue;
+				}
+				if (seen.has(link)) {
+					continue;
+				}
+				seen.add(link);
+				stack.push(link);
 			}
 		} catch (error) {
 			if (error instanceof Error && error.name === "AbortError") {
@@ -136,85 +156,23 @@ export async function crawlCGA(
 			if (timeoutId !== null) {
 				clearTimeout(timeoutId);
 			}
-			semaphore.release();
 		}
 	}
 
-	// Process queue with concurrency control
-	// First, process the start URL synchronously to get initial links
-	const nextUrl = queue.shift();
-	if (nextUrl && !seen.has(nextUrl)) {
-		seen.add(nextUrl);
-		await processUrl(nextUrl);
-	}
+	seen.add(startUrl);
 
-	// Then process remaining queue with concurrency control
-	while (queue.length > 0 && pagesCrawled < cfg.maxPages) {
-		const batch: string[] = [];
-		const pendingPromises: Promise<void>[] = [];
+	while (stack.length > 0 && pagesCrawled < cfg.maxPages) {
+		const batch = stack.splice(-cfg.concurrency);
+		await Promise.all(batch.map((url) => processUrl(url)));
 
-		// Collect up to 'concurrency' URLs for this batch
-		while (batch.length < cfg.concurrency && queue.length > 0) {
-			const url = queue.shift();
-			if (!url) continue;
-			if (seen.has(url)) continue;
-			seen.add(url);
-			batch.push(url);
-		}
-
-		if (batch.length === 0) break;
-
-		// Process all URLs in this batch concurrently
-		for (const url of batch) {
-			pendingPromises.push(processUrl(url));
-		}
-
-		// Wait for this batch to complete
-		await Promise.all(pendingPromises);
-
-		// Log progress
 		if (pagesCrawled % 50 === 0) {
 			logger.info(
-				`Progress: ${pagesCrawled} pages crawled, ${queue.length} URLs in queue, ${seen.size} total seen`,
+				`Progress: ${pagesCrawled} pages crawled, ${stack.length} URLs in stack, ${seen.size} total seen`,
 			);
 		}
 	}
 
 	return result;
-}
-
-/**
- * Parse a single page, extracting content and determining page type.
- * This is called during the crawl, so we parse HTML only once.
- */
-function parsePage(html: string, url: string): CrawledPage {
-	const urlInfo = parsePageUrl(url);
-
-	const page: CrawledPage = {
-		url,
-		type: urlInfo.type === "index" ? "index" : urlInfo.type,
-		sections: [],
-	};
-
-	switch (urlInfo.type) {
-		case "title":
-			page.titleInfo = parseTitlePage(html, url);
-			break;
-		case "chapter":
-		case "article": {
-			const result: ChapterParseResult = parseChapterPage(
-				html,
-				url,
-				urlInfo.id,
-				urlInfo.type,
-			);
-			page.chapterInfo = result.info;
-			page.sections = result.sections;
-			break;
-		}
-	}
-
-	return page;
 }
 
 // ============ URL Helper Functions (for backwards compatibility) ============

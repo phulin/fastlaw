@@ -1,5 +1,5 @@
 import { Title } from "@solidjs/meta";
-import type { JSX } from "solid-js";
+import { marked } from "marked";
 import { For, onMount, Show } from "solid-js";
 import { Breadcrumbs } from "~/components/Breadcrumbs";
 import { Footer } from "~/components/Footer";
@@ -9,43 +9,6 @@ import type { NodeRecord, PageData, SectionCrossReference } from "~/lib/types";
 
 const toTitle = (value: string) =>
 	value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-
-const splitParagraphs = (text: string) =>
-	text
-		.split(/\n\s*\n/g)
-		.map((paragraph) => paragraph.trim())
-		.filter(Boolean);
-
-const identifierToken = "(?:[ivxIVX]+|\\d+|[A-Z]{1,3}|[a-z]{1,3})";
-const identifierPattern = new RegExp(
-	`^(((?:\\(${identifierToken}\\)|${identifierToken}\\.)\\s*)+)`,
-);
-
-const splitLeadingIdentifier = (text: string) => {
-	const trimmed = text.trimStart();
-	const match = trimmed.match(identifierPattern);
-	if (!match) {
-		return { leading: null, rest: text, restOffset: 0 };
-	}
-	const leadingWhitespace = text.length - trimmed.length;
-	const restOffset = leadingWhitespace + match[0].length;
-	return {
-		leading: match[1].trim(),
-		rest: trimmed.slice(match[0].length),
-		restOffset,
-	};
-};
-
-const getIndentClass = (text: string) => {
-	const trimmed = text.trimStart();
-	if (!trimmed.startsWith("(")) return "indent-0";
-	const token = trimmed.slice(1).split(")")[0] ?? "";
-	if (/^[a-z]$/i.test(token)) return "indent-1";
-	if (/^\d+$/.test(token)) return "indent-2";
-	if (/^[ivx]+$/i.test(token)) return "indent-3";
-	if (/^[A-Z]$/i.test(token)) return "indent-4";
-	return "indent-1";
-};
 
 const filterNonOverlappingReferences = (
 	references: SectionCrossReference[],
@@ -66,7 +29,7 @@ const filterNonOverlappingReferences = (
 	return result;
 };
 
-const buildLinkedText = (
+const buildLinkedMarkdown = (
 	text: string,
 	baseOffset: number,
 	references: SectionCrossReference[],
@@ -79,28 +42,25 @@ const buildLinkedText = (
 	if (inRange.length === 0) return text;
 
 	const filtered = filterNonOverlappingReferences(inRange);
-	const parts: Array<string | JSX.Element> = [];
+	let result = "";
 	let cursor = 0;
 
 	for (const ref of filtered) {
 		const start = ref.offset - baseOffset;
 		const end = start + ref.length;
 		if (start > cursor) {
-			parts.push(text.slice(cursor, start));
+			result += text.slice(cursor, start);
 		}
-		parts.push(
-			<a class="statute-xref" href={ref.link}>
-				{text.slice(start, end)}
-			</a>,
-		);
+		const label = text.slice(start, end);
+		result += `[${label}](${ref.link})`;
 		cursor = end;
 	}
 
 	if (cursor < text.length) {
-		parts.push(text.slice(cursor));
+		result += text.slice(cursor);
 	}
 
-	return parts;
+	return result;
 };
 
 const navLabel = (node: NodeRecord | null) => {
@@ -288,49 +248,17 @@ export function NodePage(props: NodePageProps) {
 						<div id="statute-body" class="statute-body">
 							<For each={bodyBlocks()}>
 								{(block) => {
-									const paragraphs = splitParagraphs(block.content);
-									let cursor = 0;
+									const markdown = buildLinkedMarkdown(
+										block.content,
+										0,
+										crossReferences(),
+									);
 
 									return (
-										<For each={paragraphs}>
-											{(paragraph) => {
-												const start = block.content.indexOf(paragraph, cursor);
-												const paragraphOffset = start >= 0 ? start : cursor;
-												cursor = paragraphOffset + paragraph.length;
-
-												const parts = splitLeadingIdentifier(paragraph);
-												const restOffset = paragraphOffset + parts.restOffset;
-												const rest = parts.rest;
-
-												return (
-													<p class={getIndentClass(paragraph)}>
-														{parts.leading ? (
-															<>
-																<strong class="paragraph-identifier">
-																	{parts.leading}
-																</strong>
-																{rest
-																	? [
-																			" ",
-																			buildLinkedText(
-																				rest,
-																				restOffset,
-																				crossReferences(),
-																			),
-																		]
-																	: ""}
-															</>
-														) : (
-															buildLinkedText(
-																paragraph,
-																paragraphOffset,
-																crossReferences(),
-															)
-														)}
-													</p>
-												);
-											}}
-										</For>
+										<div
+											class="markdown"
+											innerHTML={marked.parse(markdown) as string}
+										/>
 									);
 								}}
 							</For>
@@ -344,25 +272,10 @@ export function NodePage(props: NodePageProps) {
 											<p class="level-marker">
 												{block.label ?? toTitle(block.type)}
 											</p>
-											<For each={splitParagraphs(block.content)}>
-												{(paragraph) => {
-													const parts = splitLeadingIdentifier(paragraph);
-													return (
-														<p>
-															{parts.leading ? (
-																<>
-																	<strong class="paragraph-identifier">
-																		{parts.leading}
-																	</strong>
-																	{parts.rest ? ` ${parts.rest}` : ""}
-																</>
-															) : (
-																paragraph
-															)}
-														</p>
-													);
-												}}
-											</For>
+											<div
+												class="markdown"
+												innerHTML={marked.parse(block.content) as string}
+											/>
 										</div>
 									)}
 								</For>
