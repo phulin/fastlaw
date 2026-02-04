@@ -1006,14 +1006,12 @@ __metadata:
   dependencies:
     "@cloudflare/workers-types": "npm:^4.20250129.0"
     "@zip.js/zip.js": "npm:^2.8.16"
-    fast-xml-parser: "npm:^4.5.1"
-    fzstd: "npm:^0.1.1"
     hono: "npm:^4.6.4"
     htmlparser2: "npm:^9.1.0"
+    sax-wasm: "npm:^3.1.3"
     vitest: "npm:^3.0.0"
     wrangler: "npm:^4.61.1"
     xxhash-wasm: "npm:^1.1.0"
-    zstd-codec: "npm:^0.1.5"
   languageName: unknown
   linkType: soft
 
@@ -2591,17 +2589,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fast-xml-parser@npm:^4.5.1":
-  version: 4.5.3
-  resolution: "fast-xml-parser@npm:4.5.3"
-  dependencies:
-    strnum: "npm:^1.1.1"
-  bin:
-    fxparser: src/cli/cli.js
-  checksum: 10c0/bf9ccadacfadc95f6e3f0e7882a380a7f219cf0a6f96575149f02cb62bf44c3b7f0daee75b8ff3847bcfd7fbcb201e402c71045936c265cf6d94b141ec4e9327
-  languageName: node
-  linkType: hard
-
 "fastlaw@workspace:.":
   version: 0.0.0-use.local
   resolution: "fastlaw@workspace:."
@@ -3516,6 +3503,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"sax-wasm@npm:^3.1.3":
+  version: 3.1.3
+  resolution: "sax-wasm@npm:3.1.3"
+  checksum: 10c0/5be9c401a2e8a987c874354bc763546d881589d17256b749d5000452fdb82ed39063919262e12d00240a9c5b9db3d4dcc6ccf145e8957d9bd271256535b57350
+  languageName: node
+  linkType: hard
+
 "semver@npm:^6.3.1":
   version: 6.3.1
   resolution: "semver@npm:6.3.1"
@@ -3792,13 +3786,6 @@ __metadata:
   dependencies:
     js-tokens: "npm:^9.0.1"
   checksum: 10c0/50918f669915d9ad0fe4b7599902b735f853f2201c97791ead00104a654259c0c61bc2bc8fa3db05109339b61f4cf09e47b94ecc874ffbd0e013965223893af8
-  languageName: node
-  linkType: hard
-
-"strnum@npm:^1.1.1":
-  version: 1.1.2
-  resolution: "strnum@npm:1.1.2"
-  checksum: 10c0/a0fce2498fa3c64ce64a40dada41beb91cabe3caefa910e467dc0518ef2ebd7e4d10f8c2202a6104f1410254cae245066c0e94e2521fb4061a5cb41831952392
   languageName: node
   linkType: hard
 
@@ -4452,12 +4439,5 @@ __metadata:
     cookie: "npm:^1.0.2"
     youch-core: "npm:^0.3.3"
   checksum: 10c0/588d65aa5837a46c8473cf57a9129115383f57aad5899915d37005950decfefc66bec85b8a1262dbefd623a122c279095074655889317311a554f9c2e290a5b3
-  languageName: node
-  linkType: hard
-
-"zstd-codec@npm:^0.1.5":
-  version: 0.1.5
-  resolution: "zstd-codec@npm:0.1.5"
-  checksum: 10c0/8b7e6d9ce86f00fc4ea16c949aab5538505a1f3f1a9c7c095b2a7308b4ed894deec7bdb2c614e1486a337abdce09a6e56282dc0e39fe9f880953b094f8c7810b
   languageName: node
   linkType: hard

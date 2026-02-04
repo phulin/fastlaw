@@ -11,9 +11,13 @@ import {
 	setRootNodeId,
 } from "../versioning";
 import { extractSectionCrossReferences } from "./cross-references";
-import { fetchUSCTitle, getTitleNumFromUrl, getUSCTitleUrls } from "./fetcher";
 import {
-	streamUSCXml,
+	fetchUSCTitleStreaming,
+	getTitleNumFromUrl,
+	getUSCTitleUrls,
+} from "./fetcher";
+import {
+	streamUSCXmlFromChunks,
 	titleSortKey,
 	USC_LEVEL_INDEX,
 	type USCLevel,
@@ -197,17 +201,14 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		let titleSections = 0;
 
 		try {
-			let input: ReadableStream<Uint8Array> | string | null = null;
+			const chunks = await fetchUSCTitleStreaming(titleEntry.url, env.STORAGE);
 
-			const xml = await fetchUSCTitle(titleEntry.url, env.STORAGE);
-			if (xml) input = xml;
-
-			if (!input) {
+			if (!chunks) {
 				console.warn(`Skipping Title ${titleNum}: no XML content`);
 				continue;
 			}
 
-			const stream = streamUSCXml(input, titleNum, sourceUrl);
+			const stream = streamUSCXmlFromChunks(chunks, titleNum, sourceUrl);
 			while (true) {
 				const { value, done } = await stream.next();
 				if (done) {

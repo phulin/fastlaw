@@ -21,11 +21,10 @@ export {
 	normalizeDesignator,
 } from "./lib/cga/parser";
 export {
-	fetchAllUSCTitles,
-	fetchUSCFromR2,
-	fetchUSCTitle,
+	fetchUSCTitleStreaming,
 	getTitleNumFromUrl,
 	getUSCTitleUrls,
+	streamXmlFromZip,
 } from "./lib/usc/fetcher";
 // USC
 export { ingestUSC } from "./lib/usc/ingest";
@@ -33,6 +32,8 @@ export {
 	levelSortKey,
 	parseUSCXml,
 	sectionSortKey,
+	streamUSCXml,
+	streamUSCXmlFromChunks,
 	titleSortKey,
 	USC_LEVEL_HIERARCHY,
 	USC_LEVEL_INDEX,
