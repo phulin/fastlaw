@@ -7,8 +7,19 @@ import {
 	type SaxEvent,
 } from "../sax-parser";
 
-const SECTION_BODY_TAGS = new Set(["content", "chapeau", "p"]);
-const SECTION_SKIP_TAGS = new Set(["num", "heading", "sourceCredit", "notes"]);
+const SECTION_BODY_TAGS = new Set([
+	"content",
+	"chapeau",
+	"p",
+	"subsection",
+	"paragraph",
+	"subparagraph",
+	"clause",
+	"subclause",
+	"item",
+	"subitem",
+]);
+const SECTION_SKIP_TAGS = new Set(["sourceCredit", "notes"]);
 
 function normalizeTagName(tagName: string): string {
 	const colonIndex = tagName.indexOf(":");
@@ -155,6 +166,7 @@ interface LevelFrame {
 	heading: string;
 	parentIdentifier: string | null;
 	emitted: boolean;
+	bracketedNum: boolean;
 }
 
 interface SectionFrame {
@@ -166,6 +178,7 @@ interface SectionFrame {
 	historyLongParts: string[];
 	citationsParts: Array<{ heading: string; body: string }>;
 	parentLevelId: string;
+	bracketedNum: boolean;
 }
 
 interface NoteFrame {
@@ -193,6 +206,9 @@ interface ParserState {
 
 	headingTarget: "level" | "section" | "note" | null;
 	headingBuffer: string;
+	numDepth: number;
+	numBuffer: string;
+	numTarget: "level" | "section" | null;
 
 	currentSection: SectionFrame | null;
 	skipDepth: number;
@@ -207,6 +223,9 @@ interface ParserState {
 	currentNote: NoteFrame | null;
 	notePDepth: number;
 	notePBuffer: string;
+
+	bodyHeadingDepth: number;
+	bodyHeadingBuffer: string;
 }
 
 function createParserState(fileTitle: string): ParserState {
@@ -228,6 +247,9 @@ function createParserState(fileTitle: string): ParserState {
 
 		headingTarget: null,
 		headingBuffer: "",
+		numDepth: 0,
+		numBuffer: "",
+		numTarget: null,
 
 		currentSection: null,
 		skipDepth: 0,
@@ -242,6 +264,9 @@ function createParserState(fileTitle: string): ParserState {
 		currentNote: null,
 		notePDepth: 0,
 		notePBuffer: "",
+
+		bodyHeadingDepth: 0,
+		bodyHeadingBuffer: "",
 	};
 }
 
@@ -357,6 +382,7 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 			heading: "",
 			parentIdentifier,
 			emitted: false,
+			bracketedNum: false,
 		};
 		state.levelStack.push(frame);
 	}
@@ -383,12 +409,16 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 			historyLongParts: [],
 			citationsParts: [],
 			parentLevelId,
+			bracketedNum: false,
 		};
 		return;
 	}
 
 	if (state.currentSection) {
-		if (SECTION_SKIP_TAGS.has(tagName)) {
+		if (
+			SECTION_SKIP_TAGS.has(tagName) ||
+			((tagName === "num" || tagName === "heading") && parentTag === "section")
+		) {
 			state.skipDepth += 1;
 		}
 
@@ -405,6 +435,20 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 			state.bodyCaptureDepth += 1;
 			if (state.bodyCaptureDepth === 1) {
 				state.bodyBuffer = "";
+			}
+		}
+
+		if (
+			tagName === "heading" &&
+			parentTag !== "section" &&
+			state.skipDepth === 0 &&
+			!state.currentNote &&
+			state.noteDepth === 0 &&
+			state.bodyCaptureDepth > 0
+		) {
+			state.bodyHeadingDepth += 1;
+			if (state.bodyHeadingDepth === 1) {
+				state.bodyHeadingBuffer = "";
 			}
 		}
 
@@ -427,14 +471,30 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 
 	if (tagName === "heading") {
 		if (state.currentNote) {
-			state.headingTarget = "note";
-			state.headingBuffer = "";
-		} else if (state.currentSection) {
+			if (!state.currentNote.headingText) {
+				state.headingTarget = "note";
+				state.headingBuffer = "";
+			}
+		} else if (state.currentSection && parentTag === "section") {
 			state.headingTarget = "section";
 			state.headingBuffer = "";
-		} else if (state.levelStack.length > 0) {
+		} else if (state.levelStack.length > 0 && USC_LEVEL_SET.has(parentTag)) {
 			state.headingTarget = "level";
 			state.headingBuffer = "";
+		}
+	}
+
+	if (tagName === "num") {
+		state.numDepth += 1;
+		if (state.numDepth === 1) {
+			state.numBuffer = "";
+			if (state.currentSection) {
+				state.numTarget = "section";
+			} else if (state.levelStack.length > 0) {
+				state.numTarget = "level";
+			} else {
+				state.numTarget = null;
+			}
 		}
 	}
 }
@@ -450,12 +510,21 @@ function handleText(state: ParserState, text: ExtractedText) {
 		state.headingBuffer += textValue;
 	}
 
+	if (state.numDepth > 0) {
+		state.numBuffer += textValue;
+	}
+
 	if (
 		state.currentSection &&
 		state.bodyCaptureDepth > 0 &&
-		state.skipDepth === 0
+		state.skipDepth === 0 &&
+		state.bodyHeadingDepth === 0
 	) {
 		state.bodyBuffer += textValue;
+	}
+
+	if (state.bodyHeadingDepth > 0) {
+		state.bodyHeadingBuffer += textValue;
 	}
 
 	if (state.sourceCreditDepth > 0) {
@@ -490,15 +559,21 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 	}
 
 	if (state.headingTarget && tagName === "heading") {
-		const heading = normalizedWhitespace(state.headingBuffer);
+		let heading = normalizedWhitespace(state.headingBuffer);
 		if (state.headingTarget === "note" && state.currentNote) {
 			state.currentNote.headingText = heading;
 		}
 		if (state.headingTarget === "section" && state.currentSection) {
+			if (state.currentSection.bracketedNum && heading.endsWith("]")) {
+				heading = heading.slice(0, -1).trim();
+			}
 			state.currentSection.heading = heading;
 		}
 		if (state.headingTarget === "level" && state.levelStack.length > 0) {
 			const frame = state.levelStack[state.levelStack.length - 1];
+			if (frame.bracketedNum && heading.endsWith("]")) {
+				heading = heading.slice(0, -1).trim();
+			}
 			frame.heading = heading;
 			emitLevel(state, frame);
 		}
@@ -506,11 +581,53 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 		state.headingBuffer = "";
 	}
 
-	if (state.currentSection && SECTION_SKIP_TAGS.has(tagName)) {
+	if (state.bodyHeadingDepth > 0 && tagName === "heading") {
+		state.bodyHeadingDepth -= 1;
+		if (state.bodyHeadingDepth === 0) {
+			const heading = normalizedWhitespace(state.bodyHeadingBuffer);
+			if (heading) {
+				const headingLine = `**${heading}**`;
+				if (state.bodyBuffer && !/\s$/.test(state.bodyBuffer)) {
+					state.bodyBuffer += " ";
+				}
+				state.bodyBuffer += `${headingLine}\n\n`;
+			}
+			state.bodyHeadingBuffer = "";
+		}
+	}
+
+	if (
+		state.currentSection &&
+		(SECTION_SKIP_TAGS.has(tagName) ||
+			((tagName === "num" || tagName === "heading") &&
+				state.tagStack.at(-1) === "section"))
+	) {
 		state.skipDepth -= 1;
 	}
 
-	if (state.currentSection && SECTION_BODY_TAGS.has(tagName)) {
+	if (tagName === "num" && state.numDepth > 0) {
+		state.numDepth -= 1;
+		if (state.numDepth === 0) {
+			const text = state.numBuffer.trim();
+			if (text.startsWith("[")) {
+				if (state.numTarget === "section" && state.currentSection) {
+					state.currentSection.bracketedNum = true;
+				}
+				if (state.numTarget === "level" && state.levelStack.length > 0) {
+					const frame = state.levelStack[state.levelStack.length - 1];
+					frame.bracketedNum = true;
+				}
+			}
+			state.numBuffer = "";
+			state.numTarget = null;
+		}
+	}
+
+	if (
+		state.currentSection &&
+		SECTION_BODY_TAGS.has(tagName) &&
+		state.skipDepth === 0
+	) {
 		state.bodyCaptureDepth -= 1;
 		if (state.bodyCaptureDepth === 0) {
 			const text = state.bodyBuffer.trim();

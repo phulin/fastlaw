@@ -13,9 +13,7 @@ const PARSER_EVENTS =
 	SaxEventType.Attribute;
 
 const SAX_WASM_CHUNK_SIZE = 256 * 1024;
-const IS_TEST =
-	typeof process !== "undefined" &&
-	process.env.VITEST === "true"
+const IS_TEST = typeof process !== "undefined" && process.env.VITEST === "true";
 
 async function loadSaxWasm(): Promise<
 	Uint8Array | WebAssembly.Module | Response
