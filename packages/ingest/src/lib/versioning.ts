@@ -1,6 +1,6 @@
-import type { DiffResult, Node, SourceVersion } from "../types";
+import type { DiffResult, NodeInsert, SourceVersion } from "../types";
 
-export type NodeInsert = Omit<Node, "id">;
+export type { NodeInsert };
 
 /**
  * Get or create a source by its code

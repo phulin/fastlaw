@@ -1,10 +1,13 @@
-export interface Env {
-	DB: D1Database;
-	STORAGE: R2Bucket;
-	GODADDY_CA?: Fetcher; // Only available in deployed workers
-	CGA_BASE_URL: string;
-	CGA_START_PATH: string;
-	USC_DOWNLOAD_BASE: string;
+export interface BlobLocation {
+	packfileKey: string;
+	offset: number;
+	size: number;
+}
+
+export interface BlobEntry {
+	hash: string;
+	offset: number;
+	size: number;
 }
 
 export interface Source {
@@ -55,4 +58,41 @@ export interface IngestionResult {
 	sourceVersionId: number;
 	nodesCreated: number;
 	diff: DiffResult | null;
+}
+
+export type NodeInsert = Omit<Node, "id">;
+
+/** RPC interface for IngestRunner - used by container to call back to DO */
+export interface IngestRunnerRpc {
+	getOrCreateSource(
+		code: string,
+		name: string,
+		jurisdiction: string,
+		region: string,
+		docType: string,
+	): Promise<number>;
+	getOrCreateSourceVersion(
+		sourceId: number,
+		versionDate: string,
+	): Promise<number>;
+	getLatestVersion(sourceId: number): Promise<SourceVersion | null>;
+	loadBlobHashes(sourceId: number): Promise<Record<string, BlobLocation>>;
+	insertNodesBatched(nodes: NodeInsert[]): Promise<Record<string, number>>;
+	insertBlobs(
+		sourceId: number,
+		packfileKey: string,
+		entries: BlobEntry[],
+	): Promise<void>;
+	setRootNodeId(versionId: number, rootNodeId: number): Promise<void>;
+	computeDiff(oldVersionId: number, newVersionId: number): Promise<DiffResult>;
+}
+
+export interface Env {
+	DB: D1Database;
+	STORAGE: R2Bucket;
+	GODADDY_CA?: Fetcher; // Only available in deployed workers
+	CGA_BASE_URL: string;
+	CGA_START_PATH: string;
+	USC_DOWNLOAD_BASE: string;
+	INGEST_RUNNER: DurableObjectNamespace;
 }

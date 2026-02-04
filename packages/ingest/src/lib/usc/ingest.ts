@@ -11,19 +11,14 @@ import {
 	setRootNodeId,
 } from "../versioning";
 import { extractSectionCrossReferences } from "./cross-references";
+import { fetchUSCTitle, getTitleNumFromUrl, getUSCTitleUrls } from "./fetcher";
 import {
-	fetchAllUSCTitles,
-	fetchUSCFromR2,
-	getTitleNumFromUrl,
-	getUSCTitleUrls,
-} from "./fetcher";
-import {
-	levelSortKey,
-	parseUSCXml,
-	sectionSortKey,
+	streamUSCXml,
 	titleSortKey,
 	USC_LEVEL_INDEX,
 	type USCLevel,
+	type USCLevelType,
+	type USCSection,
 } from "./parser";
 
 const SOURCE_CODE = "usc";
@@ -31,20 +26,7 @@ const SOURCE_NAME = "United States Code";
 
 /** Section level index is one higher than the highest organizational level */
 const SECTION_LEVEL_INDEX = Object.keys(USC_LEVEL_INDEX).length;
-
-interface USCSectionData {
-	titleNum: string;
-	sectionNum: string;
-	heading: string;
-	body: string;
-	historyShort: string;
-	historyLong: string;
-	citations: string;
-	path: string;
-	docId: string;
-	levelId: string;
-	parentLevelId: string;
-}
+const SECTION_BATCH_SIZE = 500;
 
 /**
  * Main USC ingestion function
@@ -82,65 +64,27 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		versionDate,
 	);
 
-	// Try to fetch from R2 first (if pre-loaded), otherwise fetch from web
-	console.log("Attempting to fetch USC XML from R2...");
-	let xmlByTitle = await fetchUSCFromR2(env.STORAGE, "usc_raw/");
+	console.log("Fetching USC title list from House OLRC...");
+	const titlesToProcess = titleUrls
+		.map((url) => ({
+			titleNum: getTitleNumFromUrl(url) ?? "",
+			url,
+			sourceUrl: url,
+		}))
+		.filter((entry) => entry.titleNum);
 
-	if (xmlByTitle.size === 0) {
-		console.log("No R2 data found, fetching from House OLRC...");
-		// Caches to R2 at sources/usc/ for future runs
-		xmlByTitle = await fetchAllUSCTitles(100, 200, env.STORAGE);
+	const sortedTitles = titlesToProcess.sort((a, b) => {
+		const aKey = titleSortKey(a.titleNum);
+		const bKey = titleSortKey(b.titleNum);
+		return compareKeys(aKey, bKey);
+	});
+
+	const titleOrder = new Map<string, number>();
+	for (let i = 0; i < sortedTitles.length; i += 1) {
+		titleOrder.set(sortedTitles[i].titleNum, i);
 	}
 
-	console.log(`Processing ${xmlByTitle.size} USC titles`);
-
-	// Aggregated data
-	const allTitles = new Map<string, string>();
-	const allLevels: USCLevel[] = [];
-	const seenLevelIds = new Set<string>();
-	const allSections: USCSectionData[] = [];
-
-	// Parse each title XML
-	for (const [titleNum, xml] of xmlByTitle) {
-		const sourceUrl = titleUrlByNum.get(titleNum) ?? "";
-
-		try {
-			console.log(
-				`  Parsing Title ${titleNum} (${(xml.length / 1024 / 1024).toFixed(1)} MB)...`,
-			);
-			const parseStart = Date.now();
-			const result = parseUSCXml(xml, titleNum, sourceUrl);
-			console.log(`    Parsed in ${Date.now() - parseStart}ms`);
-
-			// Add title
-			if (!allTitles.has(result.titleNum)) {
-				allTitles.set(result.titleNum, result.titleName);
-			}
-
-			// Add levels (deduplicated)
-			for (const level of result.levels) {
-				if (!seenLevelIds.has(level.identifier)) {
-					seenLevelIds.add(level.identifier);
-					allLevels.push(level);
-				}
-			}
-
-			// Add sections
-			for (const section of result.sections) {
-				allSections.push(section);
-			}
-
-			console.log(
-				`    Title ${titleNum}: ${result.levels.length} levels, ${result.sections.length} sections`,
-			);
-		} catch (error) {
-			console.error(`Error parsing Title ${titleNum}:`, error);
-		}
-	}
-
-	console.log(
-		`Found ${allTitles.size} titles, ${allLevels.length} organizational levels, ${allSections.length} sections`,
-	);
+	console.log(`Processing ${sortedTitles.length} USC titles`);
 
 	// Insert nodes into database
 	let nodesCreated = 0;
@@ -170,127 +114,60 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	nodeIdMap.set(rootStringId, rootNodeId);
 	nodesCreated++;
 
-	// Insert titles (sorted) - batched
-	const sortedTitles = [...allTitles.entries()].sort((a, b) => {
-		const aKey = titleSortKey(a[0]);
-		const bKey = titleSortKey(b[0]);
-		return compareKeys(aKey, bKey);
-	});
+	const seenLevelIds = new Set<string>();
+	const levelTypeByIdentifier = new Map<string, USCLevelType>();
+	const seenSections = new Set<string>();
+	const sectionNodes: NodeInsert[] = [];
+	let levelSortOrder = 0;
+	let sectionSortOrder = 0;
+	let crossRefTime = 0;
+	let blobStoreTime = 0;
+	let totalSections = 0;
 
-	const titleNodes: NodeInsert[] = sortedTitles.map(
-		([titleNum, titleName], i) => ({
-			source_version_id: versionId,
-			string_id: `usc/title/${titleNum}`,
-			parent_id: rootNodeId,
-			level_name: "title",
-			level_index: 0,
-			sort_order: i,
-			name: titleName,
-			path: `/statutes/usc/title/${titleNum}`,
-			readable_id: titleNum,
-			heading_citation: `Title ${titleNum}`,
-			blob_hash: null,
-			source_url: titleUrlByNum.get(titleNum) ?? "",
-			accessed_at: accessedAt,
-		}),
-	);
-
-	const titleIdMap = await insertNodesBatched(env.DB, titleNodes);
-	for (const [stringId, nodeId] of titleIdMap) {
-		nodeIdMap.set(stringId, nodeId);
-	}
-	nodesCreated += titleNodes.length;
-
-	// Insert organizational levels - batched by levelIndex to ensure parents before children
-	const sortedLevels = [...allLevels].sort((a, b) => {
-		const aKey = levelSortKey(a);
-		const bKey = levelSortKey(b);
-		return compareLevelKeys(aKey, bKey);
-	});
-
-	// Create identifier to level mapping for parent lookups
-	const levelByIdentifier = new Map<string, USCLevel>();
-	for (const level of sortedLevels) {
-		levelByIdentifier.set(level.identifier, level);
-	}
-
-	// Group levels by levelIndex for batched insertion
-	const levelsByIndex = new Map<number, USCLevel[]>();
-	for (const level of sortedLevels) {
-		const existing = levelsByIndex.get(level.levelIndex) ?? [];
-		existing.push(level);
-		levelsByIndex.set(level.levelIndex, existing);
-	}
-
-	// Helper to resolve parent ID for a level
-	const resolveLevelParentId = (level: USCLevel): number | null => {
-		if (level.parentIdentifier) {
-			const parentLevel = levelByIdentifier.get(level.parentIdentifier);
-			if (parentLevel) {
-				const parentStringId = `usc/${parentLevel.levelType}/${parentLevel.identifier}`;
-				const parentId = nodeIdMap.get(parentStringId);
-				if (parentId) return parentId;
-			}
-			if (level.parentIdentifier.endsWith("-title")) {
-				const titleStringId = `usc/title/${level.titleNum}`;
-				return nodeIdMap.get(titleStringId) ?? null;
-			}
+	const ensureTitleNode = async (titleNum: string, titleName: string) => {
+		const titleStringId = `usc/title/${titleNum}`;
+		if (nodeIdMap.has(titleStringId)) {
+			return nodeIdMap.get(titleStringId) ?? null;
 		}
-		// Fall back to title
-		const titleStringId = `usc/title/${level.titleNum}`;
-		return nodeIdMap.get(titleStringId) ?? null;
+
+		const sortOrder = titleOrder.get(titleNum) ?? titleOrder.size;
+		const nodeId = await insertNode(
+			env.DB,
+			versionId,
+			titleStringId,
+			rootNodeId,
+			"title",
+			0,
+			sortOrder,
+			titleName,
+			`/statutes/usc/title/${titleNum}`,
+			titleNum,
+			`Title ${titleNum}`,
+			null,
+			titleUrlByNum.get(titleNum) ?? "",
+			accessedAt,
+		);
+		nodeIdMap.set(titleStringId, nodeId);
+		nodesCreated += 1;
+		return nodeId;
 	};
 
-	// Insert levels in waves by levelIndex (lower indices first = parents before children)
-	const sortedLevelIndices = [...levelsByIndex.keys()].sort((a, b) => a - b);
-	let levelSortOrder = 0;
-
-	for (const levelIndex of sortedLevelIndices) {
-		const levelsAtIndex = levelsByIndex.get(levelIndex) ?? [];
-
-		const levelNodes: NodeInsert[] = levelsAtIndex.map((level) => {
-			const stringId = `usc/${level.levelType}/${level.identifier}`;
-			const headingCitation = `${level.levelType.charAt(0).toUpperCase() + level.levelType.slice(1)} ${level.num}`;
-			const sortOrder = levelSortOrder++;
-
-			return {
-				source_version_id: versionId,
-				string_id: stringId,
-				parent_id: resolveLevelParentId(level),
-				level_name: level.levelType,
-				level_index: level.levelIndex,
-				sort_order: sortOrder,
-				name: level.heading,
-				path: `/statutes/usc/${level.levelType}/${level.titleNum}/${level.num}`,
-				readable_id: level.num,
-				heading_citation: headingCitation,
-				blob_hash: null,
-				source_url: null,
-				accessed_at: accessedAt,
-			};
-		});
-
-		const levelIdMap = await insertNodesBatched(env.DB, levelNodes);
-		for (const [stringId, nodeId] of levelIdMap) {
-			nodeIdMap.set(stringId, nodeId);
+	const resolveLevelParentId = (level: USCLevel): number | null => {
+		if (level.parentIdentifier?.endsWith("-title")) {
+			return nodeIdMap.get(`usc/title/${level.titleNum}`) ?? null;
 		}
-		nodesCreated += levelNodes.length;
-	}
+		if (level.parentIdentifier) {
+			const parentType = levelTypeByIdentifier.get(level.parentIdentifier);
+			if (parentType) {
+				return (
+					nodeIdMap.get(`usc/${parentType}/${level.parentIdentifier}`) ?? null
+				);
+			}
+		}
+		return nodeIdMap.get(`usc/title/${level.titleNum}`) ?? null;
+	};
 
-	// Insert sections and store content in R2 - batched
-	const sortedSections = allSections.sort((a, b) => {
-		const aKey = [titleSortKey(a.titleNum), sectionSortKey(a.sectionNum)];
-		const bKey = [titleSortKey(b.titleNum), sectionSortKey(b.sectionNum)];
-		const titleCmp = compareKeys(aKey[0], bKey[0]);
-		if (titleCmp !== 0) return titleCmp;
-		return compareKeys(aKey[1], bKey[1]);
-	});
-
-	// Track seen section string_ids to detect duplicates
-	const seenSections = new Map<string, USCSectionData>();
-
-	// Helper to resolve parent ID for a section
-	const resolveSectionParentId = (section: USCSectionData): number | null => {
+	const resolveSectionParentId = (section: USCSection): number | null => {
 		const parentMatch = section.parentLevelId.match(/^lvl_usc_([^_]+)_(.+)$/);
 		if (parentMatch) {
 			const [, levelType, identifier] = parentMatch;
@@ -299,106 +176,174 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			}
 			return nodeIdMap.get(`usc/${levelType}/${identifier}`) ?? null;
 		}
-		// Fall back to title
 		return nodeIdMap.get(`usc/title/${section.titleNum}`) ?? null;
 	};
 
-	// First pass: store blobs and collect node data
-	console.log(
-		`Processing ${sortedSections.length} sections for blob storage...`,
-	);
-	const sectionNodes: NodeInsert[] = [];
-	let crossRefTime = 0;
-	let blobStoreTime = 0;
-
-	for (let i = 0; i < sortedSections.length; i++) {
-		const section = sortedSections[i];
-		const stringId = `usc/section/${section.titleNum}-${section.sectionNum}`;
-
-		// Check for duplicate
-		const existing = seenSections.get(stringId);
-		if (existing) {
-			console.error(`Duplicate section found: ${stringId}`);
-			console.error(`  First:  heading="${existing.heading}"`);
-			console.error(`  Second: heading="${section.heading}"`);
-			continue; // Skip duplicate
+	const flushSectionNodes = async () => {
+		if (sectionNodes.length === 0) return;
+		const batch = sectionNodes.splice(0, sectionNodes.length);
+		const sectionIdMap = await insertNodesBatched(env.DB, batch);
+		for (const [stringId, nodeId] of sectionIdMap) {
+			nodeIdMap.set(stringId, nodeId);
 		}
-		seenSections.set(stringId, section);
+		nodesCreated += batch.length;
+	};
 
-		// Create content JSON
-		const crossRefStart = Date.now();
-		const crossReferences = extractSectionCrossReferences(
-			[section.body, section.citations].filter(Boolean).join("\n"),
-			section.titleNum,
-		);
-		crossRefTime += Date.now() - crossRefStart;
-		const content = {
-			blocks: [
-				{ type: "body", content: section.body },
-				...(section.historyShort
-					? [
-							{
-								type: "history_short",
-								label: "Short History",
-								content: section.historyShort,
-							},
-						]
-					: []),
-				...(section.historyLong
-					? [
-							{
-								type: "history_long",
-								label: "Long History",
-								content: section.historyLong,
-							},
-						]
-					: []),
-				...(section.citations
-					? [{ type: "citations", label: "Notes", content: section.citations }]
-					: []),
-			],
-			...(crossReferences.length > 0
-				? { metadata: { cross_references: crossReferences } }
-				: {}),
-		};
+	for (const titleEntry of sortedTitles) {
+		const titleNum = titleEntry.titleNum;
+		const sourceUrl = titleUrlByNum.get(titleNum) ?? titleEntry.sourceUrl;
+		const titleStart = Date.now();
+		let titleLevels = 0;
+		let titleSections = 0;
 
-		// Store in packfile
-		const blobStart = Date.now();
-		const blobHash = await blobStore.storeJson(content);
-		blobStoreTime += Date.now() - blobStart;
+		try {
+			let input: ReadableStream<Uint8Array> | string | null = null;
 
-		// Collect node data for batch insert
-		const readableId = `${section.titleNum} USC ${section.sectionNum}`;
-		sectionNodes.push({
-			source_version_id: versionId,
-			string_id: stringId,
-			parent_id: resolveSectionParentId(section),
-			level_name: "section",
-			level_index: SECTION_LEVEL_INDEX,
-			sort_order: i,
-			name: section.heading,
-			path: section.path,
-			readable_id: readableId,
-			heading_citation: readableId,
-			blob_hash: blobHash,
-			source_url: null,
-			accessed_at: accessedAt,
-		});
+			const xml = await fetchUSCTitle(titleEntry.url, env.STORAGE);
+			if (xml) input = xml;
 
-		if ((i + 1) % 1000 === 0) {
+			if (!input) {
+				console.warn(`Skipping Title ${titleNum}: no XML content`);
+				continue;
+			}
+
+			const stream = streamUSCXml(input, titleNum, sourceUrl);
+			while (true) {
+				const { value, done } = await stream.next();
+				if (done) {
+					await ensureTitleNode(value.titleNum, value.titleName);
+					break;
+				}
+
+				if (value.type === "title") {
+					await ensureTitleNode(value.titleNum, value.titleName);
+				}
+
+				if (value.type === "level") {
+					const level = value.level;
+					if (seenLevelIds.has(level.identifier)) continue;
+					await ensureTitleNode(level.titleNum, `Title ${level.titleNum}`);
+
+					const stringId = `usc/${level.levelType}/${level.identifier}`;
+					const headingCitation = `${level.levelType.charAt(0).toUpperCase() + level.levelType.slice(1)} ${level.num}`;
+					const nodeId = await insertNode(
+						env.DB,
+						versionId,
+						stringId,
+						resolveLevelParentId(level),
+						level.levelType,
+						level.levelIndex,
+						levelSortOrder++,
+						level.heading,
+						`/statutes/usc/${level.levelType}/${level.titleNum}/${level.num}`,
+						level.num,
+						headingCitation,
+						null,
+						null,
+						accessedAt,
+					);
+
+					nodeIdMap.set(stringId, nodeId);
+					levelTypeByIdentifier.set(level.identifier, level.levelType);
+					seenLevelIds.add(level.identifier);
+					nodesCreated += 1;
+					titleLevels += 1;
+				}
+
+				if (value.type === "section") {
+					const section = value.section;
+					const stringId = `usc/section/${section.titleNum}-${section.sectionNum}`;
+					if (seenSections.has(stringId)) {
+						console.error(`Duplicate section found: ${stringId}`);
+						continue;
+					}
+					seenSections.add(stringId);
+
+					const crossRefStart = Date.now();
+					const crossReferences = extractSectionCrossReferences(
+						[section.body, section.citations].filter(Boolean).join("\n"),
+						section.titleNum,
+					);
+					crossRefTime += Date.now() - crossRefStart;
+
+					const content = {
+						blocks: [
+							{ type: "body", content: section.body },
+							...(section.historyShort
+								? [
+										{
+											type: "history_short",
+											label: "Short History",
+											content: section.historyShort,
+										},
+									]
+								: []),
+							...(section.historyLong
+								? [
+										{
+											type: "history_long",
+											label: "Long History",
+											content: section.historyLong,
+										},
+									]
+								: []),
+							...(section.citations
+								? [
+										{
+											type: "citations",
+											label: "Notes",
+											content: section.citations,
+										},
+									]
+								: []),
+						],
+						...(crossReferences.length > 0
+							? { metadata: { cross_references: crossReferences } }
+							: {}),
+					};
+
+					const blobStart = Date.now();
+					const blobHash = await blobStore.storeJson(content);
+					blobStoreTime += Date.now() - blobStart;
+
+					const readableId = `${section.titleNum} USC ${section.sectionNum}`;
+					sectionNodes.push({
+						source_version_id: versionId,
+						string_id: stringId,
+						parent_id: resolveSectionParentId(section),
+						level_name: "section",
+						level_index: SECTION_LEVEL_INDEX,
+						sort_order: sectionSortOrder++,
+						name: section.heading,
+						path: section.path,
+						readable_id: readableId,
+						heading_citation: readableId,
+						blob_hash: blobHash,
+						source_url: null,
+						accessed_at: accessedAt,
+					});
+
+					titleSections += 1;
+					totalSections += 1;
+
+					if (sectionNodes.length >= SECTION_BATCH_SIZE) {
+						await flushSectionNodes();
+						console.log(
+							`Inserted ${totalSections} sections so far (crossRef: ${crossRefTime}ms, blobStore: ${blobStoreTime}ms)`,
+						);
+					}
+				}
+			}
+
 			console.log(
-				`Processed ${i + 1}/${sortedSections.length} sections (crossRef: ${crossRefTime}ms, blobStore: ${blobStoreTime}ms)`,
+				`  Title ${titleNum}: ${titleLevels} levels, ${titleSections} sections in ${Date.now() - titleStart}ms`,
 			);
+		} catch (error) {
+			console.error(`Error parsing Title ${titleNum}:`, error);
 		}
 	}
 
-	// Batch insert all section nodes
-	console.log(`Batch inserting ${sectionNodes.length} section nodes...`);
-	const sectionIdMap = await insertNodesBatched(env.DB, sectionNodes);
-	for (const [stringId, nodeId] of sectionIdMap) {
-		nodeIdMap.set(stringId, nodeId);
-	}
-	nodesCreated += sectionNodes.length;
+	await flushSectionNodes();
 
 	// Flush any remaining blobs to packfiles
 	await blobStore.flush();
@@ -442,25 +387,4 @@ function compareKeys(
 	}
 
 	return 0;
-}
-
-function compareLevelKeys(
-	a: [
-		[number, [number, string] | string],
-		number,
-		[number, [number, string] | string],
-	],
-	b: [
-		[number, [number, string] | string],
-		number,
-		[number, [number, string] | string],
-	],
-): number {
-	// Compare by title first
-	const titleCmp = compareKeys(a[0], b[0]);
-	if (titleCmp !== 0) return titleCmp;
-	// Then by level index
-	if (a[1] !== b[1]) return a[1] - b[1];
-	// Then by level number
-	return compareKeys(a[2], b[2]);
 }

@@ -1,22 +1,15 @@
-import { XMLParser } from "fast-xml-parser";
+import { Parser } from "htmlparser2";
 
-// fast-xml-parser configuration for handling namespaces
-const parserOptions = {
-	ignoreAttributes: false,
-	attributeNamePrefix: "@_",
-	textNodeName: "#text",
-	parseTagValue: false,
-	trimValues: true,
-	// Handle namespaces by removing prefixes
-	transformTagName: (tagName: string) => {
-		// Remove namespace prefix if present
-		const colonIndex = tagName.indexOf(":");
-		if (colonIndex !== -1) {
-			return tagName.substring(colonIndex + 1);
-		}
-		return tagName;
-	},
-};
+const SECTION_BODY_TAGS = new Set(["content", "chapeau", "p"]);
+const SECTION_SKIP_TAGS = new Set(["num", "heading", "sourceCredit", "notes"]);
+
+function normalizeTagName(tagName: string): string {
+	const colonIndex = tagName.indexOf(":");
+	if (colonIndex !== -1) {
+		return tagName.substring(colonIndex + 1);
+	}
+	return tagName;
+}
 
 /**
  * Canonical organizational level hierarchy for USC.
@@ -118,7 +111,7 @@ export interface USCLevel {
 	parentIdentifier: string | null;
 }
 
-interface USCSection {
+export interface USCSection {
 	titleNum: string;
 	sectionNum: string;
 	heading: string;
@@ -130,6 +123,515 @@ interface USCSection {
 	docId: string;
 	levelId: string;
 	parentLevelId: string;
+}
+
+export type USCStreamEvent =
+	| { type: "title"; titleNum: string; titleName: string }
+	| { type: "level"; level: USCLevel }
+	| { type: "section"; section: USCSection };
+
+interface LevelFrame {
+	levelType: USCLevelType;
+	num: string | null;
+	identifier: string | null;
+	heading: string;
+	parentIdentifier: string | null;
+	emitted: boolean;
+}
+
+interface SectionFrame {
+	titleNum: string;
+	sectionNum: string | null;
+	heading: string;
+	bodyParts: string[];
+	historyShort: string;
+	historyLongParts: string[];
+	citationsParts: Array<{ heading: string; body: string }>;
+	parentLevelId: string;
+}
+
+interface NoteFrame {
+	topic: string;
+	role: string;
+	headingText: string;
+	pParts: string[];
+}
+
+function createUSCEventParser(fileTitle: string) {
+	const events: USCStreamEvent[] = [];
+	const tagStack: string[] = [];
+	const levelStack: LevelFrame[] = [];
+	const sectionCounts = new Map<string, number>();
+
+	let docIdentifier = "";
+	let titleNum = fileTitle;
+	let titleName = "";
+	let titleEmitted = false;
+
+	let metaDepth = 0;
+	let metaTitleCapture = false;
+	let metaTitleBuffer = "";
+
+	let headingTarget: "level" | "section" | "note" | null = null;
+	let headingBuffer = "";
+
+	let currentSection: SectionFrame | null = null;
+	let skipDepth = 0;
+	let bodyCaptureDepth = 0;
+	let bodyBuffer = "";
+	let sourceCreditDepth = 0;
+	let sourceCreditBuffer = "";
+	let noteDepth = 0;
+	let quotedContentDepth = 0;
+	let ignoredSectionDepth = 0;
+
+	let currentNote: NoteFrame | null = null;
+	let notePDepth = 0;
+	let notePBuffer = "";
+
+	const emit = (event: USCStreamEvent) => {
+		events.push(event);
+	};
+
+	const ensureTitleNum = (ident?: string) => {
+		const parsed = parseTitleFromIdentifier(ident);
+		if (parsed) {
+			titleNum = parsed;
+		}
+	};
+
+	const emitTitleIfNeeded = () => {
+		if (titleEmitted) return;
+		if (!titleName) {
+			titleName = `Title ${titleNum}`;
+		}
+		emit({ type: "title", titleNum, titleName });
+		titleEmitted = true;
+	};
+
+	const ensureLevelIdentifier = (frame: LevelFrame) => {
+		if (frame.identifier || !frame.num) return;
+		frame.identifier = `${titleNum}-${LEVEL_ID_PREFIXES[frame.levelType]}${frame.num}`;
+	};
+
+	const emitLevel = (frame: LevelFrame) => {
+		ensureLevelIdentifier(frame);
+		if (frame.emitted || !frame.identifier || !frame.num) return;
+		emit({
+			type: "level",
+			level: {
+				levelType: frame.levelType,
+				levelIndex: USC_LEVEL_INDEX[frame.levelType],
+				identifier: frame.identifier,
+				num: frame.num,
+				heading: frame.heading,
+				titleNum,
+				parentIdentifier: frame.parentIdentifier,
+			},
+		});
+		frame.emitted = true;
+	};
+
+	const emitPendingLevels = () => {
+		for (const frame of levelStack) {
+			if (!frame.emitted) {
+				emitLevel(frame);
+			}
+		}
+	};
+
+	const parser = new Parser(
+		{
+			onopentag(name, attrs) {
+				const tagName = normalizeTagName(name);
+				const parentTag = tagStack[tagStack.length - 1];
+				tagStack.push(tagName);
+
+				if (!docIdentifier && typeof attrs.identifier === "string") {
+					docIdentifier = attrs.identifier;
+					ensureTitleNum(attrs.identifier);
+				}
+
+				if (tagName === "meta") {
+					metaDepth += 1;
+				}
+
+				if (metaDepth > 0 && tagName === "title") {
+					metaTitleCapture = true;
+					metaTitleBuffer = "";
+				}
+
+				if (tagName === "title" && parentTag === "main") {
+					if (typeof attrs.identifier === "string") {
+						ensureTitleNum(attrs.identifier);
+					}
+					emitTitleIfNeeded();
+				}
+
+				if (tagName === "note") {
+					noteDepth += 1;
+				}
+
+				if (tagName === "quotedContent") {
+					quotedContentDepth += 1;
+				}
+
+				if (USC_LEVEL_SET.has(tagName) && tagName !== "title") {
+					const levelType = tagName as USCLevelType;
+					const ident =
+						typeof attrs.identifier === "string" ? attrs.identifier : undefined;
+					const levelNum = parseLevelNumFromIdentifier(ident, levelType);
+					const parentIdentifier =
+						levelStack.length > 0
+							? levelStack[levelStack.length - 1].identifier
+							: `${titleNum}-title`;
+
+					const frame: LevelFrame = {
+						levelType,
+						num: levelNum,
+						identifier: levelNum
+							? `${titleNum}-${LEVEL_ID_PREFIXES[levelType]}${levelNum}`
+							: null,
+						heading: "",
+						parentIdentifier,
+						emitted: false,
+					};
+					levelStack.push(frame);
+				}
+
+				if (tagName === "section") {
+					if (noteDepth > 0 || quotedContentDepth > 0) {
+						ignoredSectionDepth += 1;
+						return;
+					}
+					emitPendingLevels();
+					const ident =
+						typeof attrs.identifier === "string" ? attrs.identifier : undefined;
+					const sectionNum = parseSectionFromIdentifier(ident);
+
+					const parentLevel = levelStack[levelStack.length - 1];
+					const parentLevelId = parentLevel?.identifier
+						? `lvl_usc_${parentLevel.levelType}_${parentLevel.identifier}`
+						: `lvl_usc_title_${titleNum}`;
+
+					currentSection = {
+						titleNum,
+						sectionNum,
+						heading: "",
+						bodyParts: [],
+						historyShort: "",
+						historyLongParts: [],
+						citationsParts: [],
+						parentLevelId,
+					};
+					return;
+				}
+
+				if (currentSection) {
+					if (SECTION_SKIP_TAGS.has(tagName)) {
+						skipDepth += 1;
+					}
+
+					if (
+						tagName === "num" &&
+						typeof attrs.value === "string" &&
+						!currentSection.sectionNum
+					) {
+						currentSection.sectionNum = stripLeadingZeros(attrs.value);
+					}
+
+					if (tagName === "sourceCredit") {
+						sourceCreditDepth += 1;
+						sourceCreditBuffer = "";
+					}
+
+					if (SECTION_BODY_TAGS.has(tagName) && skipDepth === 0) {
+						bodyCaptureDepth += 1;
+						if (bodyCaptureDepth === 1) {
+							bodyBuffer = "";
+						}
+					}
+
+					if (tagName === "note") {
+						currentNote = {
+							topic: typeof attrs.topic === "string" ? attrs.topic : "",
+							role: typeof attrs.role === "string" ? attrs.role : "",
+							headingText: "",
+							pParts: [],
+						};
+					}
+
+					if (currentNote && tagName === "p") {
+						notePDepth += 1;
+						if (notePDepth === 1) {
+							notePBuffer = "";
+						}
+					}
+				}
+
+				if (tagName === "heading") {
+					if (currentNote) {
+						headingTarget = "note";
+						headingBuffer = "";
+					} else if (currentSection) {
+						headingTarget = "section";
+						headingBuffer = "";
+					} else if (levelStack.length > 0) {
+						headingTarget = "level";
+						headingBuffer = "";
+					}
+				}
+			},
+			ontext(text) {
+				if (metaTitleCapture) {
+					metaTitleBuffer += text;
+				}
+
+				if (headingTarget) {
+					headingBuffer += text;
+				}
+
+				if (currentSection && bodyCaptureDepth > 0 && skipDepth === 0) {
+					bodyBuffer += text;
+				}
+
+				if (sourceCreditDepth > 0) {
+					sourceCreditBuffer += text;
+				}
+
+				if (notePDepth > 0) {
+					notePBuffer += text;
+				}
+			},
+			onclosetag(name) {
+				const tagName = normalizeTagName(name);
+				tagStack.pop();
+
+				if (tagName === "section" && ignoredSectionDepth > 0) {
+					ignoredSectionDepth -= 1;
+					return;
+				}
+
+				if (tagName === "meta") {
+					metaDepth -= 1;
+				}
+
+				if (metaTitleCapture && tagName === "title" && metaDepth > 0) {
+					const candidate = metaTitleBuffer.trim();
+					if (candidate) {
+						titleName = candidate;
+					}
+					metaTitleCapture = false;
+					metaTitleBuffer = "";
+				}
+
+				if (headingTarget && tagName === "heading") {
+					const heading = normalizedWhitespace(headingBuffer);
+					if (headingTarget === "note" && currentNote) {
+						currentNote.headingText = heading;
+					}
+					if (headingTarget === "section" && currentSection) {
+						currentSection.heading = heading;
+					}
+					if (headingTarget === "level" && levelStack.length > 0) {
+						const frame = levelStack[levelStack.length - 1];
+						frame.heading = heading;
+						emitLevel(frame);
+					}
+					headingTarget = null;
+					headingBuffer = "";
+				}
+
+				if (currentSection && SECTION_SKIP_TAGS.has(tagName)) {
+					skipDepth -= 1;
+				}
+
+				if (currentSection && SECTION_BODY_TAGS.has(tagName)) {
+					bodyCaptureDepth -= 1;
+					if (bodyCaptureDepth === 0) {
+						const text = bodyBuffer.trim();
+						if (text) {
+							currentSection.bodyParts.push(text);
+						}
+						bodyBuffer = "";
+					}
+				}
+
+				if (tagName === "sourceCredit") {
+					sourceCreditDepth -= 1;
+					if (sourceCreditDepth === 0 && currentSection) {
+						currentSection.historyShort =
+							normalizedWhitespace(sourceCreditBuffer);
+						sourceCreditBuffer = "";
+					}
+				}
+
+				if (currentNote && tagName === "p" && notePDepth > 0) {
+					notePDepth -= 1;
+					if (notePDepth === 0) {
+						const text = normalizedWhitespace(notePBuffer);
+						if (text) {
+							currentNote.pParts.push(text);
+						}
+						notePBuffer = "";
+					}
+				}
+
+				if (currentNote && tagName === "note") {
+					const heading = currentNote.headingText;
+					const body = normalizedWhitespace(currentNote.pParts.join("\n\n"));
+					const finalBody = body || heading;
+
+					if (currentSection && (finalBody || currentNote.topic)) {
+						if (
+							currentNote.topic === "amendments" ||
+							heading.toLowerCase().includes("amendments")
+						) {
+							if (finalBody) {
+								currentSection.historyLongParts.push(finalBody);
+							}
+						} else if (
+							currentNote.role.includes("crossHeading") ||
+							heading.includes("Editorial") ||
+							heading.includes("Statutory")
+						) {
+						} else if (finalBody) {
+							currentSection.citationsParts.push({
+								heading,
+								body: finalBody,
+							});
+						}
+					}
+
+					currentNote = null;
+				}
+
+				if (tagName === "note") {
+					noteDepth -= 1;
+				}
+
+				if (tagName === "quotedContent") {
+					quotedContentDepth -= 1;
+				}
+
+				if (tagName === "section" && currentSection) {
+					const baseSectionNum = currentSection.sectionNum;
+					if (baseSectionNum) {
+						const sectionKey = `${titleNum}-${baseSectionNum}`;
+						const count = sectionCounts.get(sectionKey) ?? 0;
+						sectionCounts.set(sectionKey, count + 1);
+						const finalSectionNum =
+							count === 0 ? baseSectionNum : `${baseSectionNum}-${count + 1}`;
+
+						const body = normalizedWhitespace(
+							currentSection.bodyParts.join("\n\n"),
+						);
+						const historyLong = currentSection.historyLongParts.join("\n\n");
+						const citations = currentSection.citationsParts
+							.filter(({ body: entryBody }) => entryBody)
+							.map(({ heading, body: entryBody }) =>
+								heading ? `${heading}\n${entryBody}` : entryBody,
+							)
+							.join("\n\n")
+							.trim();
+
+						const section: USCSection = {
+							titleNum,
+							sectionNum: finalSectionNum,
+							heading: currentSection.heading,
+							body,
+							historyShort: currentSection.historyShort,
+							historyLong,
+							citations,
+							path: `/statutes/usc/section/${titleNum}/${finalSectionNum}`,
+							docId: `doc_usc_${titleNum}-${finalSectionNum}`,
+							levelId: `lvl_usc_section_${titleNum}-${finalSectionNum}`,
+							parentLevelId: currentSection.parentLevelId,
+						};
+
+						emit({ type: "section", section });
+					}
+					currentSection = null;
+				}
+
+				if (USC_LEVEL_SET.has(tagName) && tagName !== "title") {
+					const frame = levelStack[levelStack.length - 1];
+					if (frame) {
+						emitLevel(frame);
+						levelStack.pop();
+					}
+				}
+			},
+		},
+		{
+			xmlMode: true,
+			decodeEntities: true,
+		},
+	);
+
+	return {
+		parser,
+		events,
+		getTitleInfo: () => ({
+			titleNum,
+			titleName: titleName || `Title ${titleNum}`,
+		}),
+	};
+}
+
+async function* stringChunks(
+	input: ReadableStream<Uint8Array> | string,
+): AsyncGenerator<string, void, void> {
+	if (typeof input === "string") {
+		yield input;
+		return;
+	}
+
+	const reader = input.getReader();
+	const decoder = new TextDecoder();
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (value) {
+			yield decoder.decode(value, { stream: true });
+		}
+	}
+	const final = decoder.decode();
+	if (final) {
+		yield final;
+	}
+}
+
+export async function* streamUSCXml(
+	input: ReadableStream<Uint8Array> | string,
+	fileTitle: string,
+	_sourceUrl: string,
+): AsyncGenerator<
+	USCStreamEvent,
+	{ titleNum: string; titleName: string },
+	void
+> {
+	const { parser, events, getTitleInfo } = createUSCEventParser(fileTitle);
+
+	for await (const chunk of stringChunks(input)) {
+		parser.write(chunk);
+		while (events.length > 0) {
+			const event = events.shift();
+			if (event) {
+				yield event;
+			}
+		}
+	}
+
+	parser.end();
+	while (events.length > 0) {
+		const event = events.shift();
+		if (event) {
+			yield event;
+		}
+	}
+
+	return getTitleInfo();
 }
 
 /**
@@ -145,358 +647,24 @@ export function parseUSCXml(
 	titleNum: string;
 	titleName: string;
 } {
-	const parser = new XMLParser(parserOptions);
-	const doc = parser.parse(xmlContent);
+	const { parser, events, getTitleInfo } = createUSCEventParser(fileTitle);
+	parser.write(xmlContent);
+	parser.end();
 
 	const sections: USCSection[] = [];
 	const levels: USCLevel[] = [];
 
-	// Get document identifier to determine title number
-	const docIdentifier = getDocIdentifier(doc);
-	const docTitleNum = parseTitleFromIdentifier(docIdentifier) || fileTitle;
-
-	// Get title name from metadata
-	const titleName = getTitleName(doc, docTitleNum) || `Title ${docTitleNum}`;
-
-	// Find document root element (uscDoc) then main/title element
-	const uscDoc = findElement(doc, "uscDoc");
-	if (!uscDoc) return { sections, levels, titleNum: docTitleNum, titleName };
-
-	const main = findElement(uscDoc, "main");
-	if (!main) return { sections, levels, titleNum: docTitleNum, titleName };
-
-	const title = findElement(main, "title");
-	if (!title) return { sections, levels, titleNum: docTitleNum, titleName };
-
-	// Get title identifier
-	const titleIdentifier = title["@_identifier"] as string | undefined;
-	const parsedTitleNum = parseTitleFromIdentifier(titleIdentifier);
-	const titleNum = parsedTitleNum || docTitleNum;
-
-	// Track current parent chain as we traverse the tree
-	// Maps level type to its identifier for finding the immediate parent
-	const levelStack: Array<{ levelType: USCLevelType; identifier: string }> = [];
-
-	// Track seen levels to avoid duplicates
-	const seenLevels = new Set<string>();
-
-	// Track seen sections to handle duplicates with suffixes (some sections appear multiple times in XML)
-	const sectionCounts = new Map<string, number>();
-
-	// Recursive function to traverse and discover levels
-	function traverseElement(
-		elem: Record<string, unknown>,
-		tagName: string,
-	): void {
-		// Check if this is an organizational level
-		if (USC_LEVEL_SET.has(tagName) && tagName !== "title") {
-			const levelType = tagName as USCLevelType;
-			const ident = elem["@_identifier"] as string | undefined;
-			const levelNum =
-				parseLevelNumFromIdentifier(ident, levelType) || getNumValue(elem);
-
-			if (levelNum) {
-				const identifier = `${titleNum}-${LEVEL_ID_PREFIXES[levelType]}${levelNum}`;
-
-				if (!seenLevels.has(identifier)) {
-					seenLevels.add(identifier);
-
-					const headingEl = findElement(elem, "heading");
-					const heading = headingEl
-						? normalizedWhitespace(textContent(headingEl))
-						: "";
-
-					// Find parent - the most recent level in the stack
-					const parentIdentifier =
-						levelStack.length > 0
-							? levelStack[levelStack.length - 1].identifier
-							: `${titleNum}-title`;
-
-					levels.push({
-						levelType,
-						levelIndex: USC_LEVEL_INDEX[levelType],
-						identifier,
-						num: levelNum,
-						heading,
-						titleNum,
-						parentIdentifier,
-					});
-				}
-
-				// Push onto stack before processing children
-				levelStack.push({ levelType, identifier });
-			}
+	for (const event of events) {
+		if (event.type === "section") {
+			sections.push(event.section);
 		}
-
-		// Check if this is a section
-		if (tagName === "section") {
-			const ident = elem["@_identifier"] as string | undefined;
-			if (ident?.startsWith("/us/usc/") && ident.includes("/s")) {
-				const sectionNum =
-					parseSectionFromIdentifier(ident) || getNumValue(elem);
-				if (sectionNum) {
-					const sectionKey = `${titleNum}-${sectionNum}`;
-
-					// Handle duplicate sections by adding suffix
-					const count = sectionCounts.get(sectionKey) ?? 0;
-					sectionCounts.set(sectionKey, count + 1);
-					const finalSectionNum =
-						count === 0 ? sectionNum : `${sectionNum}-${count + 1}`;
-
-					const headingEl = findElement(elem, "heading");
-					const heading = headingEl
-						? normalizedWhitespace(textContent(headingEl))
-						: "";
-
-					const body = extractSectionBody(elem);
-					const historyShort = extractSourceCredit(elem);
-					const { historyLong, citations } = extractNotes(elem);
-
-					const path = `/statutes/usc/section/${titleNum}/${finalSectionNum}`;
-					const docId = `doc_usc_${titleNum}-${finalSectionNum}`;
-					const levelId = `lvl_usc_section_${titleNum}-${finalSectionNum}`;
-
-					// Find parent level - use the most recent level from the stack
-					const parentLevelId =
-						levelStack.length > 0
-							? `lvl_usc_${levelStack[levelStack.length - 1].levelType}_${levelStack[levelStack.length - 1].identifier}`
-							: `lvl_usc_title_${titleNum}`;
-
-					sections.push({
-						titleNum,
-						sectionNum: finalSectionNum,
-						heading,
-						body,
-						historyShort,
-						historyLong,
-						citations,
-						path,
-						docId,
-						levelId,
-						parentLevelId,
-					});
-				}
-			}
-			return; // Don't recurse into sections
-		}
-
-		// Recurse into children
-		for (const [key, value] of Object.entries(elem)) {
-			if (key.startsWith("@_") || key === "#text") continue;
-
-			if (Array.isArray(value)) {
-				for (const item of value) {
-					if (typeof item === "object" && item !== null) {
-						traverseElement(item as Record<string, unknown>, key);
-					}
-				}
-			} else if (typeof value === "object" && value !== null) {
-				traverseElement(value as Record<string, unknown>, key);
-			}
-		}
-
-		// Pop from stack if we pushed for this level
-		if (
-			USC_LEVEL_SET.has(tagName) &&
-			tagName !== "title" &&
-			levelStack.length > 0
-		) {
-			const levelType = tagName as USCLevelType;
-			const ident = elem["@_identifier"] as string | undefined;
-			const levelNum =
-				parseLevelNumFromIdentifier(ident, levelType) || getNumValue(elem);
-			if (levelNum) {
-				const identifier = `${titleNum}-${LEVEL_ID_PREFIXES[levelType]}${levelNum}`;
-				// Only pop if the top of stack matches
-				if (
-					levelStack.length > 0 &&
-					levelStack[levelStack.length - 1].identifier === identifier
-				) {
-					levelStack.pop();
-				}
-			}
+		if (event.type === "level") {
+			levels.push(event.level);
 		}
 	}
 
-	// Start traversal from title element
-	for (const [key, value] of Object.entries(title)) {
-		if (key.startsWith("@_") || key === "#text") continue;
-
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				if (typeof item === "object" && item !== null) {
-					traverseElement(item as Record<string, unknown>, key);
-				}
-			}
-		} else if (typeof value === "object" && value !== null) {
-			traverseElement(value as Record<string, unknown>, key);
-		}
-	}
-
+	const { titleNum, titleName } = getTitleInfo();
 	return { sections, levels, titleNum, titleName };
-}
-
-/**
- * Extract body content from a section element
- */
-function extractSectionBody(sectionEl: Record<string, unknown>): string {
-	const bodyTags = new Set([
-		"content",
-		"chapeau",
-		"subsection",
-		"paragraph",
-		"subparagraph",
-		"clause",
-		"p",
-	]);
-	const skipTags = new Set(["num", "heading", "sourceCredit", "notes"]);
-
-	const parts: string[] = [];
-
-	function extractRecursive(el: Record<string, unknown>): string[] {
-		const collected: string[] = [];
-
-		for (const [key, value] of Object.entries(el)) {
-			if (key.startsWith("@_") || key === "#text") continue;
-
-			if (skipTags.has(key)) continue;
-
-			if (bodyTags.has(key)) {
-				if (key === "content" || key === "chapeau" || key === "p") {
-					const txt = textContent(value);
-					if (txt) collected.push(txt);
-				} else {
-					// For structural elements, recurse
-					if (Array.isArray(value)) {
-						for (const item of value) {
-							if (typeof item === "object" && item !== null) {
-								collected.push(
-									...extractRecursive(item as Record<string, unknown>),
-								);
-							}
-						}
-					} else if (typeof value === "object" && value !== null) {
-						collected.push(
-							...extractRecursive(value as Record<string, unknown>),
-						);
-					}
-				}
-			}
-		}
-
-		return collected;
-	}
-
-	for (const [key, value] of Object.entries(sectionEl)) {
-		if (key.startsWith("@_") || key === "#text") continue;
-		if (skipTags.has(key)) continue;
-
-		if (bodyTags.has(key)) {
-			if (Array.isArray(value)) {
-				for (const item of value) {
-					if (typeof item === "object" && item !== null) {
-						parts.push(...extractRecursive(item as Record<string, unknown>));
-					}
-				}
-			} else if (typeof value === "object" && value !== null) {
-				parts.push(...extractRecursive(value as Record<string, unknown>));
-			}
-		}
-	}
-
-	return normalizedWhitespace(parts.join("\n\n"));
-}
-
-/**
- * Extract sourceCredit as history
- */
-function extractSourceCredit(sectionEl: Record<string, unknown>): string {
-	const sourceCredit = findElement(sectionEl, "sourceCredit");
-	if (!sourceCredit) return "";
-	return normalizedWhitespace(allTextContent(sourceCredit));
-}
-
-/**
- * Extract notes (amendments -> historyLong, other -> citations)
- */
-function extractNotes(sectionEl: Record<string, unknown>): {
-	historyLong: string;
-	citations: string;
-} {
-	const notesEl = findElement(sectionEl, "notes");
-	if (!notesEl) return { historyLong: "", citations: "" };
-
-	const amendments: string[] = [];
-	const statutory: Array<{ heading: string; body: string }> = [];
-
-	// Find all note elements
-	const notes = findAllElements(notesEl, "note");
-	for (const note of notes) {
-		const topic = (note["@_topic"] as string) || "";
-		const role = (note["@_role"] as string) || "";
-
-		const headingEl = findElement(note, "heading");
-		const heading = headingEl ? textContent(headingEl) : "";
-
-		// Collect all p elements
-		const pElements = findAllElements(note, "p");
-		const bodyParts = pElements.map((p) => textContent(p));
-		const body = normalizedWhitespace(bodyParts.join("\n\n"));
-
-		const finalBody = body || heading;
-
-		if (topic === "amendments" || heading.includes("amendments")) {
-			if (finalBody) amendments.push(finalBody);
-		} else if (
-			role.includes("crossHeading") ||
-			heading.includes("Editorial") ||
-			heading.includes("Statutory")
-		) {
-		} else if (topic || finalBody) {
-			statutory.push({ heading, body: finalBody });
-		}
-	}
-
-	const historyLong = amendments.join("\n\n");
-	const citations = statutory
-		.filter(({ body }) => body)
-		.map(({ heading, body }) => (heading ? `${heading}\n${body}` : body))
-		.join("\n\n")
-		.trim();
-
-	return { historyLong, citations };
-}
-
-// Helper functions
-
-function getDocIdentifier(doc: Record<string, unknown>): string {
-	// Try to find document root with identifier
-	for (const [_key, value] of Object.entries(doc)) {
-		if (typeof value === "object" && value !== null) {
-			const identifier = (value as Record<string, unknown>)["@_identifier"];
-			if (typeof identifier === "string") {
-				return identifier;
-			}
-		}
-	}
-	return "";
-}
-
-function getTitleName(
-	doc: Record<string, unknown>,
-	titleNum: string,
-): string | null {
-	// Try to find dc:title in meta
-	const meta = findElementDeep(doc, "meta");
-	if (meta) {
-		for (const [key, value] of Object.entries(meta)) {
-			if (key === "title" || key.endsWith(":title")) {
-				const txt = typeof value === "string" ? value : textContent(value);
-				if (txt) return txt.trim();
-			}
-		}
-	}
-	return `Title ${titleNum}`;
 }
 
 /**
@@ -532,146 +700,6 @@ function parseSectionFromIdentifier(ident: string | undefined): string | null {
 		}
 	}
 	return null;
-}
-
-function getNumValue(elem: Record<string, unknown>): string {
-	const numEl = findElement(elem, "num");
-	if (!numEl) return "";
-	const value = (numEl as Record<string, unknown>)["@_value"];
-	return typeof value === "string" ? value : "";
-}
-
-function findElement(
-	obj: unknown,
-	tagName: string,
-): Record<string, unknown> | null {
-	if (!obj || typeof obj !== "object") return null;
-
-	const record = obj as Record<string, unknown>;
-
-	if (tagName in record) {
-		const val = record[tagName];
-		if (Array.isArray(val)) {
-			return typeof val[0] === "object"
-				? (val[0] as Record<string, unknown>)
-				: null;
-		}
-		return typeof val === "object" ? (val as Record<string, unknown>) : null;
-	}
-
-	return null;
-}
-
-function findElementDeep(
-	obj: unknown,
-	tagName: string,
-): Record<string, unknown> | null {
-	if (!obj || typeof obj !== "object") return null;
-
-	const record = obj as Record<string, unknown>;
-
-	if (tagName in record) {
-		const val = record[tagName];
-		if (Array.isArray(val)) {
-			return typeof val[0] === "object"
-				? (val[0] as Record<string, unknown>)
-				: null;
-		}
-		return typeof val === "object" ? (val as Record<string, unknown>) : null;
-	}
-
-	for (const value of Object.values(record)) {
-		if (typeof value === "object" && value !== null) {
-			const found = findElementDeep(value, tagName);
-			if (found) return found;
-		}
-	}
-
-	return null;
-}
-
-function findAllElements(
-	obj: unknown,
-	tagName: string,
-): Array<Record<string, unknown>> {
-	if (!obj || typeof obj !== "object") return [];
-
-	const record = obj as Record<string, unknown>;
-	const results: Array<Record<string, unknown>> = [];
-
-	if (tagName in record) {
-		const val = record[tagName];
-		if (Array.isArray(val)) {
-			for (const item of val) {
-				if (typeof item === "object" && item !== null) {
-					results.push(item as Record<string, unknown>);
-				}
-			}
-		} else if (typeof val === "object" && val !== null) {
-			results.push(val as Record<string, unknown>);
-		}
-	}
-
-	return results;
-}
-
-function textContent(obj: unknown): string {
-	if (!obj) return "";
-	if (typeof obj === "string") return obj;
-	if (typeof obj !== "object") return String(obj);
-
-	const record = obj as Record<string, unknown>;
-	const parts: string[] = [];
-
-	// Get direct text
-	if ("#text" in record) {
-		const txt = record["#text"];
-		if (typeof txt === "string") parts.push(txt);
-	}
-
-	// Recurse into children (excluding footnoteRef and note)
-	for (const [key, value] of Object.entries(record)) {
-		if (key.startsWith("@_") || key === "#text") continue;
-		if (key === "footnoteRef" || key === "note") continue;
-
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				parts.push(textContent(item));
-			}
-		} else {
-			parts.push(textContent(value));
-		}
-	}
-
-	return parts.join("").trim();
-}
-
-function allTextContent(obj: unknown): string {
-	if (!obj) return "";
-	if (typeof obj === "string") return obj;
-	if (typeof obj !== "object") return String(obj);
-
-	const record = obj as Record<string, unknown>;
-	const parts: string[] = [];
-
-	if ("#text" in record) {
-		const txt = record["#text"];
-		if (typeof txt === "string") parts.push(txt);
-	}
-
-	for (const [key, value] of Object.entries(record)) {
-		if (key.startsWith("@_") || key === "#text") continue;
-
-		if (Array.isArray(value)) {
-			for (const item of value) {
-				parts.push(allTextContent(item));
-			}
-		} else {
-			parts.push(allTextContent(value));
-		}
-	}
-
-	return parts.join("").trim();
 }
 
 function normalizedWhitespace(s: string): string {

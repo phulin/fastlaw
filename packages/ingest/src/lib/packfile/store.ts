@@ -190,6 +190,12 @@ export class BlobStore {
 				await this.withContext(`db.insertBlobs(${packfile.key})`, () =>
 					this.db.batch(statements),
 				);
+				const inserted = Math.min(i + batch.length, packfile.entries.length);
+				if (inserted === packfile.entries.length || inserted % 1000 === 0) {
+					console.log(
+						`Inserted ${inserted}/${packfile.entries.length} blob records for ${packfile.key}`,
+					);
+				}
 			}
 		}
 	}
