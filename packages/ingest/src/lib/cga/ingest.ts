@@ -1,14 +1,10 @@
-import type { Env, IngestionResult } from "../../types";
-import { BlobStore } from "../packfile";
+import type { S3Client } from "@aws-sdk/client-s3";
+import type { ContainerEnv, Env, IngestionResult } from "../../types";
+import { BlobStore, type DbBackend } from "../packfile";
 import {
-	computeDiff,
-	getLatestVersion,
-	getOrCreateSource,
-	getOrCreateSourceVersion,
-	insertNode,
-	insertNodesBatched,
+	createD1VersioningBackend,
 	type NodeInsert,
-	setRootNodeId,
+	type VersioningBackend,
 } from "../versioning";
 import { crawlCGA } from "./crawler";
 import { extractSectionCrossReferences } from "./cross-references";
@@ -29,17 +25,29 @@ async function withContext<T>(
 	}
 }
 
-/**
- * Main CGA ingestion function
- */
-export async function ingestCGA(env: Env): Promise<IngestionResult> {
+type CgaEnv = {
+	CGA_BASE_URL: string;
+	CGA_START_PATH: string;
+	GODADDY_CA?: Fetcher;
+};
+
+type CgaDeps = {
+	env: CgaEnv;
+	versioning: VersioningBackend;
+	createBlobStore: (sourceId: number) => BlobStore;
+};
+
+async function ingestCGAWithBackend({
+	env,
+	versioning,
+	createBlobStore,
+}: CgaDeps): Promise<IngestionResult> {
 	const startUrl = `${env.CGA_BASE_URL}${env.CGA_START_PATH}`;
 	const accessedAt = new Date().toISOString();
 
 	// Get or create source
 	const sourceId = await withContext("getOrCreateSource", () =>
-		getOrCreateSource(
-			env.DB,
+		versioning.getOrCreateSource(
 			SOURCE_CODE,
 			SOURCE_NAME,
 			"state",
@@ -50,13 +58,13 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Get latest version for diff comparison
 	const previousVersion = await withContext("getLatestVersion", () =>
-		getLatestVersion(env.DB, sourceId),
+		versioning.getLatestVersion(sourceId),
 	);
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
 	const versionId = await withContext("getOrCreateSourceVersion", () =>
-		getOrCreateSourceVersion(env.DB, sourceId, versionDate),
+		versioning.getOrCreateSourceVersion(sourceId, versionDate),
 	);
 
 	// Crawl CGA website - now returns structured data directly
@@ -87,13 +95,12 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	const nodeIdMap = new Map<string, number>();
 
 	// Initialize blob store for this source
-	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
+	const blobStore = createBlobStore(sourceId);
 
 	// Insert root node for source
 	const rootStringId = `cgs/root`;
 	const rootNodeId = await withContext("insertNode(root)", () =>
-		insertNode(
-			env.DB,
+		versioning.insertNode(
 			versionId,
 			rootStringId,
 			null,
@@ -135,8 +142,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		seenTitleIds.add(stringId);
 
 		const nodeId = await withContext(`insertNode(title:${stringId})`, () =>
-			insertNode(
-				env.DB,
+			versioning.insertNode(
 				versionId,
 				stringId,
 				rootNodeId,
@@ -194,8 +200,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		const nodeId = await withContext(
 			`insertNode(${chapter.type}:${stringId})`,
 			() =>
-				insertNode(
-					env.DB,
+				versioning.insertNode(
 					versionId,
 					stringId,
 					parentId,
@@ -310,7 +315,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	// Batch insert all section nodes
 	console.log(`Inserting ${sectionNodes.length} section nodes in batches...`);
 	const sectionNodeIds = await withContext("insertNodesBatched", () =>
-		insertNodesBatched(env.DB, sectionNodes),
+		versioning.insertNodesBatched(sectionNodes),
 	);
 	for (const [stringId, nodeId] of sectionNodeIds) {
 		nodeIdMap.set(stringId, nodeId);
@@ -323,7 +328,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Set root node ID
 	await withContext("setRootNodeId", () =>
-		setRootNodeId(env.DB, versionId, rootNodeId),
+		versioning.setRootNodeId(versionId, rootNodeId),
 	);
 	console.log("Set root note ID.");
 
@@ -332,7 +337,7 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	if (previousVersion) {
 		console.log("Computing diff...");
 		diff = await withContext("computeDiff", () =>
-			computeDiff(env.DB, previousVersion.id, versionId),
+			versioning.computeDiff(previousVersion.id, versionId),
 		);
 		console.log(
 			`Diff: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.modified.length} modified`,
@@ -345,4 +350,34 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		nodesCreated,
 		diff,
 	};
+}
+
+/**
+ * Main CGA ingestion function (Worker)
+ */
+export async function ingestCGA(env: Env): Promise<IngestionResult> {
+	return ingestCGAWithBackend({
+		env,
+		versioning: createD1VersioningBackend(env.DB),
+		createBlobStore: (sourceId) =>
+			BlobStore.withR2(env.DB, env.STORAGE, sourceId, SOURCE_CODE),
+	});
+}
+
+/**
+ * Main CGA ingestion function (Container)
+ */
+export async function ingestCGAContainer(
+	versioning: VersioningBackend,
+	dbBackend: DbBackend,
+	s3Client: S3Client,
+	bucketName: string,
+	env: ContainerEnv,
+): Promise<IngestionResult> {
+	return ingestCGAWithBackend({
+		env,
+		versioning,
+		createBlobStore: (sourceId) =>
+			BlobStore.withS3(dbBackend, s3Client, bucketName, sourceId, SOURCE_CODE),
+	});
 }

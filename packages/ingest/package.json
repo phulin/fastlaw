@@ -12,6 +12,8 @@
 		"test:watch": "vitest"
 	},
 	"dependencies": {
+		"@aws-sdk/client-s3": "^3.982.0",
+		"@cloudflare/containers": "^0.1.0",
 		"@zip.js/zip.js": "^2.8.16",
 		"fast-xml-parser": "^4.5.1",
 		"fzstd": "^0.1.1",

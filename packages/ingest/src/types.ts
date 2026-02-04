@@ -78,6 +78,21 @@ export interface IngestRunnerRpc {
 	getLatestVersion(sourceId: number): Promise<SourceVersion | null>;
 	loadBlobHashes(sourceId: number): Promise<Record<string, BlobLocation>>;
 	insertNodesBatched(nodes: NodeInsert[]): Promise<Record<string, number>>;
+	insertNode(
+		versionId: number,
+		stringId: string,
+		parentId: number | null,
+		levelName: string,
+		levelIndex: number,
+		sortOrder: number,
+		name: string | null,
+		path: string | null,
+		readableId: string | null,
+		headingCitation: string | null,
+		blobHash: string | null,
+		sourceUrl: string | null,
+		accessedAt: string | null,
+	): Promise<number>;
 	insertBlobs(
 		sourceId: number,
 		packfileKey: string,
@@ -95,4 +110,20 @@ export interface Env {
 	CGA_START_PATH: string;
 	USC_DOWNLOAD_BASE: string;
 	INGEST_RUNNER: DurableObjectNamespace;
+	// R2 S3 API credentials (for container use)
+	R2_S3_ACCOUNT_ID: string;
+	R2_S3_ACCESS_KEY_ID: string;
+	R2_S3_SECRET_ACCESS_KEY: string;
+	R2_S3_BUCKET_NAME: string;
+}
+
+/** Environment available inside the container (no Workers bindings) */
+export interface ContainerEnv {
+	CGA_BASE_URL: string;
+	CGA_START_PATH: string;
+	USC_DOWNLOAD_BASE: string;
+	R2_S3_ACCOUNT_ID: string;
+	R2_S3_ACCESS_KEY_ID: string;
+	R2_S3_SECRET_ACCESS_KEY: string;
+	R2_S3_BUCKET_NAME: string;
 }

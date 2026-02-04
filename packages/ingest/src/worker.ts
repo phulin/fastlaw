@@ -1,12 +1,11 @@
 import { Container } from "@cloudflare/containers";
 import { Hono } from "hono";
-import { ingestCGA } from "./lib/cga/ingest";
-import { ingestUSC } from "./lib/usc/ingest";
 import {
 	computeDiff as computeDiffImpl,
 	getLatestVersion as getLatestVersionImpl,
 	getOrCreateSource as getOrCreateSourceImpl,
 	getOrCreateSourceVersion as getOrCreateSourceVersionImpl,
+	insertNode as insertNodeImpl,
 	insertNodesBatched as insertNodesBatchedImpl,
 	setRootNodeId as setRootNodeIdImpl,
 } from "./lib/versioning";
@@ -93,6 +92,40 @@ export class IngestRunner extends Container<Env> {
 		return result;
 	}
 
+	// RPC: Insert a single node
+	async insertNode(
+		versionId: number,
+		stringId: string,
+		parentId: number | null,
+		levelName: string,
+		levelIndex: number,
+		sortOrder: number,
+		name: string | null,
+		path: string | null,
+		readableId: string | null,
+		headingCitation: string | null,
+		blobHash: string | null,
+		sourceUrl: string | null,
+		accessedAt: string | null,
+	): Promise<number> {
+		return insertNodeImpl(
+			this.env.DB,
+			versionId,
+			stringId,
+			parentId,
+			levelName,
+			levelIndex,
+			sortOrder,
+			name,
+			path,
+			readableId,
+			headingCitation,
+			blobHash,
+			sourceUrl,
+			accessedAt,
+		);
+	}
+
 	// RPC: Insert blob records for a packfile
 	async insertBlobs(
 		sourceId: number,
@@ -132,9 +165,194 @@ type AppContext = {
 
 const app = new Hono<AppContext>();
 
+async function loadBlobHashes(
+	db: D1Database,
+	sourceId: number,
+): Promise<Record<string, BlobLocation>> {
+	const result = await db
+		.prepare(
+			`SELECT hash, packfile_key, offset, size FROM blobs WHERE source_id = ?`,
+		)
+		.bind(sourceId)
+		.all<{
+			hash: string;
+			packfile_key: string;
+			offset: number;
+			size: number;
+		}>();
+
+	const hashes: Record<string, BlobLocation> = {};
+	for (const row of result.results) {
+		hashes[row.hash] = {
+			packfileKey: row.packfile_key,
+			offset: row.offset,
+			size: row.size,
+		};
+	}
+	return hashes;
+}
+
+async function insertBlobs(
+	db: D1Database,
+	sourceId: number,
+	packfileKey: string,
+	entries: BlobEntry[],
+): Promise<void> {
+	const BATCH_SIZE = 50;
+	for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+		const batch = entries.slice(i, i + BATCH_SIZE);
+		const statements = batch.map((entry) =>
+			db
+				.prepare(
+					`INSERT OR IGNORE INTO blobs (hash, source_id, packfile_key, offset, size)
+					 VALUES (?, ?, ?, ?, ?)`,
+				)
+				.bind(entry.hash, sourceId, packfileKey, entry.offset, entry.size),
+		);
+		await db.batch(statements);
+	}
+}
+
 // Health check
 app.get("/", (c) => {
 	return c.json({ status: "ok", service: "fastlaw-ingest" });
+});
+
+// RPC endpoints for container callbacks
+app.post("/api/rpc/:method", async (c) => {
+	const method = c.req.param("method");
+	const params = (await c.req.json()) as Record<string, unknown>;
+
+	switch (method) {
+		case "getOrCreateSource": {
+			const { code, name, jurisdiction, region, docType } = params as {
+				code: string;
+				name: string;
+				jurisdiction: string;
+				region: string;
+				docType: string;
+			};
+			const result = await getOrCreateSourceImpl(
+				c.env.DB,
+				code,
+				name,
+				jurisdiction,
+				region,
+				docType,
+			);
+			return c.json({ result });
+		}
+		case "getOrCreateSourceVersion": {
+			const { sourceId, versionDate } = params as {
+				sourceId: number;
+				versionDate: string;
+			};
+			const result = await getOrCreateSourceVersionImpl(
+				c.env.DB,
+				sourceId,
+				versionDate,
+			);
+			return c.json({ result });
+		}
+		case "getLatestVersion": {
+			const { sourceId } = params as { sourceId: number };
+			const result = await getLatestVersionImpl(c.env.DB, sourceId);
+			return c.json({ result });
+		}
+		case "loadBlobHashes": {
+			const { sourceId } = params as { sourceId: number };
+			const result = await loadBlobHashes(c.env.DB, sourceId);
+			return c.json({ result });
+		}
+		case "insertNodesBatched": {
+			const { nodes } = params as { nodes: NodeInsert[] };
+			const map = await insertNodesBatchedImpl(c.env.DB, nodes);
+			const result: Record<string, number> = {};
+			for (const [key, value] of map) {
+				result[key] = value;
+			}
+			return c.json({ result });
+		}
+		case "insertNode": {
+			const {
+				versionId,
+				stringId,
+				parentId,
+				levelName,
+				levelIndex,
+				sortOrder,
+				name,
+				path,
+				readableId,
+				headingCitation,
+				blobHash,
+				sourceUrl,
+				accessedAt,
+			} = params as {
+				versionId: number;
+				stringId: string;
+				parentId: number | null;
+				levelName: string;
+				levelIndex: number;
+				sortOrder: number;
+				name: string | null;
+				path: string | null;
+				readableId: string | null;
+				headingCitation: string | null;
+				blobHash: string | null;
+				sourceUrl: string | null;
+				accessedAt: string | null;
+			};
+			const result = await insertNodeImpl(
+				c.env.DB,
+				versionId,
+				stringId,
+				parentId,
+				levelName,
+				levelIndex,
+				sortOrder,
+				name,
+				path,
+				readableId,
+				headingCitation,
+				blobHash,
+				sourceUrl,
+				accessedAt,
+			);
+			return c.json({ result });
+		}
+		case "insertBlobs": {
+			const { sourceId, packfileKey, entries } = params as {
+				sourceId: number;
+				packfileKey: string;
+				entries: BlobEntry[];
+			};
+			await insertBlobs(c.env.DB, sourceId, packfileKey, entries);
+			return c.json({ result: null });
+		}
+		case "setRootNodeId": {
+			const { versionId, rootNodeId } = params as {
+				versionId: number;
+				rootNodeId: number;
+			};
+			await setRootNodeIdImpl(c.env.DB, versionId, rootNodeId);
+			return c.json({ result: null });
+		}
+		case "computeDiff": {
+			const { oldVersionId, newVersionId } = params as {
+				oldVersionId: number;
+				newVersionId: number;
+			};
+			const result = await computeDiffImpl(
+				c.env.DB,
+				oldVersionId,
+				newVersionId,
+			);
+			return c.json({ result });
+		}
+		default:
+			return c.json({ error: `Unknown RPC method: ${method}` }, 404);
+	}
 });
 
 // List source versions
@@ -191,8 +409,20 @@ app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
 // Trigger CGA ingestion
 app.post("/api/ingest/cga", async (c) => {
 	try {
-		const result = await ingestCGA(c.env);
-		return c.json(result);
+		const id = c.env.INGEST_RUNNER.idFromName("ingest");
+		const stub = c.env.INGEST_RUNNER.get(id) as unknown as IngestRunner;
+		await stub.startAndWaitForPorts(8080);
+
+		const callbackUrl = new URL(c.req.url).origin;
+		const response = await stub.fetch(
+			new Request("http://container/ingest/cga", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ callbackUrl }),
+			}),
+		);
+
+		return response;
 	} catch (error) {
 		console.error("CGA ingest failed:", error);
 		return c.json({ error: "CGA ingest failed" }, 500);
@@ -202,8 +432,20 @@ app.post("/api/ingest/cga", async (c) => {
 // Trigger USC ingestion
 app.post("/api/ingest/usc", async (c) => {
 	try {
-		const result = await ingestUSC(c.env);
-		return c.json(result);
+		const id = c.env.INGEST_RUNNER.idFromName("ingest");
+		const stub = c.env.INGEST_RUNNER.get(id) as unknown as IngestRunner;
+		await stub.startAndWaitForPorts(8080);
+
+		const callbackUrl = new URL(c.req.url).origin;
+		const response = await stub.fetch(
+			new Request("http://container/ingest/usc", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ callbackUrl }),
+			}),
+		);
+
+		return response;
 	} catch (error) {
 		console.error("USC ingest failed:", error);
 		return c.json({ error: "USC ingest failed" }, 500);

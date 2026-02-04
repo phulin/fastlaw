@@ -18,6 +18,7 @@ bucket_name = "fastlaw-content"
 CGA_BASE_URL = "https://www.cga.ct.gov"
 CGA_START_PATH = "/current/pub/titles.htm"
 USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
+R2_S3_BUCKET_NAME = "fastlaw-content"
 
 [observability]
 enabled = true
@@ -32,3 +33,26 @@ invocation_logs = true
 [observability.traces]
 enabled = true
 head_sampling_rate = 1
+
+[[containers]]
+class_name = "IngestRunner"
+image = "."
+instance_type = "standard-1"
+max_instances = 1
+
+[containers.env]
+R2_S3_ACCOUNT_ID = { binding = "R2_S3_ACCOUNT_ID" }
+R2_S3_ACCESS_KEY_ID = { binding = "R2_S3_ACCESS_KEY_ID" }
+R2_S3_SECRET_ACCESS_KEY = { binding = "R2_S3_SECRET_ACCESS_KEY" }
+R2_S3_BUCKET_NAME = { binding = "R2_S3_BUCKET_NAME" }
+CGA_BASE_URL = { binding = "CGA_BASE_URL" }
+CGA_START_PATH = { binding = "CGA_START_PATH" }
+USC_DOWNLOAD_BASE = { binding = "USC_DOWNLOAD_BASE" }
+
+[[durable_objects.bindings]]
+class_name = "IngestRunner"
+name = "INGEST_RUNNER"
+
+[[migrations]]
+new_sqlite_classes = ["IngestRunner"]
+tag = "v2"

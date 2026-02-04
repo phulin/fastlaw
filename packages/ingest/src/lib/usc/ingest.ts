@@ -1,14 +1,10 @@
-import type { Env, IngestionResult } from "../../types";
-import { BlobStore } from "../packfile";
+import type { S3Client } from "@aws-sdk/client-s3";
+import type { ContainerEnv, Env, IngestionResult } from "../../types";
+import { BlobStore, type DbBackend } from "../packfile";
 import {
-	computeDiff,
-	getLatestVersion,
-	getOrCreateSource,
-	getOrCreateSourceVersion,
-	insertNode,
-	insertNodesBatched,
+	createD1VersioningBackend,
 	type NodeInsert,
-	setRootNodeId,
+	type VersioningBackend,
 } from "../versioning";
 import { extractSectionCrossReferences } from "./cross-references";
 import { fetchUSCTitle, getTitleNumFromUrl, getUSCTitleUrls } from "./fetcher";
@@ -28,10 +24,26 @@ const SOURCE_NAME = "United States Code";
 const SECTION_LEVEL_INDEX = Object.keys(USC_LEVEL_INDEX).length;
 const SECTION_BATCH_SIZE = 500;
 
+type UscEnv = {
+	USC_DOWNLOAD_BASE: string;
+};
+
+type UscDeps = {
+	env: UscEnv;
+	versioning: VersioningBackend;
+	createBlobStore: (sourceId: number) => BlobStore;
+	storage?: R2Bucket;
+};
+
 /**
  * Main USC ingestion function
  */
-export async function ingestUSC(env: Env): Promise<IngestionResult> {
+async function ingestUSCWithBackend({
+	env,
+	versioning,
+	createBlobStore,
+	storage,
+}: UscDeps): Promise<IngestionResult> {
 	const accessedAt = new Date().toISOString();
 	const titleUrls = await getUSCTitleUrls();
 	const titleUrlByNum = new Map<string, string>();
@@ -44,8 +56,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	}
 
 	// Get or create source
-	const sourceId = await getOrCreateSource(
-		env.DB,
+	const sourceId = await versioning.getOrCreateSource(
 		SOURCE_CODE,
 		SOURCE_NAME,
 		"federal",
@@ -54,12 +65,11 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	);
 
 	// Get latest version for diff comparison
-	const previousVersion = await getLatestVersion(env.DB, sourceId);
+	const previousVersion = await versioning.getLatestVersion(sourceId);
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
-	const versionId = await getOrCreateSourceVersion(
-		env.DB,
+	const versionId = await versioning.getOrCreateSourceVersion(
 		sourceId,
 		versionDate,
 	);
@@ -91,12 +101,11 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	const nodeIdMap = new Map<string, number>();
 
 	// Initialize blob store for this source
-	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
+	const blobStore = createBlobStore(sourceId);
 
 	// Insert root node
 	const rootStringId = "usc/root";
-	const rootNodeId = await insertNode(
-		env.DB,
+	const rootNodeId = await versioning.insertNode(
 		versionId,
 		rootStringId,
 		null,
@@ -131,8 +140,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		}
 
 		const sortOrder = titleOrder.get(titleNum) ?? titleOrder.size;
-		const nodeId = await insertNode(
-			env.DB,
+		const nodeId = await versioning.insertNode(
 			versionId,
 			titleStringId,
 			rootNodeId,
@@ -182,7 +190,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	const flushSectionNodes = async () => {
 		if (sectionNodes.length === 0) return;
 		const batch = sectionNodes.splice(0, sectionNodes.length);
-		const sectionIdMap = await insertNodesBatched(env.DB, batch);
+		const sectionIdMap = await versioning.insertNodesBatched(batch);
 		for (const [stringId, nodeId] of sectionIdMap) {
 			nodeIdMap.set(stringId, nodeId);
 		}
@@ -199,7 +207,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		try {
 			let input: ReadableStream<Uint8Array> | string | null = null;
 
-			const xml = await fetchUSCTitle(titleEntry.url, env.STORAGE);
+			const xml = await fetchUSCTitle(titleEntry.url, storage);
 			if (xml) input = xml;
 
 			if (!input) {
@@ -226,8 +234,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 					const stringId = `usc/${level.levelType}/${level.identifier}`;
 					const headingCitation = `${level.levelType.charAt(0).toUpperCase() + level.levelType.slice(1)} ${level.num}`;
-					const nodeId = await insertNode(
-						env.DB,
+					const nodeId = await versioning.insertNode(
 						versionId,
 						stringId,
 						resolveLevelParentId(level),
@@ -349,12 +356,12 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	await blobStore.flush();
 
 	// Set root node ID
-	await setRootNodeId(env.DB, versionId, rootNodeId);
+	await versioning.setRootNodeId(versionId, rootNodeId);
 
 	// Compute diff if there was a previous version
 	let diff = null;
 	if (previousVersion) {
-		diff = await computeDiff(env.DB, previousVersion.id, versionId);
+		diff = await versioning.computeDiff(previousVersion.id, versionId);
 		console.log(
 			`Diff: ${diff.added.length} added, ${diff.removed.length} removed, ${diff.modified.length} modified`,
 		);
@@ -365,6 +372,37 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		nodesCreated,
 		diff,
 	};
+}
+
+/**
+ * Main USC ingestion function (Worker)
+ */
+export async function ingestUSC(env: Env): Promise<IngestionResult> {
+	return ingestUSCWithBackend({
+		env,
+		versioning: createD1VersioningBackend(env.DB),
+		createBlobStore: (sourceId) =>
+			BlobStore.withR2(env.DB, env.STORAGE, sourceId, SOURCE_CODE),
+		storage: env.STORAGE,
+	});
+}
+
+/**
+ * Main USC ingestion function (Container)
+ */
+export async function ingestUSCContainer(
+	versioning: VersioningBackend,
+	dbBackend: DbBackend,
+	s3Client: S3Client,
+	bucketName: string,
+	env: ContainerEnv,
+): Promise<IngestionResult> {
+	return ingestUSCWithBackend({
+		env,
+		versioning,
+		createBlobStore: (sourceId) =>
+			BlobStore.withS3(dbBackend, s3Client, bucketName, sourceId, SOURCE_CODE),
+	});
 }
 
 // Helper comparison functions for sorting

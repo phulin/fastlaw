@@ -1,3 +1,4 @@
+import type { S3Client } from "@aws-sdk/client-s3";
 import { hash64, hash64ToHex, hexToHash64, verifyHashPrefix } from "./hash";
 import { extractBlob, PackfileWriter } from "./writer";
 
@@ -7,20 +8,82 @@ export interface BlobLocation {
 	size: number;
 }
 
-const BATCH_SIZE = 50;
+/** Storage backend that can upload packfiles - either R2 binding or S3 client */
+export type StorageBackend =
+	| { type: "r2"; bucket: R2Bucket }
+	| { type: "s3"; client: S3Client; bucketName: string };
+
+/** Database backend - either D1 or RPC client */
+export interface DbBackend {
+	loadBlobHashes(sourceId: number): Promise<Map<string, BlobLocation>>;
+	insertBlobs(
+		sourceId: number,
+		packfileKey: string,
+		entries: { hash: string; offset: number; size: number }[],
+	): Promise<void>;
+}
+
+/** D1-based database backend */
+export class D1DbBackend implements DbBackend {
+	constructor(private db: D1Database) {}
+
+	async loadBlobHashes(sourceId: number): Promise<Map<string, BlobLocation>> {
+		const result = await this.db
+			.prepare(
+				`SELECT hash, packfile_key, offset, size FROM blobs WHERE source_id = ?`,
+			)
+			.bind(sourceId)
+			.all<{
+				hash: string;
+				packfile_key: string;
+				offset: number;
+				size: number;
+			}>();
+
+		const cache = new Map<string, BlobLocation>();
+		for (const row of result.results) {
+			cache.set(row.hash, {
+				packfileKey: row.packfile_key,
+				offset: row.offset,
+				size: row.size,
+			});
+		}
+		return cache;
+	}
+
+	async insertBlobs(
+		sourceId: number,
+		packfileKey: string,
+		entries: { hash: string; offset: number; size: number }[],
+	): Promise<void> {
+		const BATCH_SIZE = 50;
+		for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+			const batch = entries.slice(i, i + BATCH_SIZE);
+			const statements = batch.map((entry) =>
+				this.db
+					.prepare(
+						`INSERT OR IGNORE INTO blobs (hash, source_id, packfile_key, offset, size)
+						 VALUES (?, ?, ?, ?, ?)`,
+					)
+					.bind(entry.hash, sourceId, packfileKey, entry.offset, entry.size),
+			);
+			await this.db.batch(statements);
+		}
+	}
+}
 
 /**
  * BlobStore manages blob storage using packfiles.
  *
  * Usage:
- *   const store = new BlobStore(db, storage, sourceId, 'cgs');
+ *   const store = new BlobStore(dbBackend, storage, sourceId, 'cgs');
  *   const hash = await store.storeBlob(jsonContent);
  *   // ... store more blobs ...
  *   await store.flush(); // Upload any pending packfiles
  */
 export class BlobStore {
-	private db: D1Database;
-	private storage: R2Bucket;
+	private dbBackend: DbBackend;
+	private storage: StorageBackend;
 	private sourceId: number;
 	private writer: PackfileWriter;
 	private hashCache: Set<string> = new Set(); // Track hashes we've seen this session (hex strings)
@@ -28,15 +91,46 @@ export class BlobStore {
 	private dbHashCachePromise: Promise<Map<string, BlobLocation>> | null = null;
 
 	constructor(
-		db: D1Database,
-		storage: R2Bucket,
+		dbBackend: DbBackend,
+		storage: StorageBackend,
 		sourceId: number,
 		sourceCode: string,
 	) {
-		this.db = db;
+		this.dbBackend = dbBackend;
 		this.storage = storage;
 		this.sourceId = sourceId;
 		this.writer = new PackfileWriter(sourceCode);
+	}
+
+	/** Convenience constructor for Worker environment with R2 binding */
+	static withR2(
+		db: D1Database,
+		bucket: R2Bucket,
+		sourceId: number,
+		sourceCode: string,
+	): BlobStore {
+		return new BlobStore(
+			new D1DbBackend(db),
+			{ type: "r2", bucket },
+			sourceId,
+			sourceCode,
+		);
+	}
+
+	/** Convenience constructor for container environment with S3 client */
+	static withS3(
+		dbBackend: DbBackend,
+		s3Client: S3Client,
+		bucketName: string,
+		sourceId: number,
+		sourceCode: string,
+	): BlobStore {
+		return new BlobStore(
+			dbBackend,
+			{ type: "s3", client: s3Client, bucketName },
+			sourceId,
+			sourceCode,
+		);
 	}
 
 	private async withContext<T>(
@@ -63,31 +157,9 @@ export class BlobStore {
 		}
 
 		this.dbHashCachePromise = (async () => {
-			const cache = new Map<string, BlobLocation>();
-
-			// Load all existing blob hashes for this source
-			const result = await this.withContext("db.loadHashes", () =>
-				this.db
-					.prepare(
-						`SELECT hash, packfile_key, offset, size FROM blobs
-						 WHERE source_id = ?`,
-					)
-					.bind(this.sourceId)
-					.all<{
-						hash: string;
-						packfile_key: string;
-						offset: number;
-						size: number;
-					}>(),
+			const cache = await this.withContext("db.loadHashes", () =>
+				this.dbBackend.loadBlobHashes(this.sourceId),
 			);
-
-			for (const row of result.results) {
-				cache.set(row.hash, {
-					packfileKey: row.packfile_key,
-					offset: row.offset,
-					size: row.size,
-				});
-			}
 
 			this.dbHashCache = cache;
 			this.dbHashCachePromise = null;
@@ -162,41 +234,41 @@ export class BlobStore {
 		}
 
 		for (const packfile of packfiles) {
-			// Upload to R2
-			await this.withContext(`r2.put(${packfile.key})`, () =>
-				this.storage.put(packfile.key, packfile.data),
+			// Upload to storage (R2 or S3)
+			await this.withContext(`storage.put(${packfile.key})`, () =>
+				this.uploadToStorage(packfile.key, packfile.data),
 			);
 			console.log(
 				`Uploaded packfile ${packfile.key} (${packfile.data.length} bytes, ${packfile.entries.length} blobs)`,
 			);
 
-			// Record blob locations in database using batched inserts
-			for (let i = 0; i < packfile.entries.length; i += BATCH_SIZE) {
-				const batch = packfile.entries.slice(i, i + BATCH_SIZE);
-				const statements = batch.map((entry) =>
-					this.db
-						.prepare(
-							`INSERT OR IGNORE INTO blobs (hash, source_id, packfile_key, offset, size)
-							 VALUES (?, ?, ?, ?, ?)`,
-						)
-						.bind(
-							hash64ToHex(entry.hash),
-							this.sourceId,
-							packfile.key,
-							entry.offset,
-							entry.size,
-						),
-				);
-				await this.withContext(`db.insertBlobs(${packfile.key})`, () =>
-					this.db.batch(statements),
-				);
-				const inserted = Math.min(i + batch.length, packfile.entries.length);
-				if (inserted === packfile.entries.length || inserted % 1000 === 0) {
-					console.log(
-						`Inserted ${inserted}/${packfile.entries.length} blob records for ${packfile.key}`,
-					);
-				}
-			}
+			// Record blob locations in database
+			const entries = packfile.entries.map((entry) => ({
+				hash: hash64ToHex(entry.hash),
+				offset: entry.offset,
+				size: entry.size,
+			}));
+			await this.withContext(`db.insertBlobs(${packfile.key})`, () =>
+				this.dbBackend.insertBlobs(this.sourceId, packfile.key, entries),
+			);
+			console.log(
+				`Inserted ${entries.length} blob records for ${packfile.key}`,
+			);
+		}
+	}
+
+	private async uploadToStorage(key: string, data: Uint8Array): Promise<void> {
+		if (this.storage.type === "r2") {
+			await this.storage.bucket.put(key, data);
+		} else {
+			const { PutObjectCommand } = await import("@aws-sdk/client-s3");
+			await this.storage.client.send(
+				new PutObjectCommand({
+					Bucket: this.storage.bucketName,
+					Key: key,
+					Body: data,
+				}),
+			);
 		}
 	}
 

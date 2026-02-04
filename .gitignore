@@ -28,6 +28,7 @@ venv/
 *.sqlite3
 data/
 
-# Build outputs (Astro legacy)
+# Build outputs
 dist/
 .turbo/
+/packages/ingest/container/target

@@ -2,6 +2,85 @@ import type { DiffResult, NodeInsert, SourceVersion } from "../types";
 
 export type { NodeInsert };
 
+export interface VersioningBackend {
+	getOrCreateSource(
+		code: string,
+		name: string,
+		jurisdiction: string,
+		region: string,
+		docType: string,
+	): Promise<number>;
+	getOrCreateSourceVersion(
+		sourceId: number,
+		versionDate: string,
+	): Promise<number>;
+	getLatestVersion(sourceId: number): Promise<SourceVersion | null>;
+	insertNode(
+		versionId: number,
+		stringId: string,
+		parentId: number | null,
+		levelName: string,
+		levelIndex: number,
+		sortOrder: number,
+		name: string | null,
+		path: string | null,
+		readableId: string | null,
+		headingCitation: string | null,
+		blobHash: string | null,
+		sourceUrl: string | null,
+		accessedAt: string | null,
+	): Promise<number>;
+	insertNodesBatched(nodes: NodeInsert[]): Promise<Map<string, number>>;
+	setRootNodeId(versionId: number, rootNodeId: number): Promise<void>;
+	computeDiff(oldVersionId: number, newVersionId: number): Promise<DiffResult>;
+}
+
+export function createD1VersioningBackend(db: D1Database): VersioningBackend {
+	return {
+		getOrCreateSource: (code, name, jurisdiction, region, docType) =>
+			getOrCreateSource(db, code, name, jurisdiction, region, docType),
+		getOrCreateSourceVersion: (sourceId, versionDate) =>
+			getOrCreateSourceVersion(db, sourceId, versionDate),
+		getLatestVersion: (sourceId) => getLatestVersion(db, sourceId),
+		insertNode: (
+			versionId,
+			stringId,
+			parentId,
+			levelName,
+			levelIndex,
+			sortOrder,
+			name,
+			path,
+			readableId,
+			headingCitation,
+			blobHash,
+			sourceUrl,
+			accessedAt,
+		) =>
+			insertNode(
+				db,
+				versionId,
+				stringId,
+				parentId,
+				levelName,
+				levelIndex,
+				sortOrder,
+				name,
+				path,
+				readableId,
+				headingCitation,
+				blobHash,
+				sourceUrl,
+				accessedAt,
+			),
+		insertNodesBatched: (nodes) => insertNodesBatched(db, nodes),
+		setRootNodeId: (versionId, rootNodeId) =>
+			setRootNodeId(db, versionId, rootNodeId),
+		computeDiff: (oldVersionId, newVersionId) =>
+			computeDiff(db, oldVersionId, newVersionId),
+	};
+}
+
 /**
  * Get or create a source by its code
  */
