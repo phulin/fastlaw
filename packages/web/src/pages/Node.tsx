@@ -199,7 +199,7 @@ export function NodePage(props: NodePageProps) {
 					<aside class="toc">
 						<div class="toc-panel">
 							<div class="toc-header">{parentLabel()}</div>
-							<div class="toc-list" ref={tocListRef}>
+							<div class="toc-list toc-list-sibling" ref={tocListRef}>
 								<For each={siblings()}>
 									{(sibling) => (
 										<a

@@ -274,6 +274,10 @@ body {
 	min-height: 0;
 }
 
+.toc-list-sibling {
+	flex-grow: 0;
+}
+
 .toc-item {
 	text-decoration: none;
 	color: var(--ink-soft);

@@ -5,10 +5,8 @@ export function Header() {
 				fast.law
 			</a>
 			<nav class="nav">
-				<a href="/#method">Method</a>
-				<a href="/#data">Data</a>
-				<a href="/search">Search</a>
-				<a href="/statutes/cgs">Titles</a>
+				<a href="/statutes/cgs">CGA</a>
+				<a href="/statutes/usc">USC</a>
 			</nav>
 		</header>
 	);
