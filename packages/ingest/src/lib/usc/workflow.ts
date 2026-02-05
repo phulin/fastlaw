@@ -1,7 +1,3 @@
-/**
- * CGA Cloudflare Workflow - generic ingestion pipeline adapter
- */
-
 import {
 	WorkflowEntrypoint,
 	type WorkflowEvent,
@@ -9,22 +5,22 @@ import {
 } from "cloudflare:workers";
 import type { Env, GenericWorkflowParams } from "../../types";
 import { runGenericWorkflow } from "../workflows/generic";
-import { cgaAdapter } from "./adapter";
-import type { CGAWorkflowResult } from "./workflow-types";
+import { uscAdapter } from "./adapter";
+import type { USCWorkflowResult } from "./workflow-types";
 
-export class CGAIngestWorkflow extends WorkflowEntrypoint<
+export class USCIngestWorkflow extends WorkflowEntrypoint<
 	Env,
 	GenericWorkflowParams
 > {
 	async run(
 		event: WorkflowEvent<GenericWorkflowParams>,
 		step: WorkflowStep,
-	): Promise<CGAWorkflowResult> {
+	): Promise<USCWorkflowResult> {
 		return await runGenericWorkflow({
 			env: this.env,
 			step,
 			payload: event.payload,
-			adapter: cgaAdapter,
+			adapter: uscAdapter,
 		});
 	}
 }

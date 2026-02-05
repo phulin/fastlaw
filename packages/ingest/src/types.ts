@@ -59,32 +59,10 @@ export interface IngestionResult {
 	diff: DiffResult | null;
 }
 
-/** RPC interface for IngestRunner - used by container to call back to DO */
-export interface IngestRunnerRpc {
-	getOrCreateSource(
-		code: string,
-		name: string,
-		jurisdiction: string,
-		region: string,
-		docType: string,
-	): Promise<string>;
-	getOrCreateSourceVersion(
-		sourceId: string,
-		versionDate: string,
-	): Promise<string>;
-	getLatestVersion(sourceId: string): Promise<SourceVersion | null>;
-	loadBlobHashes(sourceId: string): Promise<Record<string, BlobLocation>>;
-	insertNodesBatched(nodes: NodeInsert[]): Promise<Record<string, string>>;
-	insertBlobs(
-		sourceId: string,
-		packfileKey: string,
-		entries: BlobEntry[],
-	): Promise<void>;
-	setRootNodeId(versionId: string, rootNodeId: string): Promise<void>;
-	computeDiff(oldVersionId: string, newVersionId: string): Promise<DiffResult>;
+export interface GenericWorkflowParams {
+	/** Force re-ingestion even if version exists */
+	force?: boolean;
 }
-
-import type { CGAWorkflowParams } from "./lib/cga/workflow-types";
 
 export interface Env {
 	DB: D1Database;
@@ -94,5 +72,6 @@ export interface Env {
 	CGA_START_PATH: string;
 	USC_DOWNLOAD_BASE: string;
 	INGEST_RUNNER: DurableObjectNamespace;
-	CGA_WORKFLOW: Workflow<CGAWorkflowParams>;
+	CGA_WORKFLOW: Workflow<GenericWorkflowParams>;
+	USC_WORKFLOW: Workflow<GenericWorkflowParams>;
 }

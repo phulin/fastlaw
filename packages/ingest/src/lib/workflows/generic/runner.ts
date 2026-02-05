@@ -5,7 +5,6 @@ import {
 	ensureSourceVersion,
 	getOrCreateSource,
 	insertNodesBatched,
-	setRootNodeId,
 } from "../../versioning";
 import {
 	type GenericWorkflowAdapter,
@@ -44,8 +43,14 @@ export async function runGenericWorkflow<
 		);
 
 		const canonicalName = `${adapter.source.code}-${discovery.versionId}`;
+		const rootNodeId = discovery.rootNode.id;
 
-		await ensureSourceVersion(env.DB, sourceId, discovery.versionId);
+		await ensureSourceVersion(
+			env.DB,
+			sourceId,
+			discovery.versionId,
+			rootNodeId,
+		);
 
 		const rootNode = {
 			...discovery.rootNode,
@@ -54,7 +59,6 @@ export async function runGenericWorkflow<
 		};
 
 		await insertNodesBatched(env.DB, [rootNode]);
-		const rootNodeId = rootNode.id;
 
 		const rootContext: RootContext<TUnit> = {
 			sourceId,
@@ -130,10 +134,6 @@ export async function runGenericWorkflow<
 			totalNodesInserted += batchResult.insertedCount;
 		}
 	}
-
-	await step.do("finalize", async () => {
-		await setRootNodeId(env.DB, root.sourceVersionId, root.rootNodeId);
-	});
 
 	return {
 		sourceVersionId: root.sourceVersionId,

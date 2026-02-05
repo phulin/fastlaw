@@ -1,18 +1,10 @@
 // Main exports for the ingestion library
 
 export {
-	crawlCGA,
-	getChapterIdFromUrl,
-	getTitleIdFromUrl,
-	isChapterUrl,
-	isTitleUrl,
-} from "./lib/cga/crawler";
-export {
 	extractSectionCrossReferences,
 	type SectionCrossReference,
 } from "./lib/cga/cross-references";
 // CGA
-export { ingestCGA } from "./lib/cga/ingest";
 export {
 	extractChapterTitle as extractCGAChapterTitle,
 	extractLinks,
@@ -27,7 +19,6 @@ export {
 	streamXmlFromZip,
 } from "./lib/usc/fetcher";
 // USC
-export { ingestUSC } from "./lib/usc/ingest";
 export {
 	levelSortKey,
 	parseUSCXml,
@@ -43,12 +34,11 @@ export {
 // Versioning
 export {
 	computeDiff,
-	ensureSourceVersion as getOrCreateSourceVersion,
+	ensureSourceVersion,
 	getLatestVersion,
 	getNodeIdByStringId,
 	getOrCreateSource,
 	insertNode,
-	setRootNodeId,
 } from "./lib/versioning";
 // Types
 export type {

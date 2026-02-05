@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { CGAIngestWorkflow } from "./lib/cga/workflow";
-import { ingestUSC } from "./lib/usc/ingest";
+import { USCIngestWorkflow } from "./lib/usc/workflow";
 import { computeDiff } from "./lib/versioning";
 import type { Env } from "./types";
 
@@ -98,14 +98,39 @@ app.get("/api/ingest/cga/workflow/:instanceId", async (c) => {
 	}
 });
 
-// Trigger USC ingestion
-app.post("/api/ingest/usc", async (c) => {
+// Trigger USC ingestion via Cloudflare Workflow
+app.post("/api/ingest/usc/workflow", async (c) => {
 	try {
-		const result = await ingestUSC(c.env);
-		return c.json(result);
+		const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
+		const force = "force" in body ? body.force : undefined;
+
+		const instance = await c.env.USC_WORKFLOW.create({
+			params: { force },
+		});
+
+		return c.json({
+			instanceId: instance.id,
+			status: await instance.status(),
+		});
 	} catch (error) {
-		console.error("USC ingest failed:", error);
-		return c.json({ error: "USC ingest failed" }, 500);
+		console.error("USC workflow creation failed:", error);
+		return c.json({ error: "USC workflow creation failed" }, 500);
+	}
+});
+
+// Get USC workflow status
+app.get("/api/ingest/usc/workflow/:instanceId", async (c) => {
+	try {
+		const instanceId = c.req.param("instanceId");
+		const instance = await c.env.USC_WORKFLOW.get(instanceId);
+
+		return c.json({
+			instanceId: instance.id,
+			status: await instance.status(),
+		});
+	} catch (error) {
+		console.error("USC workflow status failed:", error);
+		return c.json({ error: "USC workflow status failed" }, 500);
 	}
 });
 
@@ -135,5 +160,5 @@ app.post("/api/admin/reset", async (c) => {
 
 export default app;
 
-// Export workflow class for Cloudflare
-export { CGAIngestWorkflow };
+// Export workflow classes for Cloudflare
+export { CGAIngestWorkflow, USCIngestWorkflow };

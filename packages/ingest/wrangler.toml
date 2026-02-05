@@ -18,6 +18,11 @@ name = "cga-ingest-workflow"
 binding = "CGA_WORKFLOW"
 class_name = "CGAIngestWorkflow"
 
+[[workflows]]
+name = "usc-ingest-workflow"
+binding = "USC_WORKFLOW"
+class_name = "USCIngestWorkflow"
+
 [vars]
 # Source URLs
 CGA_BASE_URL = "https://www.cga.ct.gov"

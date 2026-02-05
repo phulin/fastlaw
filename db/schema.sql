@@ -52,8 +52,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 
   -- Source tracking
   source_url TEXT,                   -- Original URL this data was fetched from
-  accessed_at TEXT,                  -- ISO timestamp when content was fetched
-
+  accessed_at TEXT                   -- ISO timestamp when content was fetched
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_version ON nodes(source_version_id);

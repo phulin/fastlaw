@@ -3,12 +3,6 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-	getChapterIdFromUrl,
-	getTitleIdFromUrl,
-	isChapterUrl,
-	isTitleUrl,
-} from "../lib/cga/crawler";
-import {
 	ChapterParser,
 	extractChapterTitle,
 	extractLinks,
@@ -360,46 +354,6 @@ describe("CGA Parser - URL Normalization", () => {
 			expect(normalizeLink("javascript:void(0)", `${BASE}/page.htm`)).toBe(
 				null,
 			);
-		});
-	});
-});
-
-describe("CGA Crawler - URL Parsing", () => {
-	const BASE = "https://www.cga.ct.gov/current/pub";
-
-	describe("getChapterIdFromUrl", () => {
-		it("extracts chapter ID from chapter URL", () => {
-			expect(getChapterIdFromUrl(`${BASE}/chap_001.htm`)).toBe("chap_001");
-			expect(getChapterIdFromUrl(`${BASE}/chap_377a.htm`)).toBe("chap_377a");
-		});
-
-		it("returns null for non-chapter URLs", () => {
-			expect(getChapterIdFromUrl(`${BASE}/title_01.htm`)).toBe(null);
-			expect(getChapterIdFromUrl(`${BASE}/titles.htm`)).toBe(null);
-		});
-	});
-
-	describe("getTitleIdFromUrl", () => {
-		it("extracts title ID from title URL", () => {
-			expect(getTitleIdFromUrl(`${BASE}/title_01.htm`)).toBe("01");
-			expect(getTitleIdFromUrl(`${BASE}/title_42a.htm`)).toBe("42a");
-		});
-
-		it("returns null for non-title URLs", () => {
-			expect(getTitleIdFromUrl(`${BASE}/chap_001.htm`)).toBe(null);
-			expect(getTitleIdFromUrl(`${BASE}/titles.htm`)).toBe(null);
-		});
-	});
-
-	describe("isChapterUrl / isTitleUrl", () => {
-		it("correctly identifies chapter URLs", () => {
-			expect(isChapterUrl(`${BASE}/chap_001.htm`)).toBe(true);
-			expect(isChapterUrl(`${BASE}/title_01.htm`)).toBe(false);
-		});
-
-		it("correctly identifies title URLs", () => {
-			expect(isTitleUrl(`${BASE}/title_01.htm`)).toBe(true);
-			expect(isTitleUrl(`${BASE}/chap_001.htm`)).toBe(false);
 		});
 	});
 });

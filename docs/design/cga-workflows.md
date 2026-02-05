@@ -154,11 +154,6 @@ class_name = "CGAIngestWorkflow"
 ```typescript
 // packages/ingest/src/lib/cga/workflow-types.ts
 
-export interface CGAWorkflowParams {
-  /** Force re-ingestion even if version exists */
-  force?: boolean;
-}
-
 export interface RootStepOutput {
   sourceVersionId: number;
   versionId: string;           // Year for R2 paths (e.g., "2025")
@@ -220,7 +215,6 @@ import {
 } from 'cloudflare:workers';
 import type { Env } from '../../types';
 import type {
-  CGAWorkflowParams,
   ChapterBatch,
   ChapterStepOutput,
   RootStepOutput,
@@ -233,10 +227,10 @@ import {
   parseChapterPage,
 } from './workflow-helpers';
 
-export class CGAIngestWorkflow extends WorkflowEntrypoint<Env, CGAWorkflowParams> {
+export class CGAIngestWorkflow extends WorkflowEntrypoint<Env, GenericWorkflowParams> {
 
   async run(
-    event: WorkflowEvent<CGAWorkflowParams>,
+    event: WorkflowEvent<GenericWorkflowParams>,
     step: WorkflowStep,
   ): Promise<void> {
     const { force = false } = event.payload;

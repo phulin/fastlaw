@@ -40,16 +40,17 @@ export async function ensureSourceVersion(
 	db: D1Database,
 	sourceId: string,
 	versionDate: string,
+	rootNodeId: string,
 ): Promise<void> {
 	const canonicalName = `${sourceId}-${versionDate}`;
 
-	// Create new version
 	await db
 		.prepare(`
-			INSERT OR IGNORE INTO source_versions (id, source_id, version_date)
-			VALUES (?, ?, ?)
+			INSERT INTO source_versions (id, source_id, version_date, root_node_id)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET root_node_id = excluded.root_node_id
 		`)
-		.bind(canonicalName, sourceId, versionDate)
+		.bind(canonicalName, sourceId, versionDate, rootNodeId)
 		.run();
 }
 
@@ -71,20 +72,6 @@ export async function getLatestVersion(
 		.first<SourceVersion>();
 
 	return result ?? null;
-}
-
-/**
- * Update the root_node_id for a source version
- */
-export async function setRootNodeId(
-	db: D1Database,
-	versionId: string,
-	rootNodeId: string,
-): Promise<void> {
-	await db
-		.prepare("UPDATE source_versions SET root_node_id = ? WHERE id = ?")
-		.bind(rootNodeId, versionId)
-		.run();
 }
 
 /**

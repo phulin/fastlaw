@@ -3,40 +3,6 @@
  */
 
 /**
- * Simple semaphore for concurrency control
- */
-export class Semaphore {
-	private permits: number;
-	private waiters: Array<() => void> = [];
-
-	constructor(permits: number) {
-		this.permits = permits;
-	}
-
-	acquire(): Promise<void> {
-		return new Promise((resolve) => {
-			if (this.permits > 0) {
-				this.permits--;
-				resolve();
-			} else {
-				this.waiters.push(resolve);
-			}
-		});
-	}
-
-	release(): void {
-		if (this.waiters.length > 0) {
-			const next = this.waiters.shift();
-			if (next) {
-				next(); // Give permit directly to waiter
-			}
-		} else {
-			this.permits++;
-		}
-	}
-}
-
-/**
  * Decode common HTML entities
  */
 export function decodeHtmlEntities(text: string): string {
@@ -80,30 +46,6 @@ export const silentLogger: Logger = {
 	info: () => {},
 	warn: () => {},
 	error: () => {},
-};
-
-/**
- * Crawler configuration
- */
-export interface CrawlerConfig {
-	/** Maximum number of pages to crawl */
-	maxPages: number;
-	/** Number of concurrent requests */
-	concurrency: number;
-	/** Request timeout in milliseconds */
-	timeoutMs: number;
-	/** User-Agent header for requests */
-	userAgent: string;
-}
-
-/**
- * Default crawler configuration
- */
-export const DEFAULT_CRAWLER_CONFIG: CrawlerConfig = {
-	maxPages: 1000,
-	concurrency: 20,
-	timeoutMs: 30000,
-	userAgent: "fastlaw-ingest/1.0",
 };
 
 /**
