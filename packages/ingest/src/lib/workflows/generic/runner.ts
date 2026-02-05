@@ -13,7 +13,7 @@ import {
 	toNodeInsert,
 } from "./types";
 
-const SHARD_BATCH_SIZE = 200;
+const SHARD_BATCH_SIZE = 100;
 
 function safeStepId(raw: string): string {
 	return raw.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 48);
@@ -73,67 +73,81 @@ export async function runGenericWorkflow<
 		return rootContext;
 	});
 
-	let totalShardsProcessed = 0;
-	let totalNodesInserted = 0;
-
-	for (const unit of root.unitRoots) {
-		const unitKey = safeStepId(
-			"id" in (unit as { id?: string })
-				? String((unit as { id?: string }).id ?? "unit")
-				: "unit",
-		);
-		const plan = await step.do(`unit-${unitKey}-plan`, async () => {
-			return await adapter.planUnit({ env, root, unit });
-		});
-
-		for (let i = 0; i < plan.shardItems.length; i += SHARD_BATCH_SIZE) {
-			const batch = plan.shardItems.slice(i, i + SHARD_BATCH_SIZE);
-			const batchIndex = Math.floor(i / SHARD_BATCH_SIZE);
-			const batchResult = await step.do(
-				`unit-${unitKey}-shards-${batchIndex}`,
-				async () => {
-					const blobStore = new BlobStore(
-						env.DB,
-						env.STORAGE,
-						root.sourceId,
-						adapter.source.code,
-					);
-
-					const items = await adapter.loadShardItems({
-						env,
-						root,
-						unit,
-						sourceId: root.sourceId,
-						sourceVersionId: root.sourceVersionId,
-						items: batch,
-					});
-
-					const itemsWithContent = items.filter(
-						(item) => item.content !== null,
-					);
-					const blobHashes = itemsWithContent.length
-						? await blobStore.storeJsonBatch(
-								itemsWithContent.map((item) => item.content),
-							)
-						: [];
-					let blobIndex = 0;
-					const nodes = items.map((item) => {
-						const blobHash =
-							item.content === null ? null : (blobHashes[blobIndex++] ?? null);
-						return toNodeInsert(item.node, blobHash);
-					});
-
-					await blobStore.flush();
-					await insertNodesBatched(env.DB, nodes);
-
-					return { insertedCount: nodes.length };
-				},
+	const unitResults = await Promise.all(
+		root.unitRoots.map(async (unit) => {
+			const unitKey = safeStepId(
+				"id" in (unit as { id?: string })
+					? String((unit as { id?: string }).id ?? "unit")
+					: "unit",
 			);
+			const plan = await step.do(`unit-${unitKey}-plan`, async () => {
+				return await adapter.planUnit({ env, root, unit });
+			});
 
-			totalShardsProcessed += batch.length;
-			totalNodesInserted += batchResult.insertedCount;
-		}
-	}
+			let shardsProcessed = 0;
+			let nodesInserted = 0;
+			for (let i = 0; i < plan.shardItems.length; i += SHARD_BATCH_SIZE) {
+				const batch = plan.shardItems.slice(i, i + SHARD_BATCH_SIZE);
+				const batchIndex = Math.floor(i / SHARD_BATCH_SIZE);
+				const batchResult = await step.do(
+					`unit-${unitKey}-shards-${batchIndex}`,
+					async () => {
+						const blobStore = new BlobStore(
+							env.DB,
+							env.STORAGE,
+							root.sourceId,
+							adapter.source.code,
+						);
+
+						const items = await adapter.loadShardItems({
+							env,
+							root,
+							unit,
+							sourceId: root.sourceId,
+							sourceVersionId: root.sourceVersionId,
+							items: batch,
+						});
+
+						const itemsWithContent = items.filter(
+							(item) => item.content !== null,
+						);
+						const blobHashes = itemsWithContent.length
+							? await blobStore.storeJsonBatch(
+									itemsWithContent.map((item) => item.content),
+								)
+							: [];
+						let blobIndex = 0;
+						const nodes = items.map((item) => {
+							const blobHash =
+								item.content === null
+									? null
+									: (blobHashes[blobIndex++] ?? null);
+							return toNodeInsert(item.node, blobHash);
+						});
+
+						await blobStore.flush();
+						await insertNodesBatched(env.DB, nodes);
+
+						return { insertedCount: nodes.length };
+					},
+				);
+
+				shardsProcessed += batch.length;
+				nodesInserted += batchResult.insertedCount;
+			}
+
+			return { shardsProcessed, nodesInserted };
+		}),
+	);
+
+	const totalShardsProcessed = unitResults.reduce(
+		(sum, result) => sum + result.shardsProcessed,
+		0,
+	);
+	const totalNodesInserted = unitResults.reduce(
+		(sum, result) => sum + result.nodesInserted,
+		0,
+	);
 
 	return {
 		sourceVersionId: root.sourceVersionId,
