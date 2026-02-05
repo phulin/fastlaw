@@ -32,3 +32,7 @@ data/
 dist/
 .turbo/
 packages/ingest/src/benchmarks
+
+# planning-with-files
+task_plan.md
+notes.md

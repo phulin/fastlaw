@@ -6,7 +6,7 @@ export type {
 	RootContext,
 	RootPlan,
 	ShardItem,
-	ShardPlan,
+	ShardWorkItem,
 	SourceDescriptor,
 	UnitPlan,
 } from "./types";

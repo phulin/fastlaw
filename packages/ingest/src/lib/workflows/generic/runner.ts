@@ -11,12 +11,11 @@ import {
 import {
 	type GenericWorkflowAdapter,
 	type GenericWorkflowResult,
-	type NodePlan,
 	type RootContext,
 	toNodeInsert,
 } from "./types";
 
-const SHARD_BATCH_SIZE = 20;
+const SHARD_BATCH_SIZE = 200;
 
 function safeStepId(raw: string): string {
 	return raw.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 48);
@@ -24,13 +23,12 @@ function safeStepId(raw: string): string {
 
 export async function runGenericWorkflow<
 	TUnit extends Rpc.Serializable<TUnit>,
-	TShardInput extends Rpc.Serializable<TShardInput>,
 	TShardMeta extends Rpc.Serializable<TShardMeta>,
 >(args: {
 	env: Env;
 	step: WorkflowStep;
 	payload: { force?: boolean };
-	adapter: GenericWorkflowAdapter<TUnit, TShardInput, TShardMeta>;
+	adapter: GenericWorkflowAdapter<TUnit, TShardMeta>;
 }): Promise<GenericWorkflowResult> {
 	const { env, step, payload, adapter } = args;
 	const force = payload.force ?? false;
@@ -104,21 +102,11 @@ export async function runGenericWorkflow<
 				: "unit",
 		);
 		const plan = await step.do(`unit-${unitKey}-plan`, async () => {
-			const unitPlan = await adapter.planUnit({ env, root, unit });
-			const shards = await adapter.planShards({
-				env,
-				root,
-				unit,
-				unitPlan,
-			});
-			return {
-				unitId: unitPlan.unitId,
-				shards,
-			};
+			return await adapter.planUnit({ env, root, unit });
 		});
 
-		for (let i = 0; i < plan.shards.length; i += SHARD_BATCH_SIZE) {
-			const batch = plan.shards.slice(i, i + SHARD_BATCH_SIZE);
+		for (let i = 0; i < plan.shardItems.length; i += SHARD_BATCH_SIZE) {
+			const batch = plan.shardItems.slice(i, i + SHARD_BATCH_SIZE);
 			const batchIndex = Math.floor(i / SHARD_BATCH_SIZE);
 			const batchResult = await step.do(
 				`unit-${unitKey}-shards-${batchIndex}`,
@@ -130,15 +118,12 @@ export async function runGenericWorkflow<
 						adapter.source.code,
 					);
 
-					const items: Array<{ node: NodePlan; content: unknown | null }> = [];
-					for (const shard of batch) {
-						const shardItems = await adapter.loadShardItems({
-							env,
-							root,
-							shard,
-						});
-						items.push(...shardItems);
-					}
+					const items = await adapter.loadShardItems({
+						env,
+						root,
+						unit,
+						items: batch,
+					});
 
 					const itemsWithContent = items.filter(
 						(item) => item.content !== null,

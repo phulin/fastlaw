@@ -4,7 +4,7 @@ import type {
 	NodePlan,
 	RootPlan,
 	ShardItem,
-	ShardPlan,
+	ShardWorkItem,
 	UnitPlan,
 } from "../workflows/generic";
 import { extractSectionCrossReferences } from "./cross-references";
@@ -29,25 +29,9 @@ interface CgaUnitRoot {
 	titleUrl: string;
 }
 
-interface ChapterShardInput {
-	kind: "chapter";
-	chapterUrl: string;
-	chapterType: "chapter" | "article";
-	chapterId: string;
-	titleId: string;
-	chapterStringId: string;
-}
-
-interface TitleShardInput {
-	kind: "title";
-	titleStringId: string;
-}
-
-type CgaShardInput = ChapterShardInput | TitleShardInput;
-
-type ChapterShardMeta =
-	| { kind: "title"; node: NodePlan }
-	| { kind: "chapter"; node: NodePlan; chapterUrl: string };
+type CgaShardMeta =
+	| { kind: "node"; node: NodePlan }
+	| { kind: "section"; sectionSlug: string };
 
 function createRootNodePlan(versionId: string, startUrl: string): NodePlan {
 	const accessedAt = new Date().toISOString();
@@ -123,11 +107,7 @@ async function loadChapterHtml(
 	return await readStreamToString(body);
 }
 
-export const cgaAdapter: GenericWorkflowAdapter<
-	CgaUnitRoot,
-	CgaShardInput,
-	ChapterShardMeta
-> = {
+export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 	source: {
 		code: SOURCE_CODE,
 		name: SOURCE_NAME,
@@ -165,7 +145,7 @@ export const cgaAdapter: GenericWorkflowAdapter<
 			unitRoots,
 		};
 	},
-	async planUnit({ env, root, unit }): Promise<UnitPlan<CgaShardInput>> {
+	async planUnit({ env, root, unit }): Promise<UnitPlan<CgaShardMeta>> {
 		const { body } = await fetchWithCache(
 			unit.titleUrl,
 			root.versionId,
@@ -196,8 +176,14 @@ export const cgaAdapter: GenericWorkflowAdapter<
 			accessedAt,
 		};
 
-		const chapterNodes: NodePlan[] = [];
-		const shardInputs: CgaShardInput[] = [{ kind: "title", titleStringId }];
+		const shardItems: Array<ShardWorkItem<CgaShardMeta>> = [
+			{
+				parentStringId: root.rootNode.stringId,
+				childStringId: titleStringId,
+				sourceUrl: unit.titleUrl,
+				meta: { kind: "node", node: titleNode },
+			},
+		];
 
 		for (const chapter of parsed.chapterUrls) {
 			const { body: chapterBody } = await fetchWithCache(
@@ -221,7 +207,7 @@ export const cgaAdapter: GenericWorkflowAdapter<
 				chapter.type,
 				normalizedChapterId,
 			);
-			chapterNodes.push({
+			const chapterNode: NodePlan = {
 				stringId: chapterStringId,
 				parentStringId: titleStringId,
 				levelName: chapter.type,
@@ -233,120 +219,112 @@ export const cgaAdapter: GenericWorkflowAdapter<
 				headingCitation: `${chapterTypeLabel} ${normalizedChapterId}`,
 				sourceUrl: chapter.url,
 				accessedAt,
+			};
+
+			shardItems.push({
+				parentStringId: titleStringId,
+				childStringId: chapterStringId,
+				sourceUrl: chapter.url,
+				meta: { kind: "node", node: chapterNode },
 			});
 
-			shardInputs.push({
-				kind: "chapter",
-				chapterUrl: chapter.url,
-				chapterType: chapter.type,
-				chapterId: normalizedChapterId,
-				titleId: normalizedTitleId,
-				chapterStringId,
-			});
+			for (const section of parsedChapter.sections) {
+				const sectionStringId = makeSectionId(chapterStringId, section.slug);
+				shardItems.push({
+					parentStringId: chapterStringId,
+					childStringId: sectionStringId,
+					sourceUrl: chapter.url,
+					meta: { kind: "section", sectionSlug: section.slug },
+				});
+			}
 		}
 
 		return {
 			unitId: `title-${normalizedTitleId}`,
-			structuralNodes: [titleNode, ...chapterNodes],
-			shardInputs,
+			shardItems,
 		};
 	},
-	async planShards({ unitPlan }): Promise<Array<ShardPlan<ChapterShardMeta>>> {
-		const nodeById = new Map(
-			unitPlan.structuralNodes.map((node) => [node.stringId, node]),
-		);
-
-		return unitPlan.shardInputs.map((input, index) => {
-			if (input.kind === "title") {
-				const node = nodeById.get(input.titleStringId);
-				if (!node) {
-					throw new Error(`Missing title node for ${input.titleStringId}`);
-				}
-				return {
-					key: `title-${index}`,
-					meta: { kind: "title", node },
-				};
-			}
-
-			const node = nodeById.get(input.chapterStringId);
-			if (!node) {
-				throw new Error(`Missing chapter node for ${input.chapterStringId}`);
-			}
-			return {
-				key: `${input.chapterId}-${index}`,
-				meta: {
-					kind: "chapter",
-					node,
-					chapterUrl: input.chapterUrl,
-				},
-			};
-		});
-	},
-	async loadShardItems({ env, root, shard }): Promise<ShardItem[]> {
+	async loadShardItems({ env, root, items }): Promise<ShardItem[]> {
 		const accessedAt = new Date().toISOString();
-		if (shard.meta.kind === "title") {
-			return [
-				{
-					node: shard.meta.node,
-					content: null,
-				},
-			];
+		const results: ShardItem[] = [];
+		const itemsByUrl = new Map<string, Array<ShardWorkItem<CgaShardMeta>>>();
+
+		for (const item of items) {
+			if (item.meta.kind === "node") {
+				results.push({ node: item.meta.node, content: null });
+				continue;
+			}
+
+			const list = itemsByUrl.get(item.sourceUrl);
+			if (list) {
+				list.push(item);
+			} else {
+				itemsByUrl.set(item.sourceUrl, [item]);
+			}
 		}
 
-		const html = await loadChapterHtml(
-			env,
-			root.versionId,
-			shard.meta.chapterUrl,
-		);
-		const sections = await parseSectionsInRange(
-			html,
-			shard.meta.chapterUrl,
-			0,
-			Number.MAX_SAFE_INTEGER,
-		);
-
-		const chapterNode = shard.meta.node;
-		const chapterItem: ShardItem = {
-			node: chapterNode,
-			content: null,
-		};
-
-		const sectionItems = sections.map((section, index) => {
-			const crossReferences = extractSectionCrossReferences(
-				[section.body, section.seeAlso].filter(Boolean).join("\n"),
+		for (const [sourceUrl, urlItems] of itemsByUrl) {
+			const html = await loadChapterHtml(env, root.versionId, sourceUrl);
+			const sections = await parseSectionsInRange(
+				html,
+				sourceUrl,
+				0,
+				Number.MAX_SAFE_INTEGER,
 			);
-			const content = buildSectionContent(section) as {
-				metadata?: { cross_references: typeof crossReferences };
-			};
-			if (crossReferences.length > 0) {
-				content.metadata = {
-					cross_references: crossReferences,
+			const sectionBySlug = new Map(
+				sections.map((section) => [
+					extractSectionSlug(section.stringId),
+					section,
+				]),
+			);
+
+			for (const item of urlItems) {
+				if (item.meta.kind !== "section") {
+					continue;
+				}
+
+				const section = sectionBySlug.get(item.meta.sectionSlug);
+				if (!section) {
+					throw new Error(
+						`Missing section ${item.meta.sectionSlug} in ${sourceUrl}`,
+					);
+				}
+
+				const crossReferences = extractSectionCrossReferences(
+					[section.body, section.seeAlso].filter(Boolean).join("\n"),
+				);
+				const content = buildSectionContent(section) as {
+					metadata?: { cross_references: typeof crossReferences };
 				};
+				if (crossReferences.length > 0) {
+					content.metadata = {
+						cross_references: crossReferences,
+					};
+				}
+
+				results.push({
+					node: {
+						stringId: item.childStringId,
+						parentStringId: item.parentStringId,
+						levelName: section.levelName,
+						levelIndex: section.levelIndex,
+						sortOrder: section.sortOrder,
+						name: section.name,
+						path: section.path,
+						readableId: section.readableId,
+						headingCitation: section.readableId
+							? `CGS § ${section.readableId}`
+							: null,
+						sourceUrl: section.sourceUrl,
+						accessedAt,
+					},
+					content,
+				});
 			}
+		}
 
-			const sectionId = makeSectionId(chapterNode.stringId, section.stringId);
-			return {
-				node: {
-					stringId: sectionId,
-					parentStringId: chapterNode.stringId,
-					levelName: section.levelName,
-					levelIndex: section.levelIndex,
-					sortOrder: section.sortOrder ?? index,
-					name: section.name,
-					path: section.path,
-					readableId: section.readableId,
-					headingCitation: section.readableId
-						? `CGS § ${section.readableId}`
-						: null,
-					sourceUrl: section.sourceUrl,
-					accessedAt,
-				},
-				content,
-			};
-		});
-
-		return [chapterItem, ...sectionItems];
+		return results;
 	},
 };
 
-export type { CgaUnitRoot, CgaShardInput, ChapterShardMeta, ChapterShardInput };
+export type { CgaUnitRoot, CgaShardMeta };

@@ -130,8 +130,7 @@ export async function parseTitlePageForWorkflow(
 }
 
 /**
- * Parse chapter page - returns chapter info and section count (not full sections)
- * Used by chapter step to determine batching
+ * Parse chapter page - returns chapter info and section index for planning.
  */
 export async function parseChapterPageForWorkflow(
 	body: ReadableStream<Uint8Array>,
@@ -140,7 +139,12 @@ export async function parseChapterPageForWorkflow(
 ): Promise<{
 	chapterId: string;
 	chapterTitle: string | null;
-	sectionCount: number;
+	sections: Array<{
+		sectionId: string;
+		label: string | null;
+		slug: string;
+		sortOrder: number;
+	}>;
 }> {
 	const parser = new ChapterParser();
 	await parser.parse(streamFromReadableStream(body));
@@ -149,10 +153,21 @@ export async function parseChapterPageForWorkflow(
 	const urlChapterId =
 		urlInfo.type === "chapter" || urlInfo.type === "article" ? urlInfo.id : "";
 
+	const sectionLabels = parser.getSectionLabels();
+	const sections = parser.getSections().map((section, index) => {
+		const label = sectionLabels.get(section.sectionId) || section.sectionId;
+		return {
+			sectionId: section.sectionId,
+			label,
+			slug: normalizeSectionSlug(section.sectionId, label),
+			sortOrder: index,
+		};
+	});
+
 	return {
 		chapterId: parser.getChapterNumber() || urlChapterId,
 		chapterTitle: parser.getChapterTitle(),
-		sectionCount: parser.getSections().length,
+		sections,
 	};
 }
 
@@ -227,6 +242,15 @@ function trimTrailingHeadings(bodyText: string): string {
 	return lines.join("\n").trim();
 }
 
+function normalizeSectionSlug(
+	sectionId: string,
+	label: string | null,
+	parsedNumber?: string | null,
+): string {
+	const number = parsedNumber ?? parseLabel(label).number;
+	return (number || sectionId.replace(/^sec[s]?_/, "")).replace(/\s+/g, "_");
+}
+
 /**
  * Build ParsedSection objects from parser data
  */
@@ -268,9 +292,11 @@ function buildSectionsFromParsedData(
 			);
 		}
 
-		const normalizedNumber = (
-			number || section.sectionId.replace(/^sec[s]?_/, "")
-		).replace(/\s+/g, "_");
+		const normalizedNumber = normalizeSectionSlug(
+			section.sectionId,
+			label,
+			number,
+		);
 		const readableId = normalizedNumber.replaceAll("_", " ");
 
 		results.push({

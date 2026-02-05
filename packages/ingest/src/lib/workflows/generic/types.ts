@@ -35,15 +35,16 @@ export interface RootContext<TUnit> extends RootPlan<TUnit> {
 	rootNodeId: string;
 }
 
-export interface UnitPlan<TShardInput> {
-	unitId: string;
-	structuralNodes: NodePlan[];
-	shardInputs: TShardInput[];
+export interface ShardWorkItem<TMeta> {
+	parentStringId: string;
+	childStringId: string;
+	sourceUrl: string;
+	meta: TMeta;
 }
 
-export interface ShardPlan<TMeta> {
-	key: string;
-	meta: TMeta;
+export interface UnitPlan<TShardMeta> {
+	unitId: string;
+	shardItems: Array<ShardWorkItem<TShardMeta>>;
 }
 
 export interface ShardItem {
@@ -53,7 +54,6 @@ export interface ShardItem {
 
 export interface GenericWorkflowAdapter<
 	TUnit extends Rpc.Serializable<TUnit>,
-	TShardInput extends Rpc.Serializable<TShardInput>,
 	TShardMeta extends Rpc.Serializable<TShardMeta>,
 > {
 	source: SourceDescriptor;
@@ -62,17 +62,12 @@ export interface GenericWorkflowAdapter<
 		env: Env;
 		root: RootContext<TUnit>;
 		unit: TUnit;
-	}): Promise<UnitPlan<TShardInput>>;
-	planShards(args: {
-		env: Env;
-		root: RootContext<TUnit>;
-		unit: TUnit;
-		unitPlan: UnitPlan<TShardInput>;
-	}): Promise<Array<ShardPlan<TShardMeta>>>;
+	}): Promise<UnitPlan<TShardMeta>>;
 	loadShardItems(args: {
 		env: Env;
 		root: RootContext<TUnit>;
-		shard: ShardPlan<TShardMeta>;
+		unit: TUnit;
+		items: Array<ShardWorkItem<TShardMeta>>;
 	}): Promise<ShardItem[]>;
 }
 
