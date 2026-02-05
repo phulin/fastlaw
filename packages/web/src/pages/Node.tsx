@@ -67,7 +67,7 @@ const navLabel = (node: NodeRecord | null) => {
 	if (node?.heading_citation && node?.name) {
 		return `${node.heading_citation}. ${node?.name}`;
 	} else {
-		return node?.name ?? node?.string_id ?? "Section";
+		return node?.name ?? node?.id ?? "Section";
 	}
 };
 
@@ -169,7 +169,7 @@ export function NodePage(props: NodePageProps) {
 	const parentLabel = () => {
 		const parent = parentNode();
 		if (!parent) return null;
-		const id = parent.readable_id ?? parent.string_id;
+		const id = parent.readable_id ?? parent.id;
 		const levelType = capitalizeWords(parent.level_name);
 		return parent.name ? `${levelType} ${id}. ${parent.name}` : id;
 	};
@@ -207,7 +207,7 @@ export function NodePage(props: NodePageProps) {
 											href={sibling.path ?? "#"}
 										>
 											<span class="toc-title">
-												{sibling.readable_id ?? sibling.string_id}
+												{sibling.readable_id ?? sibling.id}
 												{sibling.name ? `. ${sibling.name}` : ""}
 											</span>
 										</a>
@@ -292,7 +292,7 @@ export function NodePage(props: NodePageProps) {
 									{(child) => (
 										<a class="section-row" href={child.path ?? "#"}>
 											<span class="section-number">
-												{child.readable_id ?? child.string_id}
+												{child.readable_id ?? child.id}
 											</span>
 											<span class="section-title-text">{child.name}</span>
 										</a>

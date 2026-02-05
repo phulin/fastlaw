@@ -1,7 +1,5 @@
 import type { DiffResult, NodeInsert, SourceVersion } from "../types";
 
-export type { NodeInsert };
-
 /**
  * Get or create a source by its code
  */
@@ -12,27 +10,27 @@ export async function getOrCreateSource(
 	jurisdiction: string,
 	region: string,
 	docType: string,
-): Promise<number> {
+): Promise<string> {
 	// Try to get existing source
 	const existing = await db
-		.prepare("SELECT id FROM sources WHERE code = ?")
+		.prepare("SELECT id FROM sources WHERE id = ?")
 		.bind(code)
-		.first<{ id: number }>();
+		.first<{ id: string }>();
 
 	if (existing) {
 		return existing.id;
 	}
 
 	// Create new source
-	const result = await db
+	const _result = await db
 		.prepare(`
-			INSERT INTO sources (code, name, jurisdiction, region, doc_type)
+			INSERT INTO sources (id, name, jurisdiction, region, doc_type)
 			VALUES (?, ?, ?, ?, ?)
 		`)
 		.bind(code, name, jurisdiction, region, docType)
 		.run();
 
-	return result.meta.last_row_id as number;
+	return code;
 }
 
 /**
@@ -40,48 +38,31 @@ export async function getOrCreateSource(
  */
 export async function getOrCreateSourceVersion(
 	db: D1Database,
-	sourceId: number,
+	sourceId: string,
 	versionDate: string,
-): Promise<number> {
-	const canonicalName = `${await getSourceCode(db, sourceId)}-${versionDate}`;
+): Promise<string> {
+	const canonicalName = `${sourceId}-${versionDate}`;
 
 	// Check if version already exists
 	const existing = await db
-		.prepare(
-			"SELECT id FROM source_versions WHERE source_id = ? AND canonical_name = ?",
-		)
-		.bind(sourceId, canonicalName)
-		.first<{ id: number }>();
+		.prepare("SELECT id FROM source_versions WHERE id = ?")
+		.bind(canonicalName)
+		.first<{ id: string }>();
 
 	if (existing) {
 		return existing.id;
 	}
 
 	// Create new version
-	const result = await db
+	await db
 		.prepare(`
-			INSERT INTO source_versions (source_id, canonical_name, version_date)
+			INSERT INTO source_versions (id, source_id, version_date)
 			VALUES (?, ?, ?)
 		`)
-		.bind(sourceId, canonicalName, versionDate)
+		.bind(canonicalName, sourceId, versionDate)
 		.run();
 
-	return result.meta.last_row_id as number;
-}
-
-/**
- * Get the source code by ID
- */
-async function getSourceCode(
-	db: D1Database,
-	sourceId: number,
-): Promise<string> {
-	const result = await db
-		.prepare("SELECT code FROM sources WHERE id = ?")
-		.bind(sourceId)
-		.first<{ code: string }>();
-
-	return result?.code ?? "unknown";
+	return canonicalName;
 }
 
 /**
@@ -89,7 +70,7 @@ async function getSourceCode(
  */
 export async function getLatestVersion(
 	db: D1Database,
-	sourceId: number,
+	sourceId: string,
 ): Promise<SourceVersion | null> {
 	const result = await db
 		.prepare(`
@@ -109,8 +90,8 @@ export async function getLatestVersion(
  */
 export async function setRootNodeId(
 	db: D1Database,
-	versionId: number,
-	rootNodeId: number,
+	versionId: string,
+	rootNodeId: string,
 ): Promise<void> {
 	await db
 		.prepare("UPDATE source_versions SET root_node_id = ? WHERE id = ?")
@@ -119,31 +100,31 @@ export async function setRootNodeId(
 }
 
 /**
- * Compute diff between two versions using string_id
+ * Compute diff between two versions using node IDs
  */
 export async function computeDiff(
 	db: D1Database,
-	oldVersionId: number,
-	newVersionId: number,
+	oldVersionId: string,
+	newVersionId: string,
 ): Promise<DiffResult> {
 	if (oldVersionId === newVersionId) {
 		return { added: [], removed: [], modified: [] };
 	}
 
-	// Get all string_ids from old version
+	// Get all node IDs from old version
 	const oldNodes = await db
-		.prepare("SELECT string_id FROM nodes WHERE source_version_id = ?")
+		.prepare("SELECT id FROM nodes WHERE source_version_id = ?")
 		.bind(oldVersionId)
-		.all<{ string_id: string }>();
+		.all<{ id: string }>();
 
-	// Get all string_ids from new version
+	// Get all node IDs from new version
 	const newNodes = await db
-		.prepare("SELECT string_id FROM nodes WHERE source_version_id = ?")
+		.prepare("SELECT id FROM nodes WHERE source_version_id = ?")
 		.bind(newVersionId)
-		.all<{ string_id: string }>();
+		.all<{ id: string }>();
 
-	const oldSet = new Set(oldNodes.results.map((n) => n.string_id));
-	const newSet = new Set(newNodes.results.map((n) => n.string_id));
+	const oldSet = new Set(oldNodes.results.map((n) => n.id));
+	const newSet = new Set(newNodes.results.map((n) => n.id));
 
 	// Find added (in new but not in old)
 	const added = [...newSet].filter((id) => !oldSet.has(id));
@@ -156,19 +137,19 @@ export async function computeDiff(
 	const modifiedRows = await db
 		.prepare(
 			`
-			SELECT new_nodes.string_id
+			SELECT new_nodes.id
 			FROM nodes new_nodes
 			JOIN nodes old_nodes
 				ON old_nodes.source_version_id = ?
-				AND old_nodes.string_id = new_nodes.string_id
+				AND old_nodes.id = new_nodes.id
 			WHERE new_nodes.source_version_id = ?
 				AND old_nodes.blob_hash IS NOT new_nodes.blob_hash
 		`,
 		)
 		.bind(oldVersionId, newVersionId)
-		.all<{ string_id: string }>();
+		.all<{ id: string }>();
 
-	const modified = modifiedRows.results.map((row) => row.string_id);
+	const modified = modifiedRows.results.map((row) => row.id);
 
 	return { added, removed, modified };
 }
@@ -178,9 +159,9 @@ export async function computeDiff(
  */
 export async function insertNode(
 	db: D1Database,
-	versionId: number,
+	versionId: string,
 	stringId: string,
-	parentId: number | null,
+	parentId: string | null,
 	levelName: string,
 	levelIndex: number,
 	sortOrder: number,
@@ -191,18 +172,18 @@ export async function insertNode(
 	blobHash: string | null,
 	sourceUrl: string | null,
 	accessedAt: string | null,
-): Promise<number> {
+): Promise<string> {
 	await db
 		.prepare(`
 			INSERT OR IGNORE INTO nodes (
-				source_version_id, string_id, parent_id, level_name, level_index,
+				id, source_version_id, parent_id, level_name, level_index,
 				sort_order, name, path, readable_id, heading_citation, blob_hash,
 				source_url, accessed_at
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`)
 		.bind(
-			versionId,
 			stringId,
+			versionId,
 			parentId,
 			levelName,
 			levelIndex,
@@ -216,35 +197,21 @@ export async function insertNode(
 			accessedAt,
 		)
 		.run();
-
-	const result = await db
-		.prepare(
-			"SELECT id FROM nodes WHERE source_version_id = ? AND string_id = ?",
-		)
-		.bind(versionId, stringId)
-		.first<{ id: number }>();
-
-	if (!result) {
-		throw new Error(`Failed to get node id for ${stringId}`);
-	}
-
-	return result.id;
+	return stringId;
 }
 
 /**
- * Get a node ID by its string_id within a version
+ * Get a node ID by its string ID within a version
  */
 export async function getNodeIdByStringId(
 	db: D1Database,
-	versionId: number,
+	versionId: string,
 	stringId: string,
-): Promise<number | null> {
+): Promise<string | null> {
 	const result = await db
-		.prepare(
-			"SELECT id FROM nodes WHERE source_version_id = ? AND string_id = ?",
-		)
+		.prepare("SELECT id FROM nodes WHERE source_version_id = ? AND id = ?")
 		.bind(versionId, stringId)
-		.first<{ id: number }>();
+		.first<{ id: string }>();
 
 	return result?.id ?? null;
 }
@@ -258,8 +225,8 @@ const BATCH_SIZE = 50;
 export async function insertNodesBatched(
 	db: D1Database,
 	nodes: NodeInsert[],
-): Promise<Map<string, number>> {
-	const nodeIdMap = new Map<string, number>();
+): Promise<Map<string, string>> {
+	const nodeIdMap = new Map<string, string>();
 
 	for (let i = 0; i < nodes.length; i += BATCH_SIZE) {
 		const batch = nodes.slice(i, i + BATCH_SIZE);
@@ -267,14 +234,14 @@ export async function insertNodesBatched(
 			db
 				.prepare(
 					`INSERT OR IGNORE INTO nodes (
-						source_version_id, string_id, parent_id, level_name, level_index,
+						id, source_version_id, parent_id, level_name, level_index,
 						sort_order, name, path, readable_id, heading_citation, blob_hash,
 						source_url, accessed_at
 					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				)
 				.bind(
+					node.id,
 					node.source_version_id,
-					node.string_id,
 					node.parent_id,
 					node.level_name,
 					node.level_index,
@@ -291,20 +258,8 @@ export async function insertNodesBatched(
 
 		await db.batch(statements);
 
-		// Follow up with SELECT to get node IDs (works for both new and existing rows)
-		const versionId = batch[0].source_version_id;
-		const placeholders = batch.map(() => "?").join(", ");
-		const stringIds = batch.map((n) => n.string_id);
-		const result = await db
-			.prepare(
-				`SELECT id, string_id FROM nodes
-				 WHERE source_version_id = ? AND string_id IN (${placeholders})`,
-			)
-			.bind(versionId, ...stringIds)
-			.all<{ id: number; string_id: string }>();
-
-		for (const row of result.results) {
-			nodeIdMap.set(row.string_id, row.id);
+		for (const node of batch) {
+			nodeIdMap.set(node.id, node.id);
 		}
 
 		if ((i + batch.length) % 1000 === 0 || i + batch.length === nodes.length) {

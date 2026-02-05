@@ -1,6 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 
-import { insertNodesBatched, type NodeInsert } from "./versioning";
+import type { NodeInsert } from "../types";
+import { insertNodesBatched } from "./versioning";
 
 export class NodeBatcher {
 	private nodes: NodeInsert[] = [];
@@ -8,7 +9,7 @@ export class NodeBatcher {
 	constructor(
 		private db: D1Database,
 		private batchSize: number,
-		private onInserted?: (nodeIdMap: Map<string, number>) => void,
+		private onInserted?: (nodeIdMap: Map<string, string>) => void,
 	) {}
 
 	get size(): number {

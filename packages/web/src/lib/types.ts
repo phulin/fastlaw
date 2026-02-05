@@ -1,8 +1,7 @@
 // D1 Database Types - New unified schema
 
 export interface SourceRecord {
-	id: number;
-	code: string;
+	id: string;
 	name: string;
 	jurisdiction: string;
 	region: string;
@@ -10,21 +9,19 @@ export interface SourceRecord {
 }
 
 export interface SourceVersionRecord {
-	id: number;
-	source_id: number;
-	canonical_name: string;
+	id: string;
+	source_id: string;
 	version_date: string;
-	root_node_id: number | null;
+	root_node_id: string | null;
 	created_at: string | null;
 }
 
 export interface NodeRecord {
-	id: number;
-	source_version_id: number;
-	string_id: string;
+	id: string;
+	source_version_id: string;
 	readable_id: string | null;
 	heading_citation: string | null;
-	parent_id: number | null;
+	parent_id: string | null;
 	level_name: string;
 	level_index: number;
 	sort_order: number;

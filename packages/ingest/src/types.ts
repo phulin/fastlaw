@@ -11,8 +11,7 @@ export interface BlobEntry {
 }
 
 export interface Source {
-	id: number;
-	code: string;
+	id: string;
 	name: string;
 	jurisdiction: string;
 	region: string;
@@ -20,19 +19,17 @@ export interface Source {
 }
 
 export interface SourceVersion {
-	id: number;
-	source_id: number;
-	canonical_name: string;
+	id: string;
+	source_id: string;
 	version_date: string;
-	root_node_id: number | null;
+	root_node_id: string | null;
 	created_at: string;
 }
 
 export interface NodeMeta {
-	id: number;
-	source_version_id: number;
-	string_id: string;
-	parent_id: number | null;
+	id: string;
+	source_version_id: string;
+	parent_id: string | null;
 	level_name: string;
 	level_index: number;
 	sort_order: number;
@@ -44,9 +41,11 @@ export interface NodeMeta {
 	accessed_at: string | null;
 }
 
-export interface Node extends NodeMeta {
+export interface IngestNode extends NodeMeta {
 	blob_hash: string | null;
 }
+
+export type NodeInsert = IngestNode;
 
 export interface DiffResult {
 	added: string[];
@@ -55,12 +54,10 @@ export interface DiffResult {
 }
 
 export interface IngestionResult {
-	sourceVersionId: number;
+	sourceVersionId: string;
 	nodesCreated: number;
 	diff: DiffResult | null;
 }
-
-export type NodeInsert = Omit<Node, "id">;
 
 /** RPC interface for IngestRunner - used by container to call back to DO */
 export interface IngestRunnerRpc {
@@ -70,21 +67,21 @@ export interface IngestRunnerRpc {
 		jurisdiction: string,
 		region: string,
 		docType: string,
-	): Promise<number>;
+	): Promise<string>;
 	getOrCreateSourceVersion(
-		sourceId: number,
+		sourceId: string,
 		versionDate: string,
-	): Promise<number>;
-	getLatestVersion(sourceId: number): Promise<SourceVersion | null>;
-	loadBlobHashes(sourceId: number): Promise<Record<string, BlobLocation>>;
-	insertNodesBatched(nodes: NodeInsert[]): Promise<Record<string, number>>;
+	): Promise<string>;
+	getLatestVersion(sourceId: string): Promise<SourceVersion | null>;
+	loadBlobHashes(sourceId: string): Promise<Record<string, BlobLocation>>;
+	insertNodesBatched(nodes: NodeInsert[]): Promise<Record<string, string>>;
 	insertBlobs(
-		sourceId: number,
+		sourceId: string,
 		packfileKey: string,
 		entries: BlobEntry[],
 	): Promise<void>;
-	setRootNodeId(versionId: number, rootNodeId: number): Promise<void>;
-	computeDiff(oldVersionId: number, newVersionId: number): Promise<DiffResult>;
+	setRootNodeId(versionId: string, rootNodeId: string): Promise<void>;
+	computeDiff(oldVersionId: string, newVersionId: string): Promise<DiffResult>;
 }
 
 import type { CGAWorkflowParams } from "./lib/cga/workflow-types";

@@ -22,14 +22,14 @@ const HASH_CHECK_BATCH = 50;
 export class BlobStore {
 	private db: D1Database;
 	private storage: R2Bucket;
-	private sourceId: number;
+	private sourceId: string;
 	private writer: PackfileWriter;
 	private hashCache: Set<string> = new Set(); // Track hashes we've seen this session (hex strings)
 
 	constructor(
 		db: D1Database,
 		storage: R2Bucket,
-		sourceId: number,
+		sourceId: string,
 		sourceCode: string,
 	) {
 		this.db = db;

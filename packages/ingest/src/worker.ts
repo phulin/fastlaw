@@ -19,7 +19,7 @@ app.get("/", (c) => {
 // List source versions
 app.get("/api/versions", async (c) => {
 	const { results } = await c.env.DB.prepare(`
-		SELECT sv.*, s.code as source_code, s.name as source_name
+		SELECT sv.*, s.id as source_code, s.name as source_name
 		FROM source_versions sv
 		JOIN sources s ON sv.source_id = s.id
 		ORDER BY sv.created_at DESC
@@ -56,12 +56,8 @@ app.get("/api/storage/objects", async (c) => {
 
 // Get diff between two versions
 app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
-	const oldVersionId = Number.parseInt(c.req.param("oldVersionId"), 10);
-	const newVersionId = Number.parseInt(c.req.param("newVersionId"), 10);
-
-	if (Number.isNaN(oldVersionId) || Number.isNaN(newVersionId)) {
-		return c.json({ error: "Invalid version IDs" }, 400);
-	}
+	const oldVersionId = c.req.param("oldVersionId");
+	const newVersionId = c.req.param("newVersionId");
 
 	const diff = await computeDiff(c.env.DB, oldVersionId, newVersionId);
 	return c.json({ diff });

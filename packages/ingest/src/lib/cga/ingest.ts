@@ -1,4 +1,4 @@
-import type { Env, IngestionResult, NodeInsert } from "../../types";
+import type { Env, IngestionResult, IngestNode } from "../../types";
 import { NodeBatcher } from "../node-batcher";
 import { BlobStore } from "../packfile";
 import {
@@ -65,13 +65,13 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 
 	// Insert nodes into database
 	let nodesCreated = 0;
-	const nodeIdMap = new Map<string, number>();
 
 	// Initialize blob store for this source
 	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
 
 	// Insert root node for source
-	const rootStringId = `cgs/root`;
+	const versionSegment = versionDate;
+	const rootStringId = `cgs/${versionSegment}/root`;
 	const rootNodeId = await withContext("insertNode(root)", () =>
 		insertNode(
 			env.DB,
@@ -90,14 +90,10 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			accessedAt,
 		),
 	);
-	nodeIdMap.set(rootStringId, rootNodeId);
 	nodesCreated++;
 
 	const seenSectionIds = new Set<string>();
 	const sectionBatcher = new NodeBatcher(env.DB, 500, (nodeIdMapBatch) => {
-		for (const [stringId, nodeId] of nodeIdMapBatch) {
-			nodeIdMap.set(stringId, nodeId);
-		}
 		nodesCreated += nodeIdMapBatch.size;
 	});
 	console.log(`Starting CGA crawl from ${startUrl}`);
@@ -112,14 +108,15 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	);
 
 	const titleRecords = buildTitleRecords(result.titles, result.chapters);
-	const titleNodes: NodeInsert[] = titleRecords.map((record) => {
+	const titleNodes: IngestNode[] = titleRecords.map((record) => {
 		const normalizedTitleId =
 			normalizeDesignator(record.titleId) || record.titleId;
 		const displayName = record.titleName || `Title ${normalizedTitleId}`;
+		const titleStringId = `${rootStringId}/title-${normalizedTitleId}`;
 		return {
+			id: titleStringId,
 			source_version_id: versionId,
-			string_id: `cgs/title/${normalizedTitleId}`,
-			parent_id: rootNodeId,
+			parent_id: rootStringId,
 			level_name: "title",
 			level_index: 0,
 			sort_order: designatorSortOrder(normalizedTitleId),
@@ -136,28 +133,20 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	const titleIdMap = await withContext("insertTitleNodes", () =>
 		insertNodesBatched(env.DB, titleNodes),
 	);
-	for (const [stringId, nodeId] of titleIdMap) {
-		nodeIdMap.set(stringId, nodeId);
-	}
 	nodesCreated += titleIdMap.size;
 
-	const chapterNodes: NodeInsert[] = buildChapterNodes(
-		result.chapters,
-		nodeIdMap,
-		{
-			accessedAt,
-			versionId,
-		},
-	);
+	const chapterNodes: IngestNode[] = buildChapterNodes(result.chapters, {
+		accessedAt,
+		versionId,
+		rootStringId,
+	});
 	const chapterIdMap = await withContext("insertChapterNodes", () =>
 		insertNodesBatched(env.DB, chapterNodes),
 	);
-	for (const [stringId, nodeId] of chapterIdMap) {
-		nodeIdMap.set(stringId, nodeId);
-	}
 	nodesCreated += chapterIdMap.size;
 
 	let sectionSortOrder = 0;
+	const chapterParentMap = buildChapterParentMap(result.chapters);
 	for (const section of result.sections) {
 		if (seenSectionIds.has(section.stringId)) {
 			console.log(
@@ -167,9 +156,12 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		}
 		seenSectionIds.add(section.stringId);
 
-		const parentId = section.parentStringId
-			? nodeIdMap.get(section.parentStringId) || null
-			: null;
+		const { parentId, sectionId } = resolveSectionParent({
+			rootStringId,
+			chapterParentMap,
+			sectionParentStringId: section.parentStringId,
+			sectionStringId: section.stringId,
+		});
 
 		const crossReferences = extractSectionCrossReferences(
 			[section.body, section.seeAlso].filter(Boolean).join("\n"),
@@ -217,8 +209,8 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 			? `CGS § ${section.readableId}`
 			: null;
 		await sectionBatcher.add({
+			id: sectionId,
 			source_version_id: versionId,
-			string_id: section.stringId,
 			parent_id: parentId,
 			level_name: section.levelName,
 			level_index: section.levelIndex,
@@ -344,10 +336,9 @@ function buildTitleRecords(
 
 function buildChapterNodes(
 	chapters: Map<string, ChapterInfo>,
-	nodeIdMap: Map<string, number>,
-	context: { accessedAt: string; versionId: number },
-): NodeInsert[] {
-	const nodes: NodeInsert[] = [];
+	context: { accessedAt: string; versionId: string; rootStringId: string },
+): IngestNode[] {
+	const nodes: IngestNode[] = [];
 
 	for (const chapter of chapters.values()) {
 		const normalizedTitleId = normalizeDesignator(chapter.titleId);
@@ -355,20 +346,17 @@ function buildChapterNodes(
 			continue;
 		}
 
-		const parentId = nodeIdMap.get(`cgs/title/${normalizedTitleId}`);
-		if (!parentId) {
-			throw new Error(`Missing title node for ${normalizedTitleId}`);
-		}
-
 		const chapterNum = chapter.chapterId.replace("chap_", "");
 		const normalizedChapterNum = normalizeDesignator(chapterNum) || chapterNum;
 		const chapterType =
 			chapter.type.charAt(0).toUpperCase() + chapter.type.slice(1);
+		const titleStringId = `${context.rootStringId}/title-${normalizedTitleId}`;
+		const chapterStringId = `${titleStringId}/${chapter.type}-${normalizedChapterNum}`;
 
 		nodes.push({
+			id: chapterStringId,
 			source_version_id: context.versionId,
-			string_id: `cgs/${chapter.type}/${normalizedChapterNum}`,
-			parent_id: parentId,
+			parent_id: titleStringId,
 			level_name: chapter.type,
 			level_index: 1,
 			sort_order: designatorSortOrder(normalizedChapterNum),
@@ -383,4 +371,78 @@ function buildChapterNodes(
 	}
 
 	return nodes;
+}
+
+type ChapterParentInfo = {
+	titleId: string;
+	chapterId: string;
+	chapterType: "chapter" | "article";
+};
+
+function buildChapterParentMap(
+	chapters: Map<string, ChapterInfo>,
+): Map<string, ChapterParentInfo> {
+	const map = new Map<string, ChapterParentInfo>();
+
+	for (const chapter of chapters.values()) {
+		const normalizedTitleId = normalizeDesignator(chapter.titleId);
+		if (!normalizedTitleId) {
+			continue;
+		}
+		const chapterNum = chapter.chapterId.replace("chap_", "");
+		const normalizedChapterNum = normalizeDesignator(chapterNum) || chapterNum;
+		const key = `${chapter.type}:${normalizedChapterNum}`;
+		map.set(key, {
+			titleId: normalizedTitleId,
+			chapterId: normalizedChapterNum,
+			chapterType: chapter.type,
+		});
+	}
+
+	return map;
+}
+
+function extractSectionSlug(sectionStringId: string): string {
+	const parts = sectionStringId.split("/");
+	return parts[parts.length - 1] || sectionStringId;
+}
+
+function resolveSectionParent(args: {
+	rootStringId: string;
+	chapterParentMap: Map<string, ChapterParentInfo>;
+	sectionParentStringId: string | null;
+	sectionStringId: string;
+}): { parentId: string | null; sectionId: string } {
+	const slug = extractSectionSlug(args.sectionStringId);
+
+	if (!args.sectionParentStringId) {
+		return {
+			parentId: args.rootStringId,
+			sectionId: `${args.rootStringId}/section-${slug}`,
+		};
+	}
+
+	const parentParts = args.sectionParentStringId.split("/");
+	const chapterType = parentParts[parentParts.length - 2] as
+		| "chapter"
+		| "article"
+		| undefined;
+	const chapterIdRaw = parentParts[parentParts.length - 1] || "";
+	const normalizedChapterId = normalizeDesignator(chapterIdRaw) || chapterIdRaw;
+
+	if (!chapterType) {
+		throw new Error(`Invalid parent string id: ${args.sectionParentStringId}`);
+	}
+
+	const key = `${chapterType}:${normalizedChapterId}`;
+	const match = args.chapterParentMap.get(key);
+	if (!match) {
+		throw new Error(`Missing chapter info for ${args.sectionParentStringId}`);
+	}
+
+	const parentId = `${args.rootStringId}/title-${match.titleId}/${match.chapterType}-${match.chapterId}`;
+	return {
+		parentId,
+		sectionId: `${parentId}/section-${slug}`,
+	};
 }

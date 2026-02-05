@@ -55,7 +55,7 @@ export type {
 	DiffResult,
 	Env,
 	IngestionResult,
-	Node,
+	IngestNode,
 	NodeMeta,
 	Source,
 	SourceVersion,

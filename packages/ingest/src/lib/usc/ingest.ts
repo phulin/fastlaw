@@ -91,13 +91,13 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 	// Insert nodes into database
 	let nodesCreated = 0;
-	const nodeIdMap = new Map<string, number>();
+	const nodeIdMap = new Map<string, string>();
 
 	// Initialize blob store for this source
 	const blobStore = new BlobStore(env.DB, env.STORAGE, sourceId, SOURCE_CODE);
 
 	// Insert root node
-	const rootStringId = "usc/root";
+	const rootStringId = `usc/${versionDate}/root`;
 	const rootNodeId = await insertNode(
 		env.DB,
 		versionId,
@@ -137,7 +137,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 	let totalSections = 0;
 
 	const ensureTitleNode = async (titleNum: string, titleName: string) => {
-		const titleStringId = `usc/title/${titleNum}`;
+		const titleStringId = `${rootStringId}/title-${titleNum}`;
 		if (nodeIdMap.has(titleStringId)) {
 			return nodeIdMap.get(titleStringId) ?? null;
 		}
@@ -147,7 +147,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 			env.DB,
 			versionId,
 			titleStringId,
-			rootNodeId,
+			rootStringId,
 			"title",
 			0,
 			sortOrder,
@@ -164,31 +164,29 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 		return nodeId;
 	};
 
-	const resolveLevelParentId = (level: USCLevel): number | null => {
+	const resolveLevelParentId = (level: USCLevel): string | null => {
 		if (level.parentIdentifier?.endsWith("-title")) {
-			return nodeIdMap.get(`usc/title/${level.titleNum}`) ?? null;
+			return `${rootStringId}/title-${level.titleNum}`;
 		}
 		if (level.parentIdentifier) {
 			const parentType = levelTypeByIdentifier.get(level.parentIdentifier);
 			if (parentType) {
-				return (
-					nodeIdMap.get(`usc/${parentType}/${level.parentIdentifier}`) ?? null
-				);
+				return `${rootStringId}/${parentType}-${level.parentIdentifier}`;
 			}
 		}
-		return nodeIdMap.get(`usc/title/${level.titleNum}`) ?? null;
+		return `${rootStringId}/title-${level.titleNum}`;
 	};
 
-	const resolveSectionParentId = (section: USCSection): number | null => {
+	const resolveSectionParentId = (section: USCSection): string | null => {
 		const parentMatch = section.parentLevelId.match(/^lvl_usc_([^_]+)_(.+)$/);
 		if (parentMatch) {
 			const [, levelType, identifier] = parentMatch;
 			if (levelType === "title") {
-				return nodeIdMap.get(`usc/title/${identifier}`) ?? null;
+				return `${rootStringId}/title-${identifier}`;
 			}
-			return nodeIdMap.get(`usc/${levelType}/${identifier}`) ?? null;
+			return `${rootStringId}/${levelType}-${identifier}`;
 		}
-		return nodeIdMap.get(`usc/title/${section.titleNum}`) ?? null;
+		return `${rootStringId}/title-${section.titleNum}`;
 	};
 
 	for (const titleEntry of sortedTitles) {
@@ -223,7 +221,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 					if (seenLevelIds.has(level.identifier)) continue;
 					await ensureTitleNode(level.titleNum, `Title ${level.titleNum}`);
 
-					const stringId = `usc/${level.levelType}/${level.identifier}`;
+					const stringId = `${rootStringId}/${level.levelType}-${level.identifier}`;
 					const headingCitation = `${level.levelType.charAt(0).toUpperCase() + level.levelType.slice(1)} ${level.num}`;
 					const nodeId = await insertNode(
 						env.DB,
@@ -251,7 +249,8 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 				if (value.type === "section") {
 					const section = value.section;
-					const stringId = `usc/section/${section.titleNum}-${section.sectionNum}`;
+					const parentId = resolveSectionParentId(section);
+					const stringId = `${parentId}/section-${section.sectionNum}`;
 					if (seenSections.has(stringId)) {
 						console.error(`Duplicate section found: ${stringId}`);
 						continue;
@@ -307,9 +306,9 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 					const readableId = `${section.titleNum} USC ${section.sectionNum}`;
 					await sectionBatcher.add({
+						id: stringId,
 						source_version_id: versionId,
-						string_id: stringId,
-						parent_id: resolveSectionParentId(section),
+						parent_id: parentId,
 						level_name: "section",
 						level_index: SECTION_LEVEL_INDEX,
 						sort_order: sectionSortOrder++,

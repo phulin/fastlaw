@@ -31,7 +31,6 @@ function getStorage(): R2Bucket {
 const NODE_SELECT = `
 	id,
 	source_version_id,
-	string_id,
 	readable_id,
 	heading_citation,
 	parent_id,
@@ -97,7 +96,7 @@ export async function getSources(): Promise<SourceRecord[]> {
 }
 
 export async function getSourceById(
-	sourceId: number,
+	sourceId: string,
 ): Promise<SourceRecord | null> {
 	const db = getDB();
 	return db
@@ -111,7 +110,7 @@ export async function getSourceByCode(
 ): Promise<SourceRecord | null> {
 	const db = getDB();
 	return db
-		.prepare("SELECT * FROM sources WHERE code = ?")
+		.prepare("SELECT * FROM sources WHERE id = ?")
 		.bind(code)
 		.first<SourceRecord>();
 }
@@ -119,7 +118,7 @@ export async function getSourceByCode(
 // Source Versions
 
 export async function getLatestSourceVersion(
-	sourceId: number,
+	sourceId: string,
 ): Promise<SourceVersionRecord | null> {
 	const db = getDB();
 	return db
@@ -134,7 +133,7 @@ export async function getLatestSourceVersion(
 }
 
 export async function getSourceVersionById(
-	versionId: number,
+	versionId: string,
 ): Promise<SourceVersionRecord | null> {
 	const db = getDB();
 	return db
@@ -145,7 +144,7 @@ export async function getSourceVersionById(
 
 // Nodes
 
-export async function getNodeById(nodeId: number): Promise<NodeRecord | null> {
+export async function getNodeById(nodeId: string): Promise<NodeRecord | null> {
 	const db = getDB();
 	return db
 		.prepare(`SELECT ${NODE_SELECT} FROM nodes WHERE id = ?`)
@@ -154,7 +153,7 @@ export async function getNodeById(nodeId: number): Promise<NodeRecord | null> {
 }
 
 export async function getNodeByPath(
-	sourceVersionId: number,
+	sourceVersionId: string,
 	path: string,
 ): Promise<NodeRecord | null> {
 	const db = getDB();
@@ -168,21 +167,21 @@ export async function getNodeByPath(
 }
 
 export async function getNodeByStringId(
-	sourceVersionId: number,
+	sourceVersionId: string,
 	stringId: string,
 ): Promise<NodeRecord | null> {
 	const db = getDB();
 	return db
 		.prepare(
 			`SELECT ${NODE_SELECT} FROM nodes
-       WHERE source_version_id = ? AND string_id = ? LIMIT 1`,
+       WHERE source_version_id = ? AND id = ? LIMIT 1`,
 		)
 		.bind(sourceVersionId, stringId)
 		.first<NodeRecord>();
 }
 
 export async function getRootNode(
-	sourceVersionId: number,
+	sourceVersionId: string,
 ): Promise<NodeRecord | null> {
 	const db = getDB();
 	return db
@@ -194,7 +193,7 @@ export async function getRootNode(
 		.first<NodeRecord>();
 }
 
-export async function getChildNodes(parentId: number): Promise<NodeRecord[]> {
+export async function getChildNodes(parentId: string): Promise<NodeRecord[]> {
 	const db = getDB();
 	const result = await db
 		.prepare(
@@ -207,7 +206,7 @@ export async function getChildNodes(parentId: number): Promise<NodeRecord[]> {
 }
 
 export async function getTopLevelNodes(
-	sourceVersionId: number,
+	sourceVersionId: string,
 ): Promise<NodeRecord[]> {
 	const db = getDB();
 	const result = await db
@@ -222,7 +221,7 @@ export async function getTopLevelNodes(
 }
 
 export async function getSiblingNodes(
-	parentId: number,
+	parentId: string,
 	sortOrder: number,
 ): Promise<{ prev: NodeRecord | null; next: NodeRecord | null }> {
 	const db = getDB();
@@ -247,7 +246,7 @@ export async function getSiblingNodes(
 	return { prev: prev ?? null, next: next ?? null };
 }
 
-export async function getAncestorNodes(nodeId: number): Promise<NodeRecord[]> {
+export async function getAncestorNodes(nodeId: string): Promise<NodeRecord[]> {
 	const db = getDB();
 	const result = await db
 		.prepare(
@@ -349,9 +348,9 @@ export const getLevelByPath = async (
 };
 
 export const getLevelsByParentId = async (
-	_sourceId: number,
+	_sourceId: string,
 	_docType: string,
-	parentId: number,
+	parentId: string,
 ): Promise<NodeRecord[]> => {
 	return getChildNodes(parentId);
 };
