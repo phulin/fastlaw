@@ -1,4 +1,4 @@
-import type { Env, IngestionResult } from "../../types";
+import type { Env, IngestionResult, NodeInsert } from "../../types";
 import { NodeBatcher } from "../node-batcher";
 import { BlobStore } from "../packfile";
 import {
@@ -7,11 +7,16 @@ import {
 	getOrCreateSource,
 	getOrCreateSourceVersion,
 	insertNode,
+	insertNodesBatched,
 	setRootNodeId,
 } from "../versioning";
 import { crawlCGA } from "./crawler";
 import { extractSectionCrossReferences } from "./cross-references";
-import { normalizeDesignator } from "./parser";
+import {
+	type ChapterInfo,
+	normalizeDesignator,
+	type TitleInfo,
+} from "./parser";
 
 const SOURCE_CODE = "cgs";
 const SOURCE_NAME = "Connecticut General Statutes";
@@ -88,8 +93,6 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 	nodeIdMap.set(rootStringId, rootNodeId);
 	nodesCreated++;
 
-	const seenTitleIds = new Set<string>();
-	const seenChapterIds = new Set<string>();
 	const seenSectionIds = new Set<string>();
 	const sectionBatcher = new NodeBatcher(env.DB, 500, (nodeIdMapBatch) => {
 		for (const [stringId, nodeId] of nodeIdMapBatch) {
@@ -97,222 +100,138 @@ export async function ingestCGA(env: Env): Promise<IngestionResult> {
 		}
 		nodesCreated += nodeIdMapBatch.size;
 	});
-
-	const ensureTitleNode = async (
-		titleId: string,
-		titleName: string | null,
-		sourceUrl: string,
-	): Promise<number | null> => {
-		const normalizedTitleId = normalizeDesignator(titleId) || titleId;
-		const stringId = `cgs/title/${normalizedTitleId}`;
-		const existing = nodeIdMap.get(stringId);
-		if (existing) return existing;
-
-		const sortOrder = designatorSortOrder(normalizedTitleId);
-		const displayName = titleName || `Title ${normalizedTitleId}`;
-
-		const nodeId = await withContext(`insertNode(title:${stringId})`, () =>
-			insertNode(
-				env.DB,
-				versionId,
-				stringId,
-				rootNodeId,
-				"title",
-				0,
-				sortOrder,
-				displayName,
-				`/statutes/cgs/title/${normalizedTitleId}`,
-				normalizedTitleId,
-				`Title ${normalizedTitleId}`,
-				null,
-				sourceUrl,
-				accessedAt,
-			),
-		);
-
-		nodeIdMap.set(stringId, nodeId);
-		seenTitleIds.add(stringId);
-		nodesCreated += 1;
-		return nodeId;
-	};
-
-	const ensureChapterNode = async (chapter: {
-		titleId: string;
-		chapterId: string;
-		chapterTitle: string | null;
-		sourceUrl: string;
-		type: "chapter" | "article";
-	}): Promise<number | null> => {
-		const chapterNum = chapter.chapterId.replace("chap_", "");
-		const normalizedChapterNum = normalizeDesignator(chapterNum) || chapterNum;
-		const stringId = `cgs/${chapter.type}/${normalizedChapterNum}`;
-		if (seenChapterIds.has(stringId)) {
-			return nodeIdMap.get(stringId) ?? null;
-		}
-
-		const normalizedTitleId = normalizeDesignator(chapter.titleId);
-		if (!normalizedTitleId) {
-			return null;
-		}
-
-		const parentId = await ensureTitleNode(
-			normalizedTitleId,
-			null,
-			chapter.sourceUrl,
-		);
-		const chapterType =
-			chapter.type.charAt(0).toUpperCase() + chapter.type.slice(1);
-		const headingCitation = `${chapterType} ${normalizedChapterNum}`;
-		const sortOrder = designatorSortOrder(normalizedChapterNum);
-
-		const nodeId = await withContext(
-			`insertNode(${chapter.type}:${stringId})`,
-			() =>
-				insertNode(
-					env.DB,
-					versionId,
-					stringId,
-					parentId,
-					chapter.type,
-					1,
-					sortOrder,
-					chapter.chapterTitle,
-					`/statutes/cgs/${chapter.type}/${normalizedTitleId}/${normalizedChapterNum}`,
-					normalizedChapterNum,
-					headingCitation,
-					null,
-					chapter.sourceUrl,
-					accessedAt,
-				),
-		);
-
-		nodeIdMap.set(stringId, nodeId);
-		seenChapterIds.add(stringId);
-		nodesCreated += 1;
-		return nodeId;
-	};
-
-	let sectionSortOrder = 0;
-
 	console.log(`Starting CGA crawl from ${startUrl}`);
 	const result = await withContext("crawlCGA", () =>
-		crawlCGA(
-			startUrl,
-			env.GODADDY_CA,
-			{
-				maxPages: 2000,
-				concurrency: 20,
-			},
-			undefined,
-			async (page) => {
-				if (page.type === "title" && page.titleInfo) {
-					const normalizedTitleId =
-						normalizeDesignator(page.titleInfo.titleId) ||
-						page.titleInfo.titleId;
-					const titleStringId = `cgs/title/${normalizedTitleId}`;
-					if (!seenTitleIds.has(titleStringId)) {
-						await ensureTitleNode(
-							page.titleInfo.titleId,
-							page.titleInfo.titleName,
-							page.titleInfo.sourceUrl,
-						);
-					}
-					return;
-				}
-
-				if (
-					(page.type === "chapter" || page.type === "article") &&
-					page.chapterInfo
-				) {
-					await ensureChapterNode({
-						titleId: page.chapterInfo.titleId,
-						chapterId: page.chapterInfo.chapterId,
-						chapterTitle: page.chapterInfo.chapterTitle,
-						sourceUrl: page.chapterInfo.sourceUrl,
-						type: page.chapterInfo.type,
-					});
-				}
-
-				for (const section of page.sections) {
-					if (seenSectionIds.has(section.stringId)) {
-						console.log(
-							`Skipping duplicate section: ${section.stringId} (sourceUrl: ${section.sourceUrl})`,
-						);
-						continue;
-					}
-					seenSectionIds.add(section.stringId);
-
-					const parentId = section.parentStringId
-						? nodeIdMap.get(section.parentStringId) || null
-						: null;
-
-					const crossReferences = extractSectionCrossReferences(
-						[section.body, section.seeAlso].filter(Boolean).join("\n"),
-					);
-
-					const content = {
-						blocks: [
-							{ type: "body", content: section.body },
-							...(section.historyShort
-								? [
-										{
-											type: "history_short",
-											label: "Short History",
-											content: section.historyShort,
-										},
-									]
-								: []),
-							...(section.historyLong
-								? [
-										{
-											type: "history_long",
-											label: "Long History",
-											content: section.historyLong,
-										},
-									]
-								: []),
-							...(section.citations
-								? [
-										{
-											type: "citations",
-											label: "Citations",
-											content: section.citations,
-										},
-									]
-								: []),
-						],
-						...(crossReferences.length > 0
-							? { metadata: { cross_references: crossReferences } }
-							: {}),
-					};
-
-					const blobHash = await blobStore.storeJson(content);
-
-					const sectionHeadingCitation = section.readableId
-						? `CGS § ${section.readableId}`
-						: null;
-					await sectionBatcher.add({
-						source_version_id: versionId,
-						string_id: section.stringId,
-						parent_id: parentId,
-						level_name: section.levelName,
-						level_index: section.levelIndex,
-						sort_order: sectionSortOrder++,
-						name: section.name,
-						path: section.path,
-						readable_id: section.readableId,
-						heading_citation: sectionHeadingCitation,
-						blob_hash: blobHash,
-						source_url: section.sourceUrl,
-						accessed_at: accessedAt,
-					});
-				}
-			},
-		),
+		crawlCGA(startUrl, env.GODADDY_CA, {
+			maxPages: 2000,
+			concurrency: 20,
+		}),
 	);
 	console.log(
 		`Crawled ${result.titles.size} titles, ${result.chapters.size} chapters, ${result.sections.length} sections`,
 	);
+
+	const titleRecords = buildTitleRecords(result.titles, result.chapters);
+	const titleNodes: NodeInsert[] = titleRecords.map((record) => {
+		const normalizedTitleId =
+			normalizeDesignator(record.titleId) || record.titleId;
+		const displayName = record.titleName || `Title ${normalizedTitleId}`;
+		return {
+			source_version_id: versionId,
+			string_id: `cgs/title/${normalizedTitleId}`,
+			parent_id: rootNodeId,
+			level_name: "title",
+			level_index: 0,
+			sort_order: designatorSortOrder(normalizedTitleId),
+			name: displayName,
+			path: `/statutes/cgs/title/${normalizedTitleId}`,
+			readable_id: normalizedTitleId,
+			heading_citation: `Title ${normalizedTitleId}`,
+			blob_hash: null,
+			source_url: record.sourceUrl,
+			accessed_at: accessedAt,
+		};
+	});
+
+	const titleIdMap = await withContext("insertTitleNodes", () =>
+		insertNodesBatched(env.DB, titleNodes),
+	);
+	for (const [stringId, nodeId] of titleIdMap) {
+		nodeIdMap.set(stringId, nodeId);
+	}
+	nodesCreated += titleIdMap.size;
+
+	const chapterNodes: NodeInsert[] = buildChapterNodes(
+		result.chapters,
+		nodeIdMap,
+		{
+			accessedAt,
+			versionId,
+		},
+	);
+	const chapterIdMap = await withContext("insertChapterNodes", () =>
+		insertNodesBatched(env.DB, chapterNodes),
+	);
+	for (const [stringId, nodeId] of chapterIdMap) {
+		nodeIdMap.set(stringId, nodeId);
+	}
+	nodesCreated += chapterIdMap.size;
+
+	let sectionSortOrder = 0;
+	for (const section of result.sections) {
+		if (seenSectionIds.has(section.stringId)) {
+			console.log(
+				`Skipping duplicate section: ${section.stringId} (sourceUrl: ${section.sourceUrl})`,
+			);
+			continue;
+		}
+		seenSectionIds.add(section.stringId);
+
+		const parentId = section.parentStringId
+			? nodeIdMap.get(section.parentStringId) || null
+			: null;
+
+		const crossReferences = extractSectionCrossReferences(
+			[section.body, section.seeAlso].filter(Boolean).join("\n"),
+		);
+
+		const content = {
+			blocks: [
+				{ type: "body", content: section.body },
+				...(section.historyShort
+					? [
+							{
+								type: "history_short",
+								label: "Short History",
+								content: section.historyShort,
+							},
+						]
+					: []),
+				...(section.historyLong
+					? [
+							{
+								type: "history_long",
+								label: "Long History",
+								content: section.historyLong,
+							},
+						]
+					: []),
+				...(section.citations
+					? [
+							{
+								type: "citations",
+								label: "Citations",
+								content: section.citations,
+							},
+						]
+					: []),
+			],
+			...(crossReferences.length > 0
+				? { metadata: { cross_references: crossReferences } }
+				: {}),
+		};
+
+		const blobHash = await blobStore.storeJson(content);
+
+		const sectionHeadingCitation = section.readableId
+			? `CGS § ${section.readableId}`
+			: null;
+		await sectionBatcher.add({
+			source_version_id: versionId,
+			string_id: section.stringId,
+			parent_id: parentId,
+			level_name: section.levelName,
+			level_index: section.levelIndex,
+			sort_order: sectionSortOrder++,
+			name: section.name,
+			path: section.path,
+			readable_id: section.readableId,
+			heading_citation: sectionHeadingCitation,
+			blob_hash: blobHash,
+			source_url: section.sourceUrl,
+			accessed_at: accessedAt,
+		});
+	}
 
 	console.log("Flushing section batches...");
 	await withContext("insertNodesBatched", async () => {
@@ -361,4 +280,93 @@ function designatorSortOrder(value: string): number {
 		suffixValue = suffixValue * 27 + offset;
 	}
 	return numeric * 100000 + suffixValue;
+}
+
+interface TitleRecord {
+	titleId: string;
+	titleName: string | null;
+	sourceUrl: string;
+}
+
+function buildTitleRecords(
+	titles: Map<string, TitleInfo>,
+	chapters: Map<string, ChapterInfo>,
+): TitleRecord[] {
+	const records = new Map<string, TitleRecord>();
+
+	for (const titleInfo of titles.values()) {
+		records.set(titleInfo.titleId, {
+			titleId: titleInfo.titleId,
+			titleName: titleInfo.titleName,
+			sourceUrl: titleInfo.sourceUrl,
+		});
+	}
+
+	for (const chapterInfo of chapters.values()) {
+		if (!chapterInfo.titleId) {
+			continue;
+		}
+		const existing = records.get(chapterInfo.titleId);
+		if (existing) {
+			if (!existing.titleName && chapterInfo.sourceUrl) {
+				existing.sourceUrl = chapterInfo.sourceUrl;
+			}
+			continue;
+		}
+		records.set(chapterInfo.titleId, {
+			titleId: chapterInfo.titleId,
+			titleName: null,
+			sourceUrl: chapterInfo.sourceUrl,
+		});
+	}
+
+	return [...records.values()].sort((a, b) => {
+		const aId = normalizeDesignator(a.titleId) || a.titleId;
+		const bId = normalizeDesignator(b.titleId) || b.titleId;
+		const diff = designatorSortOrder(aId) - designatorSortOrder(bId);
+		return diff !== 0 ? diff : aId.localeCompare(bId);
+	});
+}
+
+function buildChapterNodes(
+	chapters: Map<string, ChapterInfo>,
+	nodeIdMap: Map<string, number>,
+	context: { accessedAt: string; versionId: number },
+): NodeInsert[] {
+	const nodes: NodeInsert[] = [];
+
+	for (const chapter of chapters.values()) {
+		const normalizedTitleId = normalizeDesignator(chapter.titleId);
+		if (!normalizedTitleId) {
+			continue;
+		}
+
+		const parentId = nodeIdMap.get(`cgs/title/${normalizedTitleId}`);
+		if (!parentId) {
+			throw new Error(`Missing title node for ${normalizedTitleId}`);
+		}
+
+		const chapterNum = chapter.chapterId.replace("chap_", "");
+		const normalizedChapterNum = normalizeDesignator(chapterNum) || chapterNum;
+		const chapterType =
+			chapter.type.charAt(0).toUpperCase() + chapter.type.slice(1);
+
+		nodes.push({
+			source_version_id: context.versionId,
+			string_id: `cgs/${chapter.type}/${normalizedChapterNum}`,
+			parent_id: parentId,
+			level_name: chapter.type,
+			level_index: 1,
+			sort_order: designatorSortOrder(normalizedChapterNum),
+			name: chapter.chapterTitle,
+			path: `/statutes/cgs/${chapter.type}/${normalizedTitleId}/${normalizedChapterNum}`,
+			readable_id: normalizedChapterNum,
+			heading_citation: `${chapterType} ${normalizedChapterNum}`,
+			blob_hash: null,
+			source_url: chapter.sourceUrl,
+			accessed_at: context.accessedAt,
+		});
+	}
+
+	return nodes;
 }

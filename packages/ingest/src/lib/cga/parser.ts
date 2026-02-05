@@ -1,9 +1,4 @@
-import {
-	type ExtractedAttribute,
-	parseXmlStreamWithHandler,
-	parseXmlWithHandler,
-	type SaxEvent,
-} from "../sax-parser";
+import { Parser } from "htmlparser2";
 import { decodeHtmlEntities, parsePageUrl } from "./utils";
 
 const BASE_URL = "https://www.cga.ct.gov";
@@ -116,20 +111,27 @@ export class ChapterParser {
 	]);
 
 	async parse(input: string | AsyncIterable<Uint8Array>): Promise<void> {
-		const handler = (event: SaxEvent) =>
-			routeSaxEvent(
-				event,
-				(tag, attribs) => this.handleOpenTag(tag, attribs),
-				(tag) => this.handleCloseTag(tag),
-				(text) => this.handleText(text),
-			);
+		const parser = new Parser(
+			{
+				onopentag: (name, attribs) => this.handleOpenTag(name, attribs),
+				onclosetag: (name) => this.handleCloseTag(name),
+				ontext: (text) => this.handleText(text),
+			},
+			{ decodeEntities: true },
+		);
 
 		if (typeof input === "string") {
-			await parseXmlWithHandler(input, handler);
+			parser.write(input);
+			parser.end();
 			return;
 		}
 
-		await parseXmlStreamWithHandler(input, handler);
+		const decoder = new TextDecoder();
+		for await (const chunk of input) {
+			parser.write(decoder.decode(chunk, { stream: true }));
+		}
+		parser.write(decoder.decode());
+		parser.end();
 	}
 
 	applyOpenTag(tag: string, attribs: Record<string, string>): void {
@@ -487,27 +489,32 @@ export async function extractLinks(
 ): Promise<string[]> {
 	const links: string[] = [];
 
-	const handler = (event: SaxEvent) =>
-		routeSaxEvent(
-			event,
-			(tag, attribs) => {
-				if (tag === "a" && attribs.href) {
+	const parser = new Parser(
+		{
+			onopentag(name, attribs) {
+				if (name === "a" && attribs.href) {
 					const normalized = normalizeLink(attribs.href, baseUrl);
 					if (normalized) {
 						links.push(normalized);
 					}
 				}
 			},
-			() => {},
-			() => {},
-		);
+		},
+		{ decodeEntities: true },
+	);
 
 	if (typeof input === "string") {
-		await parseXmlWithHandler(input, handler);
+		parser.write(input);
+		parser.end();
 		return links;
 	}
 
-	await parseXmlStreamWithHandler(input, handler);
+	const decoder = new TextDecoder();
+	for await (const chunk of input) {
+		parser.write(decoder.decode(chunk, { stream: true }));
+	}
+	parser.write(decoder.decode());
+	parser.end();
 	return links;
 }
 
@@ -808,10 +815,9 @@ export async function parseCgaPage(
 	let inTitle = false;
 	let titleBuffer = "";
 
-	const handler = (event: SaxEvent) =>
-		routeSaxEvent(
-			event,
-			(tag, attribs) => {
+	const parser = new Parser(
+		{
+			onopentag(tag, attribs) {
 				if (tag === "a" && attribs.href) {
 					const normalized = normalizeLink(attribs.href, url);
 					if (normalized) {
@@ -826,24 +832,32 @@ export async function parseCgaPage(
 
 				chapterParser?.applyOpenTag(tag, attribs);
 			},
-			(tag) => {
+			onclosetag(tag) {
 				if (page.type === "title" && tag === "title") {
 					inTitle = false;
 				}
 				chapterParser?.applyCloseTag(tag);
 			},
-			(text) => {
+			ontext(text) {
 				if (page.type === "title" && inTitle) {
 					titleBuffer += text;
 				}
 				chapterParser?.applyText(text);
 			},
-		);
+		},
+		{ decodeEntities: true },
+	);
 
 	if (typeof input === "string") {
-		await parseXmlWithHandler(input, handler);
+		parser.write(input);
+		parser.end();
 	} else {
-		await parseXmlStreamWithHandler(input, handler);
+		const decoder = new TextDecoder();
+		for await (const chunk of input) {
+			parser.write(decoder.decode(chunk, { stream: true }));
+		}
+		parser.write(decoder.decode());
+		parser.end();
 	}
 
 	if (page.type === "title") {
@@ -944,33 +958,40 @@ async function parseTitleFromHtml(
 	let inTitle = false;
 	let buffer = "";
 
-	const handler = (event: SaxEvent) =>
-		routeSaxEvent(
-			event,
-			(tag) => {
+	const parser = new Parser(
+		{
+			onopentag(tag) {
 				if (tag === "title") {
 					inTitle = true;
 					buffer = "";
 				}
 			},
-			(tag) => {
+			onclosetag(tag) {
 				if (tag === "title") {
 					inTitle = false;
 				}
 			},
-			(text) => {
+			ontext(text) {
 				if (inTitle) {
 					buffer += text;
 				}
 			},
-		);
+		},
+		{ decodeEntities: true },
+	);
 
 	if (typeof input === "string") {
-		await parseXmlWithHandler(input, handler);
+		parser.write(input);
+		parser.end();
 		return buffer;
 	}
 
-	await parseXmlStreamWithHandler(input, handler);
+	const decoder = new TextDecoder();
+	for await (const chunk of input) {
+		parser.write(decoder.decode(chunk, { stream: true }));
+	}
+	parser.write(decoder.decode());
+	parser.end();
 	return buffer;
 }
 
@@ -981,7 +1002,8 @@ function buildTitleInfo(titleText: string, url: string): TitleInfo {
 
 	if (titleText) {
 		titleName = decodeHtmlEntities(titleText).trim();
-		const match = titleName.match(/^Title\s+[\w]+?\s*-\s*(.+)$/i);
+		// Match "Title X - Name" with various dash types (hyphen, en-dash, em-dash)
+		const match = titleName.match(/^Title\s+[\w*]+\s*[-–—]\s*(.+)$/i);
 		if (match) {
 			titleName = match[1].trim() || null;
 		} else {
@@ -1017,45 +1039,4 @@ function inferTitleId(
 	}
 
 	return titleId || "";
-}
-
-function normalizeTagName(tagName: string): string {
-	const colonIndex = tagName.indexOf(":");
-	if (colonIndex !== -1) {
-		return tagName.substring(colonIndex + 1).toLowerCase();
-	}
-	return tagName.toLowerCase();
-}
-
-function normalizeAttributes(
-	attributes: ExtractedAttribute[],
-): Record<string, string> {
-	const result: Record<string, string> = {};
-	for (const attr of attributes) {
-		result[attr.name.toLowerCase()] = attr.value;
-	}
-	return result;
-}
-
-function routeSaxEvent(
-	event: SaxEvent,
-	onOpen: (tag: string, attribs: Record<string, string>) => void,
-	onClose: (tag: string) => void,
-	onText: (text: string) => void,
-): void {
-	switch (event.type) {
-		case "openTag": {
-			const tag = normalizeTagName(event.tag.name);
-			const attribs = normalizeAttributes(event.tag.attributes);
-			onOpen(tag, attribs);
-			break;
-		}
-		case "closeTag": {
-			onClose(normalizeTagName(event.tag.name));
-			break;
-		}
-		case "text":
-			onText(event.text.value);
-			break;
-	}
 }

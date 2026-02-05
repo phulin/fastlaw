@@ -69,7 +69,7 @@ export async function crawlCGA(
 		let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 		try {
-			logger.info(`Fetching: ${url}`);
+			// logger.info(`Fetching: ${url}`);
 			const controller = new AbortController();
 			timeoutId = setTimeout(() => controller.abort(), cfg.timeoutMs);
 			const response = await doFetch(url, {
@@ -83,7 +83,7 @@ export async function crawlCGA(
 			clearTimeout(timeoutId);
 			timeoutId = null;
 
-			logger.debug(`Response status for ${url}: ${response.status}`);
+			// logger.debug(`Response status for ${url}: ${response.status}`);
 
 			if (!response.ok) {
 				logger.warn(

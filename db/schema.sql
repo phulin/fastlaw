@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_blobs_packfile ON blobs(packfile_key);
 CREATE TABLE IF NOT EXISTS source_versions (
   id INTEGER PRIMARY KEY,
   source_id INTEGER NOT NULL REFERENCES sources(id),
-  canonical_name TEXT NOT NULL,      -- e.g., 'usc-2024', 'cfr-2024-01-01'
+  canonical_name TEXT NOT NULL,      -- e.g., 'cgs-2025', 'usc-2024'
   version_date TEXT NOT NULL,        -- ISO date identifier for this version
   root_node_id INTEGER,              -- Tree root (set after nodes created)
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS source_versions (
 
 CREATE INDEX IF NOT EXISTS idx_source_versions_latest
   ON source_versions(source_id, version_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_source_versions_canonical
+  ON source_versions(canonical_name);
 
 CREATE TABLE IF NOT EXISTS nodes (
   id INTEGER PRIMARY KEY,
