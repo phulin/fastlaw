@@ -3,9 +3,9 @@ import { NodeBatcher } from "../node-batcher";
 import { BlobStore } from "../packfile";
 import {
 	computeDiff,
+	ensureSourceVersion,
 	getLatestVersion,
 	getOrCreateSource,
-	getOrCreateSourceVersion,
 	insertNode,
 	setRootNodeId,
 } from "../versioning";
@@ -61,11 +61,7 @@ export async function ingestUSC(env: Env): Promise<IngestionResult> {
 
 	// Create new version
 	const versionDate = new Date().toISOString().split("T")[0];
-	const versionId = await getOrCreateSourceVersion(
-		env.DB,
-		sourceId,
-		versionDate,
-	);
+	const versionId = await ensureSourceVersion(env.DB, sourceId, versionDate);
 
 	console.log("Fetching USC title list from House OLRC...");
 	const titlesToProcess = titleUrls

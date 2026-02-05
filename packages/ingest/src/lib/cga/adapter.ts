@@ -1,7 +1,6 @@
-import type { Env } from "../../types";
+import type { Env, NodeMeta } from "../../types";
 import type {
 	GenericWorkflowAdapter,
-	NodePlan,
 	RootPlan,
 	ShardItem,
 	ShardWorkItem,
@@ -30,23 +29,24 @@ interface CgaUnitRoot {
 }
 
 type CgaShardMeta =
-	| { kind: "node"; node: NodePlan }
+	| { kind: "node"; node: NodeMeta }
 	| { kind: "section"; sectionSlug: string };
 
-function createRootNodePlan(versionId: string, startUrl: string): NodePlan {
+function createRootNodePlan(versionId: string, startUrl: string): NodeMeta {
 	const accessedAt = new Date().toISOString();
 	return {
-		stringId: `${SOURCE_CODE}/${versionId}/root`,
-		parentStringId: null,
-		levelName: "root",
-		levelIndex: -1,
-		sortOrder: 0,
+		id: `${SOURCE_CODE}/${versionId}/root`,
+		source_version_id: "",
+		parent_id: null,
+		level_name: "root",
+		level_index: -1,
+		sort_order: 0,
 		name: SOURCE_NAME,
 		path: "/statutes/cgs",
-		readableId: "CGS",
-		headingCitation: "CGS",
-		sourceUrl: startUrl,
-		accessedAt,
+		readable_id: "CGS",
+		heading_citation: "CGS",
+		source_url: startUrl,
+		accessed_at: accessedAt,
 	};
 }
 
@@ -157,29 +157,27 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 		const normalizedTitleId =
 			normalizeDesignator(parsed.titleId) || parsed.titleId;
 		const accessedAt = new Date().toISOString();
-		const titleStringId = makeTitleId(
-			root.rootNode.stringId,
-			normalizedTitleId,
-		);
+		const titleStringId = makeTitleId(root.rootNode.id, normalizedTitleId);
 
-		const titleNode: NodePlan = {
-			stringId: titleStringId,
-			parentStringId: root.rootNode.stringId,
-			levelName: "title",
-			levelIndex: 0,
-			sortOrder: designatorSortOrder(normalizedTitleId),
+		const titleNode: NodeMeta = {
+			id: titleStringId,
+			source_version_id: root.sourceVersionId,
+			parent_id: root.rootNode.id,
+			level_name: "title",
+			level_index: 0,
+			sort_order: designatorSortOrder(normalizedTitleId),
 			name: parsed.titleName || `Title ${normalizedTitleId}`,
 			path: `/statutes/cgs/title/${normalizedTitleId}`,
-			readableId: normalizedTitleId,
-			headingCitation: `Title ${normalizedTitleId}`,
-			sourceUrl: unit.titleUrl,
-			accessedAt,
+			readable_id: normalizedTitleId,
+			heading_citation: `Title ${normalizedTitleId}`,
+			source_url: unit.titleUrl,
+			accessed_at: accessedAt,
 		};
 
 		const shardItems: Array<ShardWorkItem<CgaShardMeta>> = [
 			{
-				parentStringId: root.rootNode.stringId,
-				childStringId: titleStringId,
+				parentId: root.rootNode.id,
+				childId: titleStringId,
 				sourceUrl: unit.titleUrl,
 				meta: { kind: "node", node: titleNode },
 			},
@@ -207,23 +205,24 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 				chapter.type,
 				normalizedChapterId,
 			);
-			const chapterNode: NodePlan = {
-				stringId: chapterStringId,
-				parentStringId: titleStringId,
-				levelName: chapter.type,
-				levelIndex: 1,
-				sortOrder: designatorSortOrder(normalizedChapterId),
+			const chapterNode: NodeMeta = {
+				id: chapterStringId,
+				source_version_id: root.sourceVersionId,
+				parent_id: titleStringId,
+				level_name: chapter.type,
+				level_index: 1,
+				sort_order: designatorSortOrder(normalizedChapterId),
 				name: parsedChapter.chapterTitle,
 				path: `/statutes/cgs/${chapter.type}/${normalizedTitleId}/${normalizedChapterId}`,
-				readableId: normalizedChapterId,
-				headingCitation: `${chapterTypeLabel} ${normalizedChapterId}`,
-				sourceUrl: chapter.url,
-				accessedAt,
+				readable_id: normalizedChapterId,
+				heading_citation: `${chapterTypeLabel} ${normalizedChapterId}`,
+				source_url: chapter.url,
+				accessed_at: accessedAt,
 			};
 
 			shardItems.push({
-				parentStringId: titleStringId,
-				childStringId: chapterStringId,
+				parentId: titleStringId,
+				childId: chapterStringId,
 				sourceUrl: chapter.url,
 				meta: { kind: "node", node: chapterNode },
 			});
@@ -231,8 +230,8 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 			for (const section of parsedChapter.sections) {
 				const sectionStringId = makeSectionId(chapterStringId, section.slug);
 				shardItems.push({
-					parentStringId: chapterStringId,
-					childStringId: sectionStringId,
+					parentId: chapterStringId,
+					childId: sectionStringId,
 					sourceUrl: chapter.url,
 					meta: { kind: "section", sectionSlug: section.slug },
 				});
@@ -244,7 +243,12 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 			shardItems,
 		};
 	},
-	async loadShardItems({ env, root, items }): Promise<ShardItem[]> {
+	async loadShardItems({
+		env,
+		root,
+		sourceVersionId,
+		items,
+	}): Promise<ShardItem[]> {
 		const accessedAt = new Date().toISOString();
 		const results: ShardItem[] = [];
 		const itemsByUrl = new Map<string, Array<ShardWorkItem<CgaShardMeta>>>();
@@ -304,19 +308,20 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 
 				results.push({
 					node: {
-						stringId: item.childStringId,
-						parentStringId: item.parentStringId,
-						levelName: section.levelName,
-						levelIndex: section.levelIndex,
-						sortOrder: section.sortOrder,
+						id: item.childId,
+						source_version_id: sourceVersionId,
+						parent_id: item.parentId,
+						level_name: section.levelName,
+						level_index: section.levelIndex,
+						sort_order: section.sortOrder,
 						name: section.name,
 						path: section.path,
-						readableId: section.readableId,
-						headingCitation: section.readableId
+						readable_id: section.readableId,
+						heading_citation: section.readableId
 							? `CGS § ${section.readableId}`
 							: null,
-						sourceUrl: section.sourceUrl,
-						accessedAt,
+						source_url: section.sourceUrl,
+						accessed_at: accessedAt,
 					},
 					content,
 				});

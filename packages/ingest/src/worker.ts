@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { ingestCGA } from "./lib/cga/ingest";
 import { CGAIngestWorkflow } from "./lib/cga/workflow";
 import { ingestUSC } from "./lib/usc/ingest";
 import { computeDiff } from "./lib/versioning";
@@ -61,17 +60,6 @@ app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
 
 	const diff = await computeDiff(c.env.DB, oldVersionId, newVersionId);
 	return c.json({ diff });
-});
-
-// Trigger CGA ingestion (legacy monolithic)
-app.post("/api/ingest/cga", async (c) => {
-	try {
-		const result = await ingestCGA(c.env);
-		return c.json(result);
-	} catch (error) {
-		console.error("CGA ingest failed:", error);
-		return c.json({ error: "CGA ingest failed" }, 500);
-	}
 });
 
 // Trigger CGA ingestion via Cloudflare Workflow

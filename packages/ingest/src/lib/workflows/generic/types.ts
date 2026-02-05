@@ -1,4 +1,4 @@
-import type { Env, NodeInsert } from "../../../types";
+import type { Env, NodeInsert, NodeMeta } from "../../../types";
 
 export interface SourceDescriptor {
 	code: string;
@@ -8,23 +8,9 @@ export interface SourceDescriptor {
 	docType: string;
 }
 
-export interface NodePlan {
-	stringId: string;
-	parentStringId: string | null;
-	levelName: string;
-	levelIndex: number;
-	sortOrder: number;
-	name: string | null;
-	path: string | null;
-	readableId: string | null;
-	headingCitation: string | null;
-	sourceUrl: string | null;
-	accessedAt: string | null;
-}
-
 export interface RootPlan<TUnit> {
 	versionId: string;
-	rootNode: NodePlan;
+	rootNode: NodeMeta;
 	unitRoots: TUnit[];
 }
 
@@ -36,8 +22,8 @@ export interface RootContext<TUnit> extends RootPlan<TUnit> {
 }
 
 export interface ShardWorkItem<TMeta> {
-	parentStringId: string;
-	childStringId: string;
+	parentId: string;
+	childId: string;
 	sourceUrl: string;
 	meta: TMeta;
 }
@@ -48,7 +34,7 @@ export interface UnitPlan<TShardMeta> {
 }
 
 export interface ShardItem {
-	node: NodePlan;
+	node: NodeMeta;
 	content: unknown | null;
 }
 
@@ -67,6 +53,8 @@ export interface GenericWorkflowAdapter<
 		env: Env;
 		root: RootContext<TUnit>;
 		unit: TUnit;
+		sourceId: string;
+		sourceVersionId: string;
 		items: Array<ShardWorkItem<TShardMeta>>;
 	}): Promise<ShardItem[]>;
 }
@@ -80,24 +68,11 @@ export interface GenericWorkflowResult {
 }
 
 export function toNodeInsert(
-	versionId: string,
-	node: NodePlan,
-	parentId: string | null,
+	node: NodeMeta,
 	blobHash: string | null,
 ): NodeInsert {
 	return {
-		id: node.stringId,
-		source_version_id: versionId,
-		parent_id: parentId,
-		level_name: node.levelName,
-		level_index: node.levelIndex,
-		sort_order: node.sortOrder,
-		name: node.name,
-		path: node.path,
-		readable_id: node.readableId,
-		heading_citation: node.headingCitation,
+		...node,
 		blob_hash: blobHash,
-		source_url: node.sourceUrl,
-		accessed_at: node.accessedAt,
 	};
 }

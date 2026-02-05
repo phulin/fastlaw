@@ -2,9 +2,8 @@ import type { WorkflowStep } from "cloudflare:workers";
 import type { Env } from "../../../types";
 import { BlobStore } from "../../packfile";
 import {
+	ensureSourceVersion,
 	getOrCreateSource,
-	getOrCreateSourceVersion,
-	insertNode,
 	insertNodesBatched,
 	setRootNodeId,
 } from "../../versioning";
@@ -45,47 +44,25 @@ export async function runGenericWorkflow<
 		);
 
 		const canonicalName = `${adapter.source.code}-${discovery.versionId}`;
-		const existingVersion = await env.DB.prepare(
-			"SELECT id FROM source_versions WHERE id = ?",
-		)
-			.bind(canonicalName)
-			.first<{ id: string }>();
-		if (existingVersion && !force) {
-			throw new Error(
-				`Version ${canonicalName} already exists (id=${existingVersion.id}). Use force=true to re-ingest.`,
-			);
-		}
 
-		const sourceVersionId = await getOrCreateSourceVersion(
-			env.DB,
-			sourceId,
-			discovery.versionId,
-		);
+		await ensureSourceVersion(env.DB, sourceId, discovery.versionId);
 
-		const rootNodeId = await insertNode(
-			env.DB,
-			sourceVersionId,
-			discovery.rootNode.stringId,
-			null,
-			discovery.rootNode.levelName,
-			discovery.rootNode.levelIndex,
-			discovery.rootNode.sortOrder,
-			discovery.rootNode.name,
-			discovery.rootNode.path,
-			discovery.rootNode.readableId,
-			discovery.rootNode.headingCitation,
-			null,
-			discovery.rootNode.sourceUrl,
-			discovery.rootNode.accessedAt,
-		);
+		const rootNode = {
+			...discovery.rootNode,
+			source_version_id: canonicalName,
+			blob_hash: null,
+		};
+
+		await insertNodesBatched(env.DB, [rootNode]);
+		const rootNodeId = rootNode.id;
 
 		const rootContext: RootContext<TUnit> = {
 			sourceId,
-			sourceVersionId,
+			sourceVersionId: canonicalName,
 			canonicalName,
 			rootNodeId,
 			versionId: discovery.versionId,
-			rootNode: discovery.rootNode,
+			rootNode,
 			unitRoots: discovery.unitRoots,
 		};
 
@@ -122,6 +99,8 @@ export async function runGenericWorkflow<
 						env,
 						root,
 						unit,
+						sourceId: root.sourceId,
+						sourceVersionId: root.sourceVersionId,
 						items: batch,
 					});
 
@@ -137,13 +116,7 @@ export async function runGenericWorkflow<
 					const nodes = items.map((item) => {
 						const blobHash =
 							item.content === null ? null : (blobHashes[blobIndex++] ?? null);
-						const parentId = item.node.parentStringId;
-						return toNodeInsert(
-							root.sourceVersionId,
-							item.node,
-							parentId,
-							blobHash,
-						);
+						return toNodeInsert(item.node, blobHash);
 					});
 
 					await blobStore.flush();

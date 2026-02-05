@@ -43,10 +43,10 @@ export {
 // Versioning
 export {
 	computeDiff,
+	ensureSourceVersion as getOrCreateSourceVersion,
 	getLatestVersion,
 	getNodeIdByStringId,
 	getOrCreateSource,
-	getOrCreateSourceVersion,
 	insertNode,
 	setRootNodeId,
 } from "./lib/versioning";

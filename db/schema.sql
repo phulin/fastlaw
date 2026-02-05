@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_source_versions_latest
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,               -- Stable ID across versions (e.g., 'cgs/2025/root/title-1')
   source_version_id TEXT NOT NULL REFERENCES source_versions(id),
-  parent_id TEXT REFERENCES nodes(id),
+  parent_id TEXT,
 
   -- Hierarchy info
   level_name TEXT NOT NULL,          -- 'title', 'chapter', 'section', etc.
