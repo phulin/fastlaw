@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { ingestCGA } from "./lib/cga/ingest";
+import { CGAIngestWorkflow } from "./lib/cga/workflow";
 import { ingestUSC } from "./lib/usc/ingest";
 import { computeDiff } from "./lib/versioning";
 import type { Env } from "./types";
@@ -66,7 +67,7 @@ app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
 	return c.json({ diff });
 });
 
-// Trigger CGA ingestion
+// Trigger CGA ingestion (legacy monolithic)
 app.post("/api/ingest/cga", async (c) => {
 	try {
 		const result = await ingestCGA(c.env);
@@ -74,6 +75,42 @@ app.post("/api/ingest/cga", async (c) => {
 	} catch (error) {
 		console.error("CGA ingest failed:", error);
 		return c.json({ error: "CGA ingest failed" }, 500);
+	}
+});
+
+// Trigger CGA ingestion via Cloudflare Workflow
+app.post("/api/ingest/cga/workflow", async (c) => {
+	try {
+		const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
+		const force = "force" in body ? body.force : undefined;
+
+		const instance = await c.env.CGA_WORKFLOW.create({
+			params: { force },
+		});
+
+		return c.json({
+			instanceId: instance.id,
+			status: await instance.status(),
+		});
+	} catch (error) {
+		console.error("CGA workflow creation failed:", error);
+		return c.json({ error: "CGA workflow creation failed" }, 500);
+	}
+});
+
+// Get CGA workflow status
+app.get("/api/ingest/cga/workflow/:instanceId", async (c) => {
+	try {
+		const instanceId = c.req.param("instanceId");
+		const instance = await c.env.CGA_WORKFLOW.get(instanceId);
+
+		return c.json({
+			instanceId: instance.id,
+			status: await instance.status(),
+		});
+	} catch (error) {
+		console.error("CGA workflow status failed:", error);
+		return c.json({ error: "CGA workflow status failed" }, 500);
 	}
 });
 
@@ -113,3 +150,6 @@ app.post("/api/admin/reset", async (c) => {
 });
 
 export default app;
+
+// Export workflow class for Cloudflare
+export { CGAIngestWorkflow };

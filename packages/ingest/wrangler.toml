@@ -13,6 +13,11 @@ migrations_dir = "../../db/migrations"
 binding = "STORAGE"
 bucket_name = "fastlaw-content"
 
+[[workflows]]
+name = "cga-ingest-workflow"
+binding = "CGA_WORKFLOW"
+class_name = "CGAIngestWorkflow"
+
 [vars]
 # Source URLs
 CGA_BASE_URL = "https://www.cga.ct.gov"

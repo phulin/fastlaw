@@ -192,9 +192,9 @@ export async function insertNode(
 	sourceUrl: string | null,
 	accessedAt: string | null,
 ): Promise<number> {
-	const result = await db
+	await db
 		.prepare(`
-			INSERT INTO nodes (
+			INSERT OR IGNORE INTO nodes (
 				source_version_id, string_id, parent_id, level_name, level_index,
 				sort_order, name, path, readable_id, heading_citation, blob_hash,
 				source_url, accessed_at
@@ -217,7 +217,18 @@ export async function insertNode(
 		)
 		.run();
 
-	return result.meta.last_row_id as number;
+	const result = await db
+		.prepare(
+			"SELECT id FROM nodes WHERE source_version_id = ? AND string_id = ?",
+		)
+		.bind(versionId, stringId)
+		.first<{ id: number }>();
+
+	if (!result) {
+		throw new Error(`Failed to get node id for ${stringId}`);
+	}
+
+	return result.id;
 }
 
 /**
@@ -255,7 +266,7 @@ export async function insertNodesBatched(
 		const statements = batch.map((node) =>
 			db
 				.prepare(
-					`INSERT INTO nodes (
+					`INSERT OR IGNORE INTO nodes (
 						source_version_id, string_id, parent_id, level_name, level_index,
 						sort_order, name, path, readable_id, heading_citation, blob_hash,
 						source_url, accessed_at
@@ -278,11 +289,22 @@ export async function insertNodesBatched(
 				),
 		);
 
-		const results = await db.batch(statements);
+		await db.batch(statements);
 
-		for (let j = 0; j < batch.length; j++) {
-			const nodeId = results[j].meta.last_row_id as number;
-			nodeIdMap.set(batch[j].string_id, nodeId);
+		// Follow up with SELECT to get node IDs (works for both new and existing rows)
+		const versionId = batch[0].source_version_id;
+		const placeholders = batch.map(() => "?").join(", ");
+		const stringIds = batch.map((n) => n.string_id);
+		const result = await db
+			.prepare(
+				`SELECT id, string_id FROM nodes
+				 WHERE source_version_id = ? AND string_id IN (${placeholders})`,
+			)
+			.bind(versionId, ...stringIds)
+			.all<{ id: number; string_id: string }>();
+
+		for (const row of result.results) {
+			nodeIdMap.set(row.string_id, row.id);
 		}
 
 		if ((i + batch.length) % 1000 === 0 || i + batch.length === nodes.length) {

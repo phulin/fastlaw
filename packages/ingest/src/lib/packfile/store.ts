@@ -8,6 +8,7 @@ export interface BlobLocation {
 }
 
 const BATCH_SIZE = 50;
+const HASH_CHECK_BATCH = 50;
 
 /**
  * BlobStore manages blob storage using packfiles.
@@ -24,8 +25,6 @@ export class BlobStore {
 	private sourceId: number;
 	private writer: PackfileWriter;
 	private hashCache: Set<string> = new Set(); // Track hashes we've seen this session (hex strings)
-	private dbHashCache: Map<string, BlobLocation> | null = null; // Lazy-loaded from DB
-	private dbHashCachePromise: Promise<Map<string, BlobLocation>> | null = null;
 
 	constructor(
 		db: D1Database,
@@ -52,66 +51,87 @@ export class BlobStore {
 	}
 
 	/**
-	 * Load existing blob hashes from the database for deduplication
+	 * Check which hashes exist in the DB for this source.
 	 */
-	private async loadDbHashes(): Promise<Map<string, BlobLocation>> {
-		if (this.dbHashCache !== null) {
-			return this.dbHashCache;
+	private async getExistingHashes(hashes: string[]): Promise<Set<string>> {
+		if (hashes.length === 0) {
+			return new Set();
 		}
-		if (this.dbHashCachePromise) {
-			return this.dbHashCachePromise;
-		}
+		const existing = new Set<string>();
 
-		this.dbHashCachePromise = (async () => {
-			const cache = new Map<string, BlobLocation>();
-
-			// Load all existing blob hashes for this source
-			const result = await this.withContext("db.loadHashes", () =>
+		for (let i = 0; i < hashes.length; i += HASH_CHECK_BATCH) {
+			const batch = hashes.slice(i, i + HASH_CHECK_BATCH);
+			const placeholders = batch.map(() => "?").join(", ");
+			const result = await this.withContext("db.hashExists", () =>
 				this.db
 					.prepare(
-						`SELECT hash, packfile_key, offset, size FROM blobs
-						 WHERE source_id = ?`,
+						`SELECT hash FROM blobs
+						 WHERE source_id = ? AND hash IN (${placeholders})`,
 					)
-					.bind(this.sourceId)
-					.all<{
-						hash: string;
-						packfile_key: string;
-						offset: number;
-						size: number;
-					}>(),
+					.bind(this.sourceId, ...batch)
+					.all<{ hash: string }>(),
 			);
-
 			for (const row of result.results) {
-				cache.set(row.hash, {
-					packfileKey: row.packfile_key,
-					offset: row.offset,
-					size: row.size,
-				});
+				existing.add(row.hash);
 			}
+		}
 
-			this.dbHashCache = cache;
-			this.dbHashCachePromise = null;
-
-			console.log(`Loaded ${cache.size} existing blob hashes.`);
-
-			return cache;
-		})();
-
-		return this.dbHashCachePromise;
+		return existing;
 	}
 
 	/**
-	 * Check if a blob with the given hash already exists
+	 * Store multiple blobs, returning their hashes as hex strings.
+	 * Uses batched existence checks to avoid full preloads.
 	 */
-	private async blobExists(hashHex: string): Promise<boolean> {
-		// Check session cache first
-		if (this.hashCache.has(hashHex)) {
-			return true;
+	async storeBlobBatch(contents: Uint8Array[]): Promise<string[]> {
+		if (contents.length === 0) {
+			return [];
 		}
 
-		// Check DB cache
-		const cache = await this.loadDbHashes();
-		return cache.has(hashHex);
+		const items = await Promise.all(
+			contents.map(async (content) => ({
+				content,
+				hashHex: hash64ToHex(await hash64(content)),
+			})),
+		);
+
+		const hashToContent = new Map<string, Uint8Array>();
+		const hashesToCheck: string[] = [];
+
+		for (const item of items) {
+			if (!hashToContent.has(item.hashHex)) {
+				hashToContent.set(item.hashHex, item.content);
+			}
+			if (!this.hashCache.has(item.hashHex)) {
+				hashesToCheck.push(item.hashHex);
+			}
+		}
+
+		const uniqueHashesToCheck = Array.from(new Set(hashesToCheck));
+		const newHashes = new Set<string>();
+
+		for (let i = 0; i < uniqueHashesToCheck.length; i += HASH_CHECK_BATCH) {
+			const batch = uniqueHashesToCheck.slice(i, i + HASH_CHECK_BATCH);
+			const existing = await this.getExistingHashes(batch);
+			for (const hash of batch) {
+				if (!existing.has(hash)) {
+					newHashes.add(hash);
+				}
+				this.hashCache.add(hash);
+			}
+		}
+
+		for (const hash of newHashes) {
+			const content = hashToContent.get(hash);
+			if (!content) {
+				throw new Error(`Missing content for hash ${hash}`);
+			}
+			await this.writer.addBlob(content);
+		}
+
+		await this.uploadFinishedPackfiles();
+
+		return items.map((item) => item.hashHex);
 	}
 
 	/**
@@ -119,22 +139,8 @@ export class BlobStore {
 	 * If the blob already exists (by hash), it won't be stored again.
 	 */
 	async storeBlob(content: Uint8Array): Promise<string> {
-		const hash = await hash64(content);
-		const hashHex = hash64ToHex(hash);
-
-		// Check for existing blob
-		if (await this.blobExists(hashHex)) {
-			return hashHex;
-		}
-
-		// Add to writer
-		await this.writer.addBlob(content);
-		await this.uploadFinishedPackfiles();
-
-		// Track in session cache
-		this.hashCache.add(hashHex);
-
-		return hashHex;
+		const [hash] = await this.storeBlobBatch([content]);
+		return hash;
 	}
 
 	/**
@@ -144,6 +150,16 @@ export class BlobStore {
 		const json = JSON.stringify(data);
 		const bytes = new TextEncoder().encode(json);
 		return this.storeBlob(bytes);
+	}
+
+	/**
+	 * Store JSON content as blobs
+	 */
+	async storeJsonBatch(data: unknown[]): Promise<string[]> {
+		const contents = data.map((item) =>
+			new TextEncoder().encode(JSON.stringify(item)),
+		);
+		return this.storeBlobBatch(contents);
 	}
 
 	/**
@@ -204,8 +220,29 @@ export class BlobStore {
 	 * Get the location of a blob by its hash (hex string)
 	 */
 	async getBlobLocation(hashHex: string): Promise<BlobLocation | null> {
-		const cache = await this.loadDbHashes();
-		return cache.get(hashHex) || null;
+		const result = await this.withContext("db.getBlobLocation", () =>
+			this.db
+				.prepare(
+					`SELECT packfile_key, offset, size FROM blobs
+					 WHERE source_id = ? AND hash = ?`,
+				)
+				.bind(this.sourceId, hashHex)
+				.first<{
+					packfile_key: string;
+					offset: number;
+					size: number;
+				}>(),
+		);
+
+		if (!result) {
+			return null;
+		}
+
+		return {
+			packfileKey: result.packfile_key,
+			offset: result.offset,
+			size: result.size,
+		};
 	}
 }
 

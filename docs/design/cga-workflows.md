@@ -26,35 +26,40 @@ Migrate the CGA (Connecticut General Assembly) statute ingestion from a single m
 │         │                                                           │
 │         ▼                                                           │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │                    Title Steps (parallel)                    │    │
+│  │                    Title Steps (sequential)                  │    │
 │  │  For each title URL:                                        │    │
 │  │  1. Fetch title page                                        │    │
 │  │  2. Insert title node (parent = rootId)                     │    │
 │  │  3. Cache HTML in R2                                        │    │
 │  │  4. Extract chapter/article URLs                            │    │
-│  │  5. Return { titleId, chapterUrls }                         │    │
+│  │  5. Return { titleId, titleNodeId, chapterUrls }            │    │
 │  └──────┬──────────────────────────────────────────────────────┘    │
 │         │                                                           │
 │         ▼                                                           │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │                   Chapter Steps (parallel)                   │    │
-│  │  For each chapter URL:                                      │    │
-│  │  1. Fetch chapter page                                      │    │
-│  │  2. Insert chapter node (parent = titleId)                  │    │
-│  │  3. Cache HTML in R2                                        │    │
-│  │  4. Count sections, create batches of 200                   │    │
-│  │  5. Return { chapterId, chapterUrl, sectionBatches }        │    │
+│  │               Chapter Batch Steps (batches of 20)            │    │
+│  │  For each batch of up to 20 chapters:                       │    │
+│  │  1. Batch includes { titleNodeId, titleId, chapters[] }     │    │
+│  │  2. For each chapter in batch:                              │    │
+│  │     a. Fetch chapter page                                   │    │
+│  │     b. Insert chapter node (parent = titleNodeId)           │    │
+│  │     c. Cache HTML in R2                                     │    │
+│  │     d. Count sections                                       │    │
+│  │  3. Return ChapterStepOutput[] for all chapters in batch    │    │
 │  └──────┬──────────────────────────────────────────────────────┘    │
 │         │                                                           │
 │         ▼                                                           │
 │  ┌─────────────────────────────────────────────────────────────┐    │
-│  │                  Section Steps (batched)                     │    │
-│  │  For each batch (chapterUrl + section index range):         │    │
-│  │  1. Fetch chapter HTML from R2 cache                        │    │
-│  │  2. Parse sections in range [startIndex, endIndex)          │    │
-│  │  3. Store blobs in packfile                                 │    │
-│  │  4. Batch insert section nodes                              │    │
-│  │  5. Return { insertedCount }                                │    │
+│  │            Section Steps (cross-chapter batches)             │    │
+│  │  Sections from all chapters are packed into batches of up   │    │
+│  │  to 200 items, spanning multiple chapters per batch:        │    │
+│  │  1. For each item in batch (chapter slice):                 │    │
+│  │     a. Fetch chapter HTML from R2 cache                     │    │
+│  │     b. Parse sections in range [startIndex, endIndex)       │    │
+│  │     c. Store blobs in packfile                              │    │
+│  │     d. Build node inserts (parent = item.chapterNodeId)     │    │
+│  │  2. Batch insert all section nodes                          │    │
+│  │  3. Return { insertedCount }                                │    │
 │  └─────────────────────────────────────────────────────────────┘    │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
@@ -171,9 +176,24 @@ export interface TitleStepOutput {
   }>;
 }
 
-export interface SectionBatch {
+/** A slice of sections from a single chapter, used within cross-chapter batches */
+export interface SectionBatchItem {
+  chapterNodeId: number;
+  chapterId: string;
+  chapterUrl: string;
   startIndex: number;              // First section index (inclusive)
   endIndex: number;                // Last section index (exclusive)
+}
+
+export interface ChapterBatchItem {
+  url: string;
+  type: 'chapter' | 'article';
+}
+
+export interface ChapterBatch {
+  titleNodeId: number;             // Parent title node ID
+  titleId: string;                 // Parent title ID for path construction
+  chapters: ChapterBatchItem[];    // Up to 20 chapters per batch
 }
 
 export interface ChapterStepOutput {
@@ -181,7 +201,6 @@ export interface ChapterStepOutput {
   chapterId: string;
   chapterUrl: string;              // For section steps to fetch from R2 cache
   totalSections: number;
-  sectionBatches: SectionBatch[];  // Ranges of section indices
 }
 
 export interface SectionBatchOutput {
@@ -202,9 +221,10 @@ import {
 import type { Env } from '../../types';
 import type {
   CGAWorkflowParams,
+  ChapterBatch,
+  ChapterStepOutput,
   RootStepOutput,
   TitleStepOutput,
-  ChapterStepOutput,
 } from './workflow-types';
 import {
   extractVersionId,
@@ -321,15 +341,33 @@ export class CGAIngestWorkflow extends WorkflowEntrypoint<Env, CGAWorkflowParams
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // STEP 3: Chapters - process each chapter page
+    // STEP 3: Chapters - process in batches of 20
     // ═══════════════════════════════════════════════════════════════
     const chapterResults: ChapterStepOutput[] = [];
 
+    // Build chapter batches: group chapters with their parent title info
+    const CHAPTER_BATCH_SIZE = 20;
+    const chapterBatches: ChapterBatch[] = [];
+
     for (const title of titleResults) {
-      for (const chapter of title.chapterUrls) {
-        const chapterResult = await step.do(
-          `chapter-${extractFilename(chapter.url)}`,
-          async (): Promise<ChapterStepOutput> => {
+      for (let i = 0; i < title.chapterUrls.length; i += CHAPTER_BATCH_SIZE) {
+        chapterBatches.push({
+          titleNodeId: title.titleNodeId,
+          titleId: title.titleId,
+          chapters: title.chapterUrls.slice(i, i + CHAPTER_BATCH_SIZE),
+        });
+      }
+    }
+
+    for (let batchIndex = 0; batchIndex < chapterBatches.length; batchIndex++) {
+      const batch = chapterBatches[batchIndex];
+
+      const batchResults = await step.do(
+        `chapters-batch-${batchIndex}`,
+        async (): Promise<ChapterStepOutput[]> => {
+          const results: ChapterStepOutput[] = [];
+
+          for (const chapter of batch.chapters) {
             const { body } = await fetchWithCache(
               chapter.url,
               root.versionId,
@@ -338,20 +376,21 @@ export class CGAIngestWorkflow extends WorkflowEntrypoint<Env, CGAWorkflowParams
 
             const parsed = await parseChapterPage(body, chapter.url, chapter.type);
             const accessedAt = new Date().toISOString();
+            const chapterType = chapter.type.charAt(0).toUpperCase() + chapter.type.slice(1);
 
             // Insert chapter node
             const chapterNodeId = await insertNode(
               this.env.DB,
               root.sourceVersionId,
               `cgs/${chapter.type}/${parsed.chapterId}`,
-              title.titleNodeId,
+              batch.titleNodeId,
               chapter.type,
               1,
               designatorSortOrder(parsed.chapterId),
               parsed.chapterTitle,
-              `/statutes/cgs/${chapter.type}/${title.titleId}/${parsed.chapterId}`,
+              `/statutes/cgs/${chapter.type}/${batch.titleId}/${parsed.chapterId}`,
               parsed.chapterId,
-              `${chapter.type.charAt(0).toUpperCase() + chapter.type.slice(1)} ${parsed.chapterId}`,
+              `${chapterType} ${parsed.chapterId}`,
               null,
               chapter.url,
               accessedAt,
@@ -367,18 +406,20 @@ export class CGAIngestWorkflow extends WorkflowEntrypoint<Env, CGAWorkflowParams
               });
             }
 
-            return {
+            results.push({
               chapterNodeId,
               chapterId: parsed.chapterId,
               chapterUrl: chapter.url,
               totalSections,
               sectionBatches,
-            };
-          },
-        );
+            });
+          }
 
-        chapterResults.push(chapterResult);
-      }
+          return results;
+        },
+      );
+
+      chapterResults.push(...batchResults);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -667,7 +708,7 @@ export async function insertNodeIdempotent(
 | Constraint | Limit | Mitigation |
 |------------|-------|------------|
 | Concurrent instances | 10,000 | CGA has ~100 titles, well under limit |
-| Step return size | 1 MiB | Section batches of 200 stay under this |
+| Step return size | 1 MiB | Chapter batches of 20 and section batches of 200 stay under this |
 | Step timeout | 30 min | Individual page fetches are fast |
 | Instance creation rate | 100/sec | We create one workflow, not many |
 

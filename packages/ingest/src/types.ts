@@ -87,6 +87,8 @@ export interface IngestRunnerRpc {
 	computeDiff(oldVersionId: number, newVersionId: number): Promise<DiffResult>;
 }
 
+import type { CGAWorkflowParams } from "./lib/cga/workflow-types";
+
 export interface Env {
 	DB: D1Database;
 	STORAGE: R2Bucket;
@@ -95,4 +97,5 @@ export interface Env {
 	CGA_START_PATH: string;
 	USC_DOWNLOAD_BASE: string;
 	INGEST_RUNNER: DurableObjectNamespace;
+	CGA_WORKFLOW: Workflow<CGAWorkflowParams>;
 }

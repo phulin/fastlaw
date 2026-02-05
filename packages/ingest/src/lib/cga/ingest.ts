@@ -295,8 +295,20 @@ function buildTitleRecords(
 	const records = new Map<string, TitleRecord>();
 
 	for (const titleInfo of titles.values()) {
-		records.set(titleInfo.titleId, {
-			titleId: titleInfo.titleId,
+		const normalizedTitleId =
+			normalizeDesignator(titleInfo.titleId) || titleInfo.titleId;
+		const existing = records.get(normalizedTitleId);
+		if (existing) {
+			if (!existing.titleName && titleInfo.titleName) {
+				existing.titleName = titleInfo.titleName;
+			}
+			if (!existing.sourceUrl && titleInfo.sourceUrl) {
+				existing.sourceUrl = titleInfo.sourceUrl;
+			}
+			continue;
+		}
+		records.set(normalizedTitleId, {
+			titleId: normalizedTitleId,
 			titleName: titleInfo.titleName,
 			sourceUrl: titleInfo.sourceUrl,
 		});
@@ -306,15 +318,17 @@ function buildTitleRecords(
 		if (!chapterInfo.titleId) {
 			continue;
 		}
-		const existing = records.get(chapterInfo.titleId);
+		const normalizedTitleId =
+			normalizeDesignator(chapterInfo.titleId) || chapterInfo.titleId;
+		const existing = records.get(normalizedTitleId);
 		if (existing) {
 			if (!existing.titleName && chapterInfo.sourceUrl) {
 				existing.sourceUrl = chapterInfo.sourceUrl;
 			}
 			continue;
 		}
-		records.set(chapterInfo.titleId, {
-			titleId: chapterInfo.titleId,
+		records.set(normalizedTitleId, {
+			titleId: normalizedTitleId,
 			titleName: null,
 			sourceUrl: chapterInfo.sourceUrl,
 		});
