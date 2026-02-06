@@ -1,11 +1,4 @@
-import {
-	type ExtractedAttribute,
-	type ExtractedTag,
-	type ExtractedText,
-	parseXmlStreamWithHandler,
-	parseXmlWithHandler,
-	type SaxEvent,
-} from "../sax-parser";
+import { Parser } from "htmlparser2";
 
 const SECTION_BODY_TAGS = new Set([
 	"content",
@@ -33,11 +26,10 @@ function normalizeTagName(tagName: string): string {
  * Get attribute value from extracted tag attributes
  */
 function getAttr(
-	attrs: ExtractedAttribute[],
+	attrs: Record<string, string>,
 	name: string,
 ): string | undefined {
-	const attr = attrs.find((a) => a.name === name);
-	return attr?.value;
+	return attrs[name];
 }
 
 /**
@@ -159,6 +151,10 @@ export type USCStreamEvent =
 	| { type: "level"; level: USCLevel }
 	| { type: "section"; section: USCSection };
 
+export interface USCStreamOptions {
+	includeSectionContent?: boolean;
+}
+
 interface LevelFrame {
 	levelType: USCLevelType;
 	num: string | null;
@@ -193,7 +189,6 @@ interface ParserState {
 	tagStack: string[];
 	levelStack: LevelFrame[];
 	sectionCounts: Map<string, number>;
-	pendingAttrs: ExtractedAttribute[];
 
 	docIdentifier: string;
 	titleNum: string;
@@ -226,15 +221,18 @@ interface ParserState {
 
 	bodyHeadingDepth: number;
 	bodyHeadingBuffer: string;
+	includeSectionContent: boolean;
 }
 
-function createParserState(fileTitle: string): ParserState {
+function createParserState(
+	fileTitle: string,
+	options?: USCStreamOptions,
+): ParserState {
 	return {
 		events: [],
 		tagStack: [],
 		levelStack: [],
 		sectionCounts: new Map(),
-		pendingAttrs: [],
 
 		docIdentifier: "",
 		titleNum: fileTitle,
@@ -267,11 +265,19 @@ function createParserState(fileTitle: string): ParserState {
 
 		bodyHeadingDepth: 0,
 		bodyHeadingBuffer: "",
+		includeSectionContent: options?.includeSectionContent ?? true,
 	};
 }
 
 function emit(state: ParserState, event: USCStreamEvent) {
 	state.events.push(event);
+}
+
+function drainEvents(state: ParserState): USCStreamEvent[] {
+	if (state.events.length === 0) return [];
+	const events = state.events;
+	state.events = [];
+	return events;
 }
 
 function ensureTitleNum(state: ParserState, ident?: string) {
@@ -325,12 +331,15 @@ function emitPendingLevels(state: ParserState) {
 	}
 }
 
-function handleOpenTag(state: ParserState, tag: ExtractedTag) {
-	const tagName = normalizeTagName(tag.name);
+function handleOpenTag(
+	state: ParserState,
+	rawTagName: string,
+	attrs: Record<string, string>,
+) {
+	const tagName = normalizeTagName(rawTagName);
 	const parentTag = state.tagStack[state.tagStack.length - 1];
 	state.tagStack.push(tagName);
 
-	const attrs = tag.attributes;
 	const identifier = getAttr(attrs, "identifier");
 	const value = getAttr(attrs, "value");
 	const topic = getAttr(attrs, "topic");
@@ -426,12 +435,16 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 			state.currentSection.sectionNum = stripLeadingZeros(value);
 		}
 
-		if (tagName === "sourceCredit") {
+		if (state.includeSectionContent && tagName === "sourceCredit") {
 			state.sourceCreditDepth += 1;
 			state.sourceCreditBuffer = "";
 		}
 
-		if (SECTION_BODY_TAGS.has(tagName) && state.skipDepth === 0) {
+		if (
+			state.includeSectionContent &&
+			SECTION_BODY_TAGS.has(tagName) &&
+			state.skipDepth === 0
+		) {
 			state.bodyCaptureDepth += 1;
 			if (state.bodyCaptureDepth === 1) {
 				state.bodyBuffer = "";
@@ -444,7 +457,8 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 			state.skipDepth === 0 &&
 			!state.currentNote &&
 			state.noteDepth === 0 &&
-			state.bodyCaptureDepth > 0
+			state.bodyCaptureDepth > 0 &&
+			state.includeSectionContent
 		) {
 			state.bodyHeadingDepth += 1;
 			if (state.bodyHeadingDepth === 1) {
@@ -452,7 +466,7 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 			}
 		}
 
-		if (tagName === "note") {
+		if (state.includeSectionContent && tagName === "note") {
 			state.currentNote = {
 				topic: topic ?? "",
 				role: role ?? "",
@@ -461,7 +475,7 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 			};
 		}
 
-		if (state.currentNote && tagName === "p") {
+		if (state.includeSectionContent && state.currentNote && tagName === "p") {
 			state.notePDepth += 1;
 			if (state.notePDepth === 1) {
 				state.notePBuffer = "";
@@ -499,9 +513,7 @@ function handleOpenTag(state: ParserState, tag: ExtractedTag) {
 	}
 }
 
-function handleText(state: ParserState, text: ExtractedText) {
-	const textValue = text.value;
-
+function handleText(state: ParserState, textValue: string) {
 	if (state.metaTitleCapture) {
 		state.metaTitleBuffer += textValue;
 	}
@@ -515,6 +527,7 @@ function handleText(state: ParserState, text: ExtractedText) {
 	}
 
 	if (
+		state.includeSectionContent &&
 		state.currentSection &&
 		state.bodyCaptureDepth > 0 &&
 		state.skipDepth === 0 &&
@@ -523,21 +536,21 @@ function handleText(state: ParserState, text: ExtractedText) {
 		state.bodyBuffer += textValue;
 	}
 
-	if (state.bodyHeadingDepth > 0) {
+	if (state.includeSectionContent && state.bodyHeadingDepth > 0) {
 		state.bodyHeadingBuffer += textValue;
 	}
 
-	if (state.sourceCreditDepth > 0) {
+	if (state.includeSectionContent && state.sourceCreditDepth > 0) {
 		state.sourceCreditBuffer += textValue;
 	}
 
-	if (state.notePDepth > 0) {
+	if (state.includeSectionContent && state.notePDepth > 0) {
 		state.notePBuffer += textValue;
 	}
 }
 
-function handleCloseTag(state: ParserState, tag: ExtractedTag) {
-	const tagName = normalizeTagName(tag.name);
+function handleCloseTag(state: ParserState, rawTagName: string) {
+	const tagName = normalizeTagName(rawTagName);
 	state.tagStack.pop();
 
 	if (tagName === "section" && state.ignoredSectionDepth > 0) {
@@ -581,7 +594,11 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 		state.headingBuffer = "";
 	}
 
-	if (state.bodyHeadingDepth > 0 && tagName === "heading") {
+	if (
+		state.includeSectionContent &&
+		state.bodyHeadingDepth > 0 &&
+		tagName === "heading"
+	) {
 		state.bodyHeadingDepth -= 1;
 		if (state.bodyHeadingDepth === 0) {
 			const heading = normalizedWhitespace(state.bodyHeadingBuffer);
@@ -624,6 +641,7 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 	}
 
 	if (
+		state.includeSectionContent &&
 		state.currentSection &&
 		SECTION_BODY_TAGS.has(tagName) &&
 		state.skipDepth === 0
@@ -638,7 +656,7 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 		}
 	}
 
-	if (tagName === "sourceCredit") {
+	if (state.includeSectionContent && tagName === "sourceCredit") {
 		state.sourceCreditDepth -= 1;
 		if (state.sourceCreditDepth === 0 && state.currentSection) {
 			state.currentSection.historyShort = normalizedWhitespace(
@@ -648,7 +666,12 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 		}
 	}
 
-	if (state.currentNote && tagName === "p" && state.notePDepth > 0) {
+	if (
+		state.includeSectionContent &&
+		state.currentNote &&
+		tagName === "p" &&
+		state.notePDepth > 0
+	) {
 		state.notePDepth -= 1;
 		if (state.notePDepth === 0) {
 			const text = normalizedWhitespace(state.notePBuffer);
@@ -659,7 +682,7 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 		}
 	}
 
-	if (state.currentNote && tagName === "note") {
+	if (state.includeSectionContent && state.currentNote && tagName === "note") {
 		const heading = state.currentNote.headingText;
 		const body = normalizedWhitespace(state.currentNote.pParts.join("\n\n"));
 		const finalBody = body || heading;
@@ -706,24 +729,30 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 			const finalSectionNum =
 				count === 0 ? baseSectionNum : `${baseSectionNum}-${count + 1}`;
 
-			const body = normalizedWhitespace(
-				state.currentSection.bodyParts.join("\n\n"),
-			);
-			const historyLong = state.currentSection.historyLongParts.join("\n\n");
-			const citations = state.currentSection.citationsParts
-				.filter(({ body: entryBody }) => entryBody)
-				.map(({ heading, body: entryBody }) =>
-					heading ? `${heading}\n${entryBody}` : entryBody,
-				)
-				.join("\n\n")
-				.trim();
+			const body = state.includeSectionContent
+				? normalizedWhitespace(state.currentSection.bodyParts.join("\n\n"))
+				: "";
+			const historyLong = state.includeSectionContent
+				? state.currentSection.historyLongParts.join("\n\n")
+				: "";
+			const citations = state.includeSectionContent
+				? state.currentSection.citationsParts
+						.filter(({ body: entryBody }) => entryBody)
+						.map(({ heading, body: entryBody }) =>
+							heading ? `${heading}\n${entryBody}` : entryBody,
+						)
+						.join("\n\n")
+						.trim()
+				: "";
 
 			const section: USCSection = {
 				titleNum: state.titleNum,
 				sectionNum: finalSectionNum,
 				heading: state.currentSection.heading,
 				body,
-				historyShort: state.currentSection.historyShort,
+				historyShort: state.includeSectionContent
+					? state.currentSection.historyShort
+					: "",
 				historyLong,
 				citations,
 				path: `/statutes/usc/section/${state.titleNum}/${finalSectionNum}`,
@@ -746,37 +775,39 @@ function handleCloseTag(state: ParserState, tag: ExtractedTag) {
 	}
 }
 
-function handleEvent(state: ParserState, event: SaxEvent) {
-	switch (event.type) {
-		case "openTag":
-			handleOpenTag(state, event.tag);
-			break;
-		case "text":
-			handleText(state, event.text);
-			break;
-		case "closeTag":
-			handleCloseTag(state, event.tag);
-			break;
-	}
-}
-
 export async function* streamUSCXml(
 	input: string,
 	fileTitle: string,
 	_sourceUrl: string,
+	options?: USCStreamOptions,
 ): AsyncGenerator<
 	USCStreamEvent,
 	{ titleNum: string; titleName: string },
 	void
 > {
-	const state = createParserState(fileTitle);
+	const state = createParserState(fileTitle, options);
+	const parser = new Parser(
+		{
+			onopentag(name, attrs) {
+				handleOpenTag(state, name, attrs);
+			},
+			ontext(text) {
+				handleText(state, text);
+			},
+			onclosetag(name) {
+				handleCloseTag(state, name);
+			},
+		},
+		{ xmlMode: true, decodeEntities: true },
+	);
 
-	await parseXmlWithHandler(input, (event) => {
-		handleEvent(state, event);
-	});
+	parser.write(input);
+	for (const evt of drainEvents(state)) {
+		yield evt;
+	}
+	parser.end();
 
-	// Yield all accumulated events
-	for (const evt of state.events) {
+	for (const evt of drainEvents(state)) {
 		yield evt;
 	}
 
@@ -791,19 +822,42 @@ export async function* streamUSCXmlFromChunks(
 	chunks: AsyncIterable<Uint8Array>,
 	fileTitle: string,
 	_sourceUrl: string,
+	options?: USCStreamOptions,
 ): AsyncGenerator<
 	USCStreamEvent,
 	{ titleNum: string; titleName: string },
 	void
 > {
-	const state = createParserState(fileTitle);
+	const state = createParserState(fileTitle, options);
+	const parser = new Parser(
+		{
+			onopentag(name, attrs) {
+				handleOpenTag(state, name, attrs);
+			},
+			ontext(text) {
+				handleText(state, text);
+			},
+			onclosetag(name) {
+				handleCloseTag(state, name);
+			},
+		},
+		{ xmlMode: true, decodeEntities: true },
+	);
+	const decoder = new TextDecoder();
 
-	await parseXmlStreamWithHandler(chunks, (event) => {
-		handleEvent(state, event);
-	});
+	for await (const chunk of chunks) {
+		parser.write(decoder.decode(chunk, { stream: true }));
+		for (const evt of drainEvents(state)) {
+			yield evt;
+		}
+	}
+	parser.write(decoder.decode());
+	for (const evt of drainEvents(state)) {
+		yield evt;
+	}
+	parser.end();
 
-	// Yield all accumulated events
-	for (const evt of state.events) {
+	for (const evt of drainEvents(state)) {
 		yield evt;
 	}
 

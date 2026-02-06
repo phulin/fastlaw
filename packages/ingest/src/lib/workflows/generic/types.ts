@@ -43,6 +43,7 @@ export interface GenericWorkflowAdapter<
 	TShardMeta extends Rpc.Serializable<TShardMeta>,
 > {
 	source: SourceDescriptor;
+	maxUnitConcurrency?: number;
 	discoverRoot(args: { env: Env; force: boolean }): Promise<RootPlan<TUnit>>;
 	planUnit(args: {
 		env: Env;

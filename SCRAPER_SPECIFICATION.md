@@ -22,13 +22,17 @@ When adding a scraper for a new jurisdiction, follow this sequence:
 ### 0.2 Cloudflare execution constraints
 
 - Keep memory bounded:
-  - prefer streaming parsers over full-document in-memory transforms when possible
-  - avoid retaining full crawls in RAM
+  - you MUST use streaming parsers over full-document in-memory transforms 
+  - avoid retaining full crawls in RAM (cache any necessary information in R2)
   - parse once for planning and only re-parse where required for shard loading
-- Keep workflow step counts bounded:
+  - only pass information between workers via the workflows data model
+  - the orchestrating worker must keep only the plan in memory
+  - CF workers has a hard memory limit of 128 MB. This is very tight and you will have to stick to it strictly. Estimate usage based on the largest unit you process to ensure we stay under the limit.
+- Keep workflow step counts bounded (hard limit of 500 steps):
   - batch shard work items
   - avoid unnecessary per-section `step.do` fan-out
   - keep `discoverRoot` and `planUnit` deterministic and compact
+  - limit concurrency to ~5 units at a time (use `promiseAllWithConcurrency`)
 - If details are unclear, check Cloudflare docs and tune batch sizes and parsing strategy accordingly.
 
 ### 0.3 Test and validation bar before success
@@ -40,8 +44,8 @@ A new scraper is not complete until all of the following pass:
    - compare concatenated parser output to a simple extract-all-text-content baseline
    - baseline should skip only navigational/labeling text
 3. Manual spot checks on a few sampled sections:
-   - include at least one ordinary section
-   - include at least one complex/edge section (for example repealed/reserved/transferred/table-heavy)
+   - include at least five ordinary sections
+   - include at least five of each type of complex/edge section (for example repealed/reserved/transferred/table-heavy)
    - verify heading, body, history/citations routing, and path/ID correctness
 
 Do not report success until all checks above pass.
@@ -108,7 +112,7 @@ Implement `GenericWorkflowAdapter<TUnit, TShardMeta>` (`packages/ingest/src/lib/
 
 Examples:
 
-- USC: `usc/2026-02-05/root/title-42/chapter-42-ch21/section-1983`
+- USC: `usc/119-73not60/root/title-42/chapter-21/section-1983`
 - CGA: `cgs/2025/root/title-42a/article-2a/section-42a-2a-404`
 
 ### 3.3 Level and sort semantics
@@ -133,8 +137,8 @@ Examples:
 
 Version should represent the source snapshot identity, not ingestion runtime.
 
-- USC currently uses ingest date.
-- CGA uses extracted revision year from page content.
+- USC currently uses the "release point" from the House statute revisors.
+- CGA uses extracted "revised to" year from page content.
 
 For a new scraper, prefer source-native revision/version metadata when available.
 
@@ -159,7 +163,7 @@ For each unit:
 
 ### 5.3 Parent resolution
 
-Resolve parent IDs in planning time whenever possible.
+Resolve parent IDs at planning time.
 
 Patterns in current code:
 
@@ -232,15 +236,14 @@ Expected behavior:
 - collapse excess whitespace
 - trim noisy trailing headings accidentally included in section body
 
-### 7.4 Common content block routing
+### 7.4 Content blocks
 
-For class-based HTML sources, route by class names:
+For class-based HTML sources, name the default (section content) block "body" and name any other block an identifier based on its name in the source material.
 
-- `source` -> `history_short`
-- `history` -> `history_long`
-- `annotation` -> `citations`
-- `cross-ref` -> `see_also`
 - default -> `body`
+- History -> `history`
+- Citations -> `citations`
+- Amendments -> `amendments`
 
 ## 8. Testing Specification
 

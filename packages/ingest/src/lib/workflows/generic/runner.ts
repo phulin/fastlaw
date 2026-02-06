@@ -6,6 +6,7 @@ import {
 	getOrCreateSource,
 	insertNodesBatched,
 } from "../../versioning";
+import { promiseAllWithConcurrency } from "./promise-all-with-concurrency";
 import {
 	type GenericWorkflowAdapter,
 	type GenericWorkflowResult,
@@ -73,8 +74,10 @@ export async function runGenericWorkflow<
 		return rootContext;
 	});
 
-	const unitResults = await Promise.all(
-		root.unitRoots.map(async (unit) => {
+	const maxUnitConcurrency =
+		adapter.maxUnitConcurrency ?? root.unitRoots.length;
+	const unitResults = await promiseAllWithConcurrency(
+		root.unitRoots.map((unit) => async () => {
 			const unitKey = safeStepId(
 				"id" in (unit as { id?: string })
 					? String((unit as { id?: string }).id ?? "unit")
@@ -138,6 +141,7 @@ export async function runGenericWorkflow<
 
 			return { shardsProcessed, nodesInserted };
 		}),
+		maxUnitConcurrency,
 	);
 
 	const totalShardsProcessed = unitResults.reduce(

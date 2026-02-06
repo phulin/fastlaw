@@ -64,9 +64,17 @@ export interface GenericWorkflowParams {
 	force?: boolean;
 }
 
+export interface VectorWorkflowParams extends GenericWorkflowParams {
+	sourceId?: string;
+	sourceVersionId?: string;
+	batchSize?: number;
+}
+
 export interface Env {
 	DB: D1Database;
 	STORAGE: R2Bucket;
+	AI: Ai;
+	VECTOR_SEARCH_INDEX: Vectorize;
 	GODADDY_CA?: Fetcher; // Only available in deployed workers
 	CGA_BASE_URL: string;
 	CGA_START_PATH: string;
@@ -74,4 +82,5 @@ export interface Env {
 	INGEST_RUNNER: DurableObjectNamespace;
 	CGA_WORKFLOW: Workflow<GenericWorkflowParams>;
 	USC_WORKFLOW: Workflow<GenericWorkflowParams>;
+	VECTOR_WORKFLOW: Workflow<VectorWorkflowParams>;
 }

@@ -9,6 +9,7 @@ import type {
 import { extractSectionCrossReferences } from "./cross-references";
 import {
 	fetchUSCTitleStreaming,
+	getReleasePointFromTitleUrls,
 	getTitleNumFromUrl,
 	getUSCTitleUrls,
 } from "./fetcher";
@@ -93,10 +94,11 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 		region: "US",
 		docType: "statute",
 	},
+	maxUnitConcurrency: 5,
 
 	async discoverRoot({ env }): Promise<RootPlan<UscUnitRoot>> {
 		const titleUrls = await getUSCTitleUrls();
-		const versionDate = new Date().toISOString().split("T")[0];
+		const releasePoint = getReleasePointFromTitleUrls(titleUrls);
 
 		const titlesToProcess = titleUrls
 			.map((url) => ({
@@ -116,7 +118,7 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 		}));
 
 		const rootNode: NodeMeta = {
-			id: `${SOURCE_CODE}/${versionDate}/root`,
+			id: `${SOURCE_CODE}/${releasePoint}/root`,
 			source_version_id: "",
 			parent_id: null,
 			level_name: "root",
@@ -130,7 +132,7 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 			accessed_at: new Date().toISOString(),
 		};
 
-		return { versionId: versionDate, rootNode, unitRoots };
+		return { versionId: releasePoint, rootNode, unitRoots };
 	},
 
 	async planUnit({ env, root, unit }): Promise<UnitPlan<UscShardMeta>> {
@@ -147,7 +149,9 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 			return { unitId: unit.id, shardItems: [] };
 		}
 
-		const stream = streamUSCXmlFromChunks(chunks, unit.titleNum, unit.url);
+		const stream = streamUSCXmlFromChunks(chunks, unit.titleNum, unit.url, {
+			includeSectionContent: false,
+		});
 		const shardItems: Array<ShardWorkItem<UscShardMeta>> = [];
 
 		const seenLevelIds = new Set<string>();

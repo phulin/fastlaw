@@ -14,6 +14,8 @@ export {
 } from "./lib/cga/parser";
 export {
 	fetchUSCTitleStreaming,
+	getReleasePointFromTitleUrls,
+	getReleasePointFromUrl,
 	getTitleNumFromUrl,
 	getUSCTitleUrls,
 	streamXmlFromZip,
@@ -49,4 +51,5 @@ export type {
 	NodeMeta,
 	Source,
 	SourceVersion,
+	VectorWorkflowParams,
 } from "./types";

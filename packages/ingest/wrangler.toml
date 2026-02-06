@@ -16,6 +16,13 @@ migrations_dir = "../../db/migrations"
 binding = "STORAGE"
 bucket_name = "fastlaw-content"
 
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "VECTOR_SEARCH_INDEX"
+index_name = "fastlaw-search"
+
 [[workflows]]
 name = "cga-ingest-workflow"
 binding = "CGA_WORKFLOW"
@@ -25,6 +32,11 @@ class_name = "CGAIngestWorkflow"
 name = "usc-ingest-workflow"
 binding = "USC_WORKFLOW"
 class_name = "USCIngestWorkflow"
+
+[[workflows]]
+name = "vector-ingest-workflow"
+binding = "VECTOR_WORKFLOW"
+class_name = "VectorIngestWorkflow"
 
 [vars]
 # Source URLs

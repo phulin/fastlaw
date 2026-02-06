@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { CGAIngestWorkflow } from "./lib/cga/workflow";
 import { USCIngestWorkflow } from "./lib/usc/workflow";
+import { VectorIngestWorkflow } from "./lib/vector/workflow";
 import { computeDiff } from "./lib/versioning";
-import type { Env } from "./types";
+import type { Env, VectorWorkflowParams } from "./types";
 
 type AppContext = {
 	Bindings: Env;
@@ -134,6 +135,47 @@ app.get("/api/ingest/usc/workflow/:instanceId", async (c) => {
 	}
 });
 
+// Trigger vector ingestion via Cloudflare Workflow
+app.post("/api/ingest/vector/workflow", async (c) => {
+	try {
+		const body = await c.req
+			.json<VectorWorkflowParams>()
+			.catch(() => ({}) as VectorWorkflowParams);
+		const instance = await c.env.VECTOR_WORKFLOW.create({
+			params: {
+				force: body.force,
+				sourceId: body.sourceId,
+				sourceVersionId: body.sourceVersionId,
+				batchSize: body.batchSize,
+			},
+		});
+
+		return c.json({
+			instanceId: instance.id,
+			status: await instance.status(),
+		});
+	} catch (error) {
+		console.error("Vector workflow creation failed:", error);
+		return c.json({ error: "Vector workflow creation failed" }, 500);
+	}
+});
+
+// Get vector workflow status
+app.get("/api/ingest/vector/workflow/:instanceId", async (c) => {
+	try {
+		const instanceId = c.req.param("instanceId");
+		const instance = await c.env.VECTOR_WORKFLOW.get(instanceId);
+
+		return c.json({
+			instanceId: instance.id,
+			status: await instance.status(),
+		});
+	} catch (error) {
+		console.error("Vector workflow status failed:", error);
+		return c.json({ error: "Vector workflow status failed" }, 500);
+	}
+});
+
 // Danger: delete all R2 objects and clear D1 tables
 app.post("/api/admin/reset", async (c) => {
 	let cursor: string | undefined;
@@ -161,4 +203,4 @@ app.post("/api/admin/reset", async (c) => {
 export default app;
 
 // Export workflow classes for Cloudflare
-export { CGAIngestWorkflow, USCIngestWorkflow };
+export { CGAIngestWorkflow, USCIngestWorkflow, VectorIngestWorkflow };
