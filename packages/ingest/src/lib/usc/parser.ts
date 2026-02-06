@@ -22,9 +22,6 @@ function normalizeTagName(tagName: string): string {
 	return tagName;
 }
 
-/**
- * Get attribute value from extracted tag attributes
- */
 function getAttr(
 	attrs: Record<string, string>,
 	name: string,
@@ -57,14 +54,8 @@ export const USC_LEVEL_INDEX: Record<USCLevelType, number> = Object.fromEntries(
 	USC_LEVEL_HIERARCHY.map((level, index) => [level, index]),
 ) as Record<USCLevelType, number>;
 
-/**
- * Set of level type names for quick lookup
- */
 const USC_LEVEL_SET = new Set<string>(USC_LEVEL_HIERARCHY);
 
-/**
- * Identifier prefix patterns for each level type (from USLM spec)
- */
 const LEVEL_ID_PREFIXES: Record<USCLevelType, string> = {
 	title: "t",
 	subtitle: "st",
@@ -76,9 +67,6 @@ const LEVEL_ID_PREFIXES: Record<USCLevelType, string> = {
 	subdivision: "sd",
 };
 
-/**
- * Parse level number from an identifier like /us/usc/t42/ch21/sch1/s1983
- */
 function parseLevelNumFromIdentifier(
 	ident: string | undefined,
 	levelType: USCLevelType,
@@ -89,50 +77,43 @@ function parseLevelNumFromIdentifier(
 	const prefix = LEVEL_ID_PREFIXES[levelType];
 
 	for (const part of parts) {
-		// Handle prefix matching carefully to avoid false matches
-		// e.g., "st" for subtitle vs "sch" for subchapter
-		if (part.startsWith(prefix)) {
-			const numPart = part.substring(prefix.length);
-			// Make sure it's not a longer prefix (e.g., "st" matching "sch")
-			if (numPart && /^[0-9a-zA-Z]/.test(numPart)) {
-				// Check if this might be a different prefix
-				let isLongerPrefix = false;
-				for (const [otherLevel, otherPrefix] of Object.entries(
-					LEVEL_ID_PREFIXES,
-				)) {
-					if (
-						otherLevel !== levelType &&
-						otherPrefix.startsWith(prefix) &&
-						otherPrefix.length > prefix.length &&
-						part.startsWith(otherPrefix)
-					) {
-						isLongerPrefix = true;
-						break;
-					}
-				}
-				if (!isLongerPrefix) {
-					return stripLeadingZeros(numPart);
-				}
+		if (!part.startsWith(prefix)) continue;
+		const numPart = part.substring(prefix.length);
+		if (!numPart || !/^[0-9a-zA-Z]/.test(numPart)) continue;
+
+		let isLongerPrefix = false;
+		for (const [otherLevel, otherPrefix] of Object.entries(LEVEL_ID_PREFIXES)) {
+			if (
+				otherLevel !== levelType &&
+				otherPrefix.startsWith(prefix) &&
+				otherPrefix.length > prefix.length &&
+				part.startsWith(otherPrefix)
+			) {
+				isLongerPrefix = true;
+				break;
 			}
 		}
+
+		if (!isLongerPrefix) {
+			return stripLeadingZeros(numPart);
+		}
 	}
+
 	return null;
 }
 
-/**
- * Organizational level node (title, subtitle, chapter, subchapter, part, subpart, etc.)
- */
 export interface USCLevel {
 	levelType: USCLevelType;
 	levelIndex: number;
-	identifier: string; // e.g., "42-ch21" for chapter 21 of title 42
-	num: string; // e.g., "21"
+	identifier: string;
+	num: string;
 	heading: string;
 	titleNum: string;
 	parentIdentifier: string | null;
 }
 
 export interface USCSection {
+	sectionKey: string;
 	titleNum: string;
 	sectionNum: string;
 	heading: string;
@@ -142,14 +123,34 @@ export interface USCSection {
 	citations: string;
 	path: string;
 	docId: string;
-	levelId: string;
-	parentLevelId: string;
+	parentRef: USCParentRef;
 }
+
+export interface USCSectionRef {
+	sectionKey: string;
+	titleNum: string;
+	sectionNum: string;
+	heading: string;
+	parentRef: USCParentRef;
+}
+
+export type USCParentRef =
+	| { kind: "title"; titleNum: string }
+	| {
+			kind: "level";
+			levelType: USCLevelType;
+			identifier: string;
+	  };
 
 export type USCStreamEvent =
 	| { type: "title"; titleNum: string; titleName: string }
 	| { type: "level"; level: USCLevel }
 	| { type: "section"; section: USCSection };
+
+export type USCStructureEvent =
+	| { type: "title"; titleNum: string; titleName: string }
+	| { type: "level"; level: USCLevel }
+	| { type: "section"; section: USCSectionRef };
 
 export interface USCStreamOptions {
 	includeSectionContent?: boolean;
@@ -165,16 +166,19 @@ interface LevelFrame {
 	bracketedNum: boolean;
 }
 
-interface SectionFrame {
+interface StructureSectionFrame {
 	titleNum: string;
 	sectionNum: string | null;
 	heading: string;
+	parentRef: USCParentRef;
+	bracketedNum: boolean;
+}
+
+interface FullSectionFrame extends StructureSectionFrame {
 	bodyParts: string[];
 	historyShort: string;
 	historyLongParts: string[];
 	citationsParts: Array<{ heading: string; body: string }>;
-	parentLevelId: string;
-	bracketedNum: boolean;
 }
 
 interface NoteFrame {
@@ -184,131 +188,131 @@ interface NoteFrame {
 	pParts: string[];
 }
 
-interface ParserState {
-	events: USCStreamEvent[];
+interface SharedDocState {
 	tagStack: string[];
 	levelStack: LevelFrame[];
 	sectionCounts: Map<string, number>;
-
-	docIdentifier: string;
 	titleNum: string;
 	titleName: string;
 	titleEmitted: boolean;
-
 	metaDepth: number;
 	metaTitleCapture: boolean;
 	metaTitleBuffer: string;
-
-	headingTarget: "level" | "section" | "note" | null;
-	headingBuffer: string;
 	numDepth: number;
 	numBuffer: string;
 	numTarget: "level" | "section" | null;
+	noteDepth: number;
+	quotedContentDepth: number;
+	ignoredSectionDepth: number;
+}
 
-	currentSection: SectionFrame | null;
+interface StructureState extends SharedDocState {
+	events: USCStructureEvent[];
+	currentSection: StructureSectionFrame | null;
+	headingTarget: "level" | "section" | null;
+	headingBuffer: string;
+}
+
+interface FullState extends SharedDocState {
+	events: USCStreamEvent[];
+	currentSection: FullSectionFrame | null;
+	headingTarget: "level" | "section" | "note" | null;
+	headingBuffer: string;
 	skipDepth: number;
 	bodyCaptureDepth: number;
 	bodyBuffer: string;
 	sourceCreditDepth: number;
 	sourceCreditBuffer: string;
-	noteDepth: number;
-	quotedContentDepth: number;
-	ignoredSectionDepth: number;
-
 	currentNote: NoteFrame | null;
 	notePDepth: number;
 	notePBuffer: string;
-
 	bodyHeadingDepth: number;
 	bodyHeadingBuffer: string;
-	includeSectionContent: boolean;
 }
 
-function createParserState(
-	fileTitle: string,
-	options?: USCStreamOptions,
-): ParserState {
+function createSharedDocState(fileTitle: string): SharedDocState {
 	return {
-		events: [],
 		tagStack: [],
 		levelStack: [],
 		sectionCounts: new Map(),
-
-		docIdentifier: "",
 		titleNum: fileTitle,
 		titleName: "",
 		titleEmitted: false,
-
 		metaDepth: 0,
 		metaTitleCapture: false,
 		metaTitleBuffer: "",
-
-		headingTarget: null,
-		headingBuffer: "",
 		numDepth: 0,
 		numBuffer: "",
 		numTarget: null,
+		noteDepth: 0,
+		quotedContentDepth: 0,
+		ignoredSectionDepth: 0,
+	};
+}
 
+function createStructureState(fileTitle: string): StructureState {
+	return {
+		...createSharedDocState(fileTitle),
+		events: [],
 		currentSection: null,
+		headingTarget: null,
+		headingBuffer: "",
+	};
+}
+
+function createFullState(fileTitle: string): FullState {
+	return {
+		...createSharedDocState(fileTitle),
+		events: [],
+		currentSection: null,
+		headingTarget: null,
+		headingBuffer: "",
 		skipDepth: 0,
 		bodyCaptureDepth: 0,
 		bodyBuffer: "",
 		sourceCreditDepth: 0,
 		sourceCreditBuffer: "",
-		noteDepth: 0,
-		quotedContentDepth: 0,
-		ignoredSectionDepth: 0,
-
 		currentNote: null,
 		notePDepth: 0,
 		notePBuffer: "",
-
 		bodyHeadingDepth: 0,
 		bodyHeadingBuffer: "",
-		includeSectionContent: options?.includeSectionContent ?? true,
 	};
 }
 
-function emit(state: ParserState, event: USCStreamEvent) {
-	state.events.push(event);
-}
-
-function drainEvents(state: ParserState): USCStreamEvent[] {
-	if (state.events.length === 0) return [];
-	const events = state.events;
-	state.events = [];
-	return events;
-}
-
-function ensureTitleNum(state: ParserState, ident?: string) {
+function ensureTitleNum(state: SharedDocState, ident?: string) {
 	const parsed = parseTitleFromIdentifier(ident);
 	if (parsed) {
 		state.titleNum = parsed;
 	}
 }
 
-function emitTitleIfNeeded(state: ParserState) {
-	if (state.titleEmitted) return;
-	if (!state.titleName) {
-		state.titleName = `Title ${state.titleNum}`;
-	}
-	emit(state, {
-		type: "title",
-		titleNum: state.titleNum,
-		titleName: state.titleName,
-	});
-	state.titleEmitted = true;
-}
-
-function ensureLevelIdentifier(state: ParserState, frame: LevelFrame) {
+function ensureLevelIdentifier(state: SharedDocState, frame: LevelFrame) {
 	if (frame.identifier || !frame.num) return;
 	frame.identifier = `${state.titleNum}-${LEVEL_ID_PREFIXES[frame.levelType]}${frame.num}`;
 }
 
-function emitLevel(state: ParserState, frame: LevelFrame) {
+function emitTitleIfNeeded(state: StructureState | FullState) {
+	if (state.titleEmitted) return;
+	if (!state.titleName) {
+		state.titleName = `Title ${state.titleNum}`;
+	}
+	const event = {
+		type: "title" as const,
+		titleNum: state.titleNum,
+		titleName: state.titleName,
+	};
+	state.events.push(event);
+	state.titleEmitted = true;
+}
+
+function emitLevelIfReady(
+	state: StructureState | FullState,
+	frame: LevelFrame,
+) {
 	ensureLevelIdentifier(state, frame);
 	if (frame.emitted || !frame.identifier || !frame.num) return;
-	emit(state, {
+	state.events.push({
 		type: "level",
 		level: {
 			levelType: frame.levelType,
@@ -323,30 +327,148 @@ function emitLevel(state: ParserState, frame: LevelFrame) {
 	frame.emitted = true;
 }
 
-function emitPendingLevels(state: ParserState) {
+function emitPendingLevels(state: StructureState | FullState) {
 	for (const frame of state.levelStack) {
-		if (!frame.emitted) {
-			emitLevel(state, frame);
-		}
+		emitLevelIfReady(state, frame);
 	}
 }
 
-function handleOpenTag(
-	state: ParserState,
-	rawTagName: string,
+function createLevelFrame(
+	state: SharedDocState,
+	levelType: USCLevelType,
+	identifier: string | undefined,
+): LevelFrame {
+	const levelNum = parseLevelNumFromIdentifier(identifier, levelType);
+	const parentIdentifier =
+		state.levelStack.length > 0
+			? state.levelStack[state.levelStack.length - 1].identifier
+			: `${state.titleNum}-title`;
+	return {
+		levelType,
+		num: levelNum,
+		identifier: levelNum
+			? `${state.titleNum}-${LEVEL_ID_PREFIXES[levelType]}${levelNum}`
+			: null,
+		heading: "",
+		parentIdentifier,
+		emitted: false,
+		bracketedNum: false,
+	};
+}
+
+function parseSectionParentRef(state: SharedDocState): USCParentRef {
+	const parentLevel = state.levelStack[state.levelStack.length - 1];
+	if (parentLevel?.identifier) {
+		return {
+			kind: "level",
+			levelType: parentLevel.levelType,
+			identifier: parentLevel.identifier,
+		};
+	}
+	return { kind: "title", titleNum: state.titleNum };
+}
+
+function closeNumTarget(state: StructureState | FullState) {
+	if (state.numDepth === 0) return;
+	state.numDepth -= 1;
+	if (state.numDepth > 0) return;
+
+	const text = state.numBuffer.trim();
+	if (text.startsWith("[")) {
+		if (state.numTarget === "section" && state.currentSection) {
+			state.currentSection.bracketedNum = true;
+		}
+		if (state.numTarget === "level" && state.levelStack.length > 0) {
+			const frame = state.levelStack[state.levelStack.length - 1];
+			frame.bracketedNum = true;
+		}
+	}
+
+	state.numBuffer = "";
+	state.numTarget = null;
+}
+
+function closeStructureSection(state: StructureState) {
+	if (!state.currentSection?.sectionNum) {
+		state.currentSection = null;
+		return;
+	}
+
+	const baseSectionNum = state.currentSection.sectionNum;
+	const sectionKey = `${state.titleNum}-${baseSectionNum}`;
+	const count = state.sectionCounts.get(sectionKey) ?? 0;
+	state.sectionCounts.set(sectionKey, count + 1);
+	const finalSectionNum =
+		count === 0 ? baseSectionNum : `${baseSectionNum}-${count + 1}`;
+
+	state.events.push({
+		type: "section",
+		section: {
+			sectionKey: `${state.titleNum}:${finalSectionNum}`,
+			titleNum: state.titleNum,
+			sectionNum: finalSectionNum,
+			heading: state.currentSection.heading,
+			parentRef: state.currentSection.parentRef,
+		},
+	});
+
+	state.currentSection = null;
+}
+
+function closeFullSection(state: FullState) {
+	if (!state.currentSection?.sectionNum) {
+		state.currentSection = null;
+		return;
+	}
+
+	const baseSectionNum = state.currentSection.sectionNum;
+	const sectionKey = `${state.titleNum}-${baseSectionNum}`;
+	const count = state.sectionCounts.get(sectionKey) ?? 0;
+	state.sectionCounts.set(sectionKey, count + 1);
+	const finalSectionNum =
+		count === 0 ? baseSectionNum : `${baseSectionNum}-${count + 1}`;
+
+	const body = normalizedWhitespace(
+		state.currentSection.bodyParts.join("\n\n"),
+	);
+	const historyLong = state.currentSection.historyLongParts.join("\n\n");
+	const citations = state.currentSection.citationsParts
+		.filter(({ body: entryBody }) => entryBody)
+		.map(({ heading, body: entryBody }) =>
+			heading ? `${heading}\n${entryBody}` : entryBody,
+		)
+		.join("\n\n")
+		.trim();
+
+	state.events.push({
+		type: "section",
+		section: {
+			sectionKey: `${state.titleNum}:${finalSectionNum}`,
+			titleNum: state.titleNum,
+			sectionNum: finalSectionNum,
+			heading: state.currentSection.heading,
+			body,
+			historyShort: state.currentSection.historyShort,
+			historyLong,
+			citations,
+			path: `/statutes/usc/section/${state.titleNum}/${finalSectionNum}`,
+			docId: `doc_usc_${state.titleNum}-${finalSectionNum}`,
+			parentRef: state.currentSection.parentRef,
+		},
+	});
+
+	state.currentSection = null;
+}
+
+function handleSharedOpen(
+	state: StructureState | FullState,
+	tagName: string,
+	parentTag: string | undefined,
 	attrs: Record<string, string>,
 ) {
-	const tagName = normalizeTagName(rawTagName);
-	const parentTag = state.tagStack[state.tagStack.length - 1];
-	state.tagStack.push(tagName);
-
 	const identifier = getAttr(attrs, "identifier");
-	const value = getAttr(attrs, "value");
-	const topic = getAttr(attrs, "topic");
-	const role = getAttr(attrs, "role");
 
-	if (!state.docIdentifier && identifier) {
-		state.docIdentifier = identifier;
+	if (identifier) {
 		ensureTitleNum(state, identifier);
 	}
 
@@ -360,9 +482,6 @@ function handleOpenTag(
 	}
 
 	if (tagName === "title" && parentTag === "main") {
-		if (identifier) {
-			ensureTitleNum(state, identifier);
-		}
 		emitTitleIfNeeded(state);
 	}
 
@@ -376,126 +495,7 @@ function handleOpenTag(
 
 	if (USC_LEVEL_SET.has(tagName) && tagName !== "title") {
 		const levelType = tagName as USCLevelType;
-		const levelNum = parseLevelNumFromIdentifier(identifier, levelType);
-		const parentIdentifier =
-			state.levelStack.length > 0
-				? state.levelStack[state.levelStack.length - 1].identifier
-				: `${state.titleNum}-title`;
-
-		const frame: LevelFrame = {
-			levelType,
-			num: levelNum,
-			identifier: levelNum
-				? `${state.titleNum}-${LEVEL_ID_PREFIXES[levelType]}${levelNum}`
-				: null,
-			heading: "",
-			parentIdentifier,
-			emitted: false,
-			bracketedNum: false,
-		};
-		state.levelStack.push(frame);
-	}
-
-	if (tagName === "section") {
-		if (state.noteDepth > 0 || state.quotedContentDepth > 0) {
-			state.ignoredSectionDepth += 1;
-			return;
-		}
-		emitPendingLevels(state);
-		const sectionNum = parseSectionFromIdentifier(identifier);
-
-		const parentLevel = state.levelStack[state.levelStack.length - 1];
-		const parentLevelId = parentLevel?.identifier
-			? `lvl_usc_${parentLevel.levelType}_${parentLevel.identifier}`
-			: `lvl_usc_title_${state.titleNum}`;
-
-		state.currentSection = {
-			titleNum: state.titleNum,
-			sectionNum,
-			heading: "",
-			bodyParts: [],
-			historyShort: "",
-			historyLongParts: [],
-			citationsParts: [],
-			parentLevelId,
-			bracketedNum: false,
-		};
-		return;
-	}
-
-	if (state.currentSection) {
-		if (
-			SECTION_SKIP_TAGS.has(tagName) ||
-			((tagName === "num" || tagName === "heading") && parentTag === "section")
-		) {
-			state.skipDepth += 1;
-		}
-
-		if (tagName === "num" && value && !state.currentSection.sectionNum) {
-			state.currentSection.sectionNum = stripLeadingZeros(value);
-		}
-
-		if (state.includeSectionContent && tagName === "sourceCredit") {
-			state.sourceCreditDepth += 1;
-			state.sourceCreditBuffer = "";
-		}
-
-		if (
-			state.includeSectionContent &&
-			SECTION_BODY_TAGS.has(tagName) &&
-			state.skipDepth === 0
-		) {
-			state.bodyCaptureDepth += 1;
-			if (state.bodyCaptureDepth === 1) {
-				state.bodyBuffer = "";
-			}
-		}
-
-		if (
-			tagName === "heading" &&
-			parentTag !== "section" &&
-			state.skipDepth === 0 &&
-			!state.currentNote &&
-			state.noteDepth === 0 &&
-			state.bodyCaptureDepth > 0 &&
-			state.includeSectionContent
-		) {
-			state.bodyHeadingDepth += 1;
-			if (state.bodyHeadingDepth === 1) {
-				state.bodyHeadingBuffer = "";
-			}
-		}
-
-		if (state.includeSectionContent && tagName === "note") {
-			state.currentNote = {
-				topic: topic ?? "",
-				role: role ?? "",
-				headingText: "",
-				pParts: [],
-			};
-		}
-
-		if (state.includeSectionContent && state.currentNote && tagName === "p") {
-			state.notePDepth += 1;
-			if (state.notePDepth === 1) {
-				state.notePBuffer = "";
-			}
-		}
-	}
-
-	if (tagName === "heading") {
-		if (state.currentNote) {
-			if (!state.currentNote.headingText) {
-				state.headingTarget = "note";
-				state.headingBuffer = "";
-			}
-		} else if (state.currentSection && parentTag === "section") {
-			state.headingTarget = "section";
-			state.headingBuffer = "";
-		} else if (state.levelStack.length > 0 && USC_LEVEL_SET.has(parentTag)) {
-			state.headingTarget = "level";
-			state.headingBuffer = "";
-		}
+		state.levelStack.push(createLevelFrame(state, levelType, identifier));
 	}
 
 	if (tagName === "num") {
@@ -513,7 +513,10 @@ function handleOpenTag(
 	}
 }
 
-function handleText(state: ParserState, textValue: string) {
+function handleSharedText(
+	state: StructureState | FullState,
+	textValue: string,
+) {
 	if (state.metaTitleCapture) {
 		state.metaTitleBuffer += textValue;
 	}
@@ -525,37 +528,12 @@ function handleText(state: ParserState, textValue: string) {
 	if (state.numDepth > 0) {
 		state.numBuffer += textValue;
 	}
-
-	if (
-		state.includeSectionContent &&
-		state.currentSection &&
-		state.bodyCaptureDepth > 0 &&
-		state.skipDepth === 0 &&
-		state.bodyHeadingDepth === 0
-	) {
-		state.bodyBuffer += textValue;
-	}
-
-	if (state.includeSectionContent && state.bodyHeadingDepth > 0) {
-		state.bodyHeadingBuffer += textValue;
-	}
-
-	if (state.includeSectionContent && state.sourceCreditDepth > 0) {
-		state.sourceCreditBuffer += textValue;
-	}
-
-	if (state.includeSectionContent && state.notePDepth > 0) {
-		state.notePBuffer += textValue;
-	}
 }
 
-function handleCloseTag(state: ParserState, rawTagName: string) {
-	const tagName = normalizeTagName(rawTagName);
-	state.tagStack.pop();
-
+function handleSharedClose(state: StructureState | FullState, tagName: string) {
 	if (tagName === "section" && state.ignoredSectionDepth > 0) {
 		state.ignoredSectionDepth -= 1;
-		return;
+		return true;
 	}
 
 	if (tagName === "meta") {
@@ -569,6 +547,251 @@ function handleCloseTag(state: ParserState, rawTagName: string) {
 		}
 		state.metaTitleCapture = false;
 		state.metaTitleBuffer = "";
+	}
+
+	if (tagName === "num") {
+		closeNumTarget(state);
+	}
+
+	if (tagName === "note") {
+		state.noteDepth -= 1;
+	}
+
+	if (tagName === "quotedContent") {
+		state.quotedContentDepth -= 1;
+	}
+
+	if (USC_LEVEL_SET.has(tagName) && tagName !== "title") {
+		const frame = state.levelStack[state.levelStack.length - 1];
+		if (frame) {
+			emitLevelIfReady(state, frame);
+			state.levelStack.pop();
+		}
+	}
+
+	return false;
+}
+
+function handleStructureOpen(
+	state: StructureState,
+	tagName: string,
+	parentTag: string | undefined,
+	attrs: Record<string, string>,
+) {
+	handleSharedOpen(state, tagName, parentTag, attrs);
+	const identifier = getAttr(attrs, "identifier");
+	const value = getAttr(attrs, "value");
+
+	if (tagName === "section") {
+		if (state.noteDepth > 0 || state.quotedContentDepth > 0) {
+			state.ignoredSectionDepth += 1;
+			return;
+		}
+		emitPendingLevels(state);
+		state.currentSection = {
+			titleNum: state.titleNum,
+			sectionNum: parseSectionFromIdentifier(identifier),
+			heading: "",
+			parentRef: parseSectionParentRef(state),
+			bracketedNum: false,
+		};
+		return;
+	}
+
+	if (
+		state.currentSection &&
+		tagName === "num" &&
+		value &&
+		!state.currentSection.sectionNum
+	) {
+		state.currentSection.sectionNum = stripLeadingZeros(value);
+	}
+
+	if (tagName === "heading") {
+		if (state.currentSection && parentTag === "section") {
+			state.headingTarget = "section";
+			state.headingBuffer = "";
+		} else if (
+			state.levelStack.length > 0 &&
+			USC_LEVEL_SET.has(parentTag ?? "")
+		) {
+			state.headingTarget = "level";
+			state.headingBuffer = "";
+		}
+	}
+}
+
+function handleStructureClose(state: StructureState, tagName: string) {
+	if (tagName === "section" && state.ignoredSectionDepth > 0) {
+		state.ignoredSectionDepth -= 1;
+		return;
+	}
+
+	if (state.headingTarget && tagName === "heading") {
+		let heading = normalizedWhitespace(state.headingBuffer);
+		if (state.headingTarget === "section" && state.currentSection) {
+			if (state.currentSection.bracketedNum && heading.endsWith("]")) {
+				heading = heading.slice(0, -1).trim();
+			}
+			state.currentSection.heading = heading;
+		}
+		if (state.headingTarget === "level" && state.levelStack.length > 0) {
+			const frame = state.levelStack[state.levelStack.length - 1];
+			if (frame.bracketedNum && heading.endsWith("]")) {
+				heading = heading.slice(0, -1).trim();
+			}
+			frame.heading = heading;
+			emitLevelIfReady(state, frame);
+		}
+		state.headingTarget = null;
+		state.headingBuffer = "";
+	}
+
+	if (tagName === "section" && state.currentSection) {
+		closeStructureSection(state);
+	}
+
+	handleSharedClose(state, tagName);
+}
+
+function handleFullOpen(
+	state: FullState,
+	tagName: string,
+	parentTag: string | undefined,
+	attrs: Record<string, string>,
+) {
+	handleSharedOpen(state, tagName, parentTag, attrs);
+
+	const identifier = getAttr(attrs, "identifier");
+	const value = getAttr(attrs, "value");
+	const topic = getAttr(attrs, "topic");
+	const role = getAttr(attrs, "role");
+
+	if (tagName === "section") {
+		if (state.noteDepth > 0 || state.quotedContentDepth > 0) {
+			state.ignoredSectionDepth += 1;
+			return;
+		}
+		emitPendingLevels(state);
+		state.currentSection = {
+			titleNum: state.titleNum,
+			sectionNum: parseSectionFromIdentifier(identifier),
+			heading: "",
+			bodyParts: [],
+			historyShort: "",
+			historyLongParts: [],
+			citationsParts: [],
+			parentRef: parseSectionParentRef(state),
+			bracketedNum: false,
+		};
+		return;
+	}
+
+	if (tagName === "heading") {
+		if (state.currentNote) {
+			if (!state.currentNote.headingText) {
+				state.headingTarget = "note";
+				state.headingBuffer = "";
+			}
+		} else if (state.currentSection && parentTag === "section") {
+			state.headingTarget = "section";
+			state.headingBuffer = "";
+		} else if (
+			state.levelStack.length > 0 &&
+			USC_LEVEL_SET.has(parentTag ?? "")
+		) {
+			state.headingTarget = "level";
+			state.headingBuffer = "";
+		}
+	}
+
+	if (!state.currentSection) {
+		return;
+	}
+
+	if (
+		SECTION_SKIP_TAGS.has(tagName) ||
+		((tagName === "num" || tagName === "heading") && parentTag === "section")
+	) {
+		state.skipDepth += 1;
+	}
+
+	if (tagName === "num" && value && !state.currentSection.sectionNum) {
+		state.currentSection.sectionNum = stripLeadingZeros(value);
+	}
+
+	if (tagName === "sourceCredit") {
+		state.sourceCreditDepth += 1;
+		state.sourceCreditBuffer = "";
+	}
+
+	if (SECTION_BODY_TAGS.has(tagName) && state.skipDepth === 0) {
+		state.bodyCaptureDepth += 1;
+		if (state.bodyCaptureDepth === 1) {
+			state.bodyBuffer = "";
+		}
+	}
+
+	if (
+		tagName === "heading" &&
+		parentTag !== "section" &&
+		state.skipDepth === 0 &&
+		!state.currentNote &&
+		state.noteDepth === 0 &&
+		state.bodyCaptureDepth > 0
+	) {
+		state.bodyHeadingDepth += 1;
+		if (state.bodyHeadingDepth === 1) {
+			state.bodyHeadingBuffer = "";
+		}
+	}
+
+	if (tagName === "note") {
+		state.currentNote = {
+			topic: topic ?? "",
+			role: role ?? "",
+			headingText: "",
+			pParts: [],
+		};
+	}
+
+	if (state.currentNote && tagName === "p") {
+		state.notePDepth += 1;
+		if (state.notePDepth === 1) {
+			state.notePBuffer = "";
+		}
+	}
+}
+
+function handleFullText(state: FullState, textValue: string) {
+	handleSharedText(state, textValue);
+
+	if (
+		state.currentSection &&
+		state.bodyCaptureDepth > 0 &&
+		state.skipDepth === 0 &&
+		state.bodyHeadingDepth === 0
+	) {
+		state.bodyBuffer += textValue;
+	}
+
+	if (state.bodyHeadingDepth > 0) {
+		state.bodyHeadingBuffer += textValue;
+	}
+
+	if (state.sourceCreditDepth > 0) {
+		state.sourceCreditBuffer += textValue;
+	}
+
+	if (state.notePDepth > 0) {
+		state.notePBuffer += textValue;
+	}
+}
+
+function handleFullClose(state: FullState, tagName: string) {
+	if (tagName === "section" && state.ignoredSectionDepth > 0) {
+		state.ignoredSectionDepth -= 1;
+		return;
 	}
 
 	if (state.headingTarget && tagName === "heading") {
@@ -588,17 +811,13 @@ function handleCloseTag(state: ParserState, rawTagName: string) {
 				heading = heading.slice(0, -1).trim();
 			}
 			frame.heading = heading;
-			emitLevel(state, frame);
+			emitLevelIfReady(state, frame);
 		}
 		state.headingTarget = null;
 		state.headingBuffer = "";
 	}
 
-	if (
-		state.includeSectionContent &&
-		state.bodyHeadingDepth > 0 &&
-		tagName === "heading"
-	) {
+	if (state.bodyHeadingDepth > 0 && tagName === "heading") {
 		state.bodyHeadingDepth -= 1;
 		if (state.bodyHeadingDepth === 0) {
 			const heading = normalizedWhitespace(state.bodyHeadingBuffer);
@@ -622,26 +841,7 @@ function handleCloseTag(state: ParserState, rawTagName: string) {
 		state.skipDepth -= 1;
 	}
 
-	if (tagName === "num" && state.numDepth > 0) {
-		state.numDepth -= 1;
-		if (state.numDepth === 0) {
-			const text = state.numBuffer.trim();
-			if (text.startsWith("[")) {
-				if (state.numTarget === "section" && state.currentSection) {
-					state.currentSection.bracketedNum = true;
-				}
-				if (state.numTarget === "level" && state.levelStack.length > 0) {
-					const frame = state.levelStack[state.levelStack.length - 1];
-					frame.bracketedNum = true;
-				}
-			}
-			state.numBuffer = "";
-			state.numTarget = null;
-		}
-	}
-
 	if (
-		state.includeSectionContent &&
 		state.currentSection &&
 		SECTION_BODY_TAGS.has(tagName) &&
 		state.skipDepth === 0
@@ -656,7 +856,7 @@ function handleCloseTag(state: ParserState, rawTagName: string) {
 		}
 	}
 
-	if (state.includeSectionContent && tagName === "sourceCredit") {
+	if (tagName === "sourceCredit") {
 		state.sourceCreditDepth -= 1;
 		if (state.sourceCreditDepth === 0 && state.currentSection) {
 			state.currentSection.historyShort = normalizedWhitespace(
@@ -666,12 +866,7 @@ function handleCloseTag(state: ParserState, rawTagName: string) {
 		}
 	}
 
-	if (
-		state.includeSectionContent &&
-		state.currentNote &&
-		tagName === "p" &&
-		state.notePDepth > 0
-	) {
+	if (state.currentNote && tagName === "p" && state.notePDepth > 0) {
 		state.notePDepth -= 1;
 		if (state.notePDepth === 0) {
 			const text = normalizedWhitespace(state.notePBuffer);
@@ -682,7 +877,7 @@ function handleCloseTag(state: ParserState, rawTagName: string) {
 		}
 	}
 
-	if (state.includeSectionContent && state.currentNote && tagName === "note") {
+	if (state.currentNote && tagName === "note") {
 		const heading = state.currentNote.headingText;
 		const body = normalizedWhitespace(state.currentNote.pParts.join("\n\n"));
 		const finalBody = body || heading;
@@ -712,67 +907,155 @@ function handleCloseTag(state: ParserState, rawTagName: string) {
 		state.currentNote = null;
 	}
 
-	if (tagName === "note") {
-		state.noteDepth -= 1;
-	}
-
-	if (tagName === "quotedContent") {
-		state.quotedContentDepth -= 1;
-	}
-
 	if (tagName === "section" && state.currentSection) {
-		const baseSectionNum = state.currentSection.sectionNum;
-		if (baseSectionNum) {
-			const sectionKey = `${state.titleNum}-${baseSectionNum}`;
-			const count = state.sectionCounts.get(sectionKey) ?? 0;
-			state.sectionCounts.set(sectionKey, count + 1);
-			const finalSectionNum =
-				count === 0 ? baseSectionNum : `${baseSectionNum}-${count + 1}`;
-
-			const body = state.includeSectionContent
-				? normalizedWhitespace(state.currentSection.bodyParts.join("\n\n"))
-				: "";
-			const historyLong = state.includeSectionContent
-				? state.currentSection.historyLongParts.join("\n\n")
-				: "";
-			const citations = state.includeSectionContent
-				? state.currentSection.citationsParts
-						.filter(({ body: entryBody }) => entryBody)
-						.map(({ heading, body: entryBody }) =>
-							heading ? `${heading}\n${entryBody}` : entryBody,
-						)
-						.join("\n\n")
-						.trim()
-				: "";
-
-			const section: USCSection = {
-				titleNum: state.titleNum,
-				sectionNum: finalSectionNum,
-				heading: state.currentSection.heading,
-				body,
-				historyShort: state.includeSectionContent
-					? state.currentSection.historyShort
-					: "",
-				historyLong,
-				citations,
-				path: `/statutes/usc/section/${state.titleNum}/${finalSectionNum}`,
-				docId: `doc_usc_${state.titleNum}-${finalSectionNum}`,
-				levelId: `lvl_usc_section_${state.titleNum}-${finalSectionNum}`,
-				parentLevelId: state.currentSection.parentLevelId,
-			};
-
-			emit(state, { type: "section", section });
-		}
-		state.currentSection = null;
+		closeFullSection(state);
 	}
 
-	if (USC_LEVEL_SET.has(tagName) && tagName !== "title") {
-		const frame = state.levelStack[state.levelStack.length - 1];
-		if (frame) {
-			emitLevel(state, frame);
-			state.levelStack.pop();
+	handleSharedClose(state, tagName);
+}
+
+function createStructureParser(state: StructureState): Parser {
+	return new Parser(
+		{
+			onopentag(name, attrs) {
+				const tagName = normalizeTagName(name);
+				const parentTag = state.tagStack[state.tagStack.length - 1];
+				state.tagStack.push(tagName);
+				handleStructureOpen(state, tagName, parentTag, attrs);
+			},
+			ontext(text) {
+				handleSharedText(state, text);
+			},
+			onclosetag(name) {
+				const tagName = normalizeTagName(name);
+				state.tagStack.pop();
+				handleStructureClose(state, tagName);
+			},
+		},
+		{ xmlMode: true, decodeEntities: true },
+	);
+}
+
+function createFullParser(state: FullState): Parser {
+	return new Parser(
+		{
+			onopentag(name, attrs) {
+				const tagName = normalizeTagName(name);
+				const parentTag = state.tagStack[state.tagStack.length - 1];
+				state.tagStack.push(tagName);
+				handleFullOpen(state, tagName, parentTag, attrs);
+			},
+			ontext(text) {
+				handleFullText(state, text);
+			},
+			onclosetag(name) {
+				const tagName = normalizeTagName(name);
+				state.tagStack.pop();
+				handleFullClose(state, tagName);
+			},
+		},
+		{ xmlMode: true, decodeEntities: true },
+	);
+}
+
+function drainEvents<T>(events: T[]): T[] {
+	if (events.length === 0) return [];
+	const drained = [...events];
+	events.length = 0;
+	return drained;
+}
+
+export async function* streamUSCStructureXmlFromChunks(
+	chunks: AsyncIterable<Uint8Array>,
+	fileTitle: string,
+	_sourceUrl: string,
+): AsyncGenerator<
+	USCStructureEvent,
+	{ titleNum: string; titleName: string },
+	void
+> {
+	const state = createStructureState(fileTitle);
+	const parser = createStructureParser(state);
+	const decoder = new TextDecoder();
+
+	for await (const chunk of chunks) {
+		parser.write(decoder.decode(chunk, { stream: true }));
+		for (const event of drainEvents(state.events)) {
+			yield event;
 		}
 	}
+	parser.write(decoder.decode());
+	for (const event of drainEvents(state.events)) {
+		yield event;
+	}
+	parser.end();
+	for (const event of drainEvents(state.events)) {
+		yield event;
+	}
+
+	return {
+		titleNum: state.titleNum,
+		titleName: state.titleName || `Title ${state.titleNum}`,
+	};
+}
+
+export async function* streamUSCSectionContentXmlFromChunks(
+	chunks: AsyncIterable<Uint8Array>,
+	fileTitle: string,
+	_sourceUrl: string,
+): AsyncGenerator<USCSection, { titleNum: string; titleName: string }, void> {
+	const state = createFullState(fileTitle);
+	const parser = createFullParser(state);
+	const decoder = new TextDecoder();
+
+	for await (const chunk of chunks) {
+		parser.write(decoder.decode(chunk, { stream: true }));
+		for (const event of drainEvents(state.events)) {
+			if (event.type === "section") {
+				yield event.section;
+			}
+		}
+	}
+	parser.write(decoder.decode());
+	for (const event of drainEvents(state.events)) {
+		if (event.type === "section") {
+			yield event.section;
+		}
+	}
+	parser.end();
+	for (const event of drainEvents(state.events)) {
+		if (event.type === "section") {
+			yield event.section;
+		}
+	}
+
+	return {
+		titleNum: state.titleNum,
+		titleName: state.titleName || `Title ${state.titleNum}`,
+	};
+}
+
+async function* streamUSCXmlFromParser(
+	parser: Parser,
+	events: USCStreamEvent[],
+	chunks: AsyncIterable<string>,
+	result: () => { titleNum: string; titleName: string },
+): AsyncGenerator<
+	USCStreamEvent,
+	{ titleNum: string; titleName: string },
+	void
+> {
+	for await (const chunk of chunks) {
+		parser.write(chunk);
+		for (const event of drainEvents(events)) {
+			yield event;
+		}
+	}
+	parser.end();
+	for (const event of drainEvents(events)) {
+		yield event;
+	}
+	return result();
 }
 
 export async function* streamUSCXml(
@@ -785,33 +1068,52 @@ export async function* streamUSCXml(
 	{ titleNum: string; titleName: string },
 	void
 > {
-	const state = createParserState(fileTitle, options);
-	const parser = new Parser(
-		{
-			onopentag(name, attrs) {
-				handleOpenTag(state, name, attrs);
-			},
-			ontext(text) {
-				handleText(state, text);
-			},
-			onclosetag(name) {
-				handleCloseTag(state, name);
-			},
-		},
-		{ xmlMode: true, decodeEntities: true },
-	);
+	if (options?.includeSectionContent === false) {
+		const stream = streamUSCStructureXmlFromChunks(
+			(async function* () {
+				yield new TextEncoder().encode(input);
+			})(),
+			fileTitle,
+			_sourceUrl,
+		);
 
-	parser.write(input);
-	for (const evt of drainEvents(state)) {
-		yield evt;
+		let result = await stream.next();
+		while (!result.done) {
+			const event = result.value;
+			if (event.type === "section") {
+				yield {
+					type: "section",
+					section: {
+						sectionKey: event.section.sectionKey,
+						titleNum: event.section.titleNum,
+						sectionNum: event.section.sectionNum,
+						heading: event.section.heading,
+						body: "",
+						historyShort: "",
+						historyLong: "",
+						citations: "",
+						path: `/statutes/usc/section/${event.section.titleNum}/${event.section.sectionNum}`,
+						docId: `doc_usc_${event.section.titleNum}-${event.section.sectionNum}`,
+						parentRef: event.section.parentRef,
+					},
+				};
+			} else {
+				yield event;
+			}
+			result = await stream.next();
+		}
+		return result.value;
 	}
-	parser.end();
 
-	for (const evt of drainEvents(state)) {
-		yield evt;
-	}
-
-	return { titleNum: state.titleNum, titleName: state.titleName };
+	const state = createFullState(fileTitle);
+	const parser = createFullParser(state);
+	const chunks = (async function* () {
+		yield input;
+	})();
+	return yield* streamUSCXmlFromParser(parser, state.events, chunks, () => ({
+		titleNum: state.titleNum,
+		titleName: state.titleName || `Title ${state.titleNum}`,
+	}));
 }
 
 /**
@@ -828,40 +1130,58 @@ export async function* streamUSCXmlFromChunks(
 	{ titleNum: string; titleName: string },
 	void
 > {
-	const state = createParserState(fileTitle, options);
-	const parser = new Parser(
-		{
-			onopentag(name, attrs) {
-				handleOpenTag(state, name, attrs);
-			},
-			ontext(text) {
-				handleText(state, text);
-			},
-			onclosetag(name) {
-				handleCloseTag(state, name);
-			},
-		},
-		{ xmlMode: true, decodeEntities: true },
-	);
-	const decoder = new TextDecoder();
-
-	for await (const chunk of chunks) {
-		parser.write(decoder.decode(chunk, { stream: true }));
-		for (const evt of drainEvents(state)) {
-			yield evt;
+	if (options?.includeSectionContent === false) {
+		const stream = streamUSCStructureXmlFromChunks(
+			chunks,
+			fileTitle,
+			_sourceUrl,
+		);
+		let result = await stream.next();
+		while (!result.done) {
+			const event = result.value;
+			if (event.type === "section") {
+				yield {
+					type: "section",
+					section: {
+						sectionKey: event.section.sectionKey,
+						titleNum: event.section.titleNum,
+						sectionNum: event.section.sectionNum,
+						heading: event.section.heading,
+						body: "",
+						historyShort: "",
+						historyLong: "",
+						citations: "",
+						path: `/statutes/usc/section/${event.section.titleNum}/${event.section.sectionNum}`,
+						docId: `doc_usc_${event.section.titleNum}-${event.section.sectionNum}`,
+						parentRef: event.section.parentRef,
+					},
+				};
+			} else {
+				yield event;
+			}
+			result = await stream.next();
 		}
-	}
-	parser.write(decoder.decode());
-	for (const evt of drainEvents(state)) {
-		yield evt;
-	}
-	parser.end();
-
-	for (const evt of drainEvents(state)) {
-		yield evt;
+		return result.value;
 	}
 
-	return { titleNum: state.titleNum, titleName: state.titleName };
+	const state = createFullState(fileTitle);
+	const parser = createFullParser(state);
+	const decoder = new TextDecoder();
+	const textChunks = (async function* () {
+		for await (const chunk of chunks) {
+			yield decoder.decode(chunk, { stream: true });
+		}
+		yield decoder.decode();
+	})();
+	return yield* streamUSCXmlFromParser(
+		parser,
+		state.events,
+		textChunks,
+		() => ({
+			titleNum: state.titleNum,
+			titleName: state.titleName || `Title ${state.titleNum}`,
+		}),
+	);
 }
 
 /**
@@ -897,9 +1217,6 @@ export async function parseUSCXml(
 	return { sections, levels, titleNum, titleName };
 }
 
-/**
- * Strip leading zeros from a numeric string with optional letter suffix (e.g., "01" -> "1", "01a" -> "1a")
- */
 function stripLeadingZeros(value: string): string {
 	const match = value.match(/^0*([0-9]+)([a-z]*)$/i);
 	if (!match) return value;

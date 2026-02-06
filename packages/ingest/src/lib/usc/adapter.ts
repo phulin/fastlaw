@@ -14,11 +14,13 @@ import {
 	getUSCTitleUrls,
 } from "./fetcher";
 import {
-	streamUSCXmlFromChunks,
+	streamUSCSectionContentXmlFromChunks,
+	streamUSCStructureXmlFromChunks,
 	titleSortKey,
 	USC_LEVEL_INDEX,
 	type USCLevel,
 	type USCLevelType,
+	type USCParentRef,
 	type USCSection,
 } from "./parser";
 
@@ -35,7 +37,7 @@ interface UscUnitRoot {
 
 type UscShardMeta =
 	| { kind: "node"; node: NodeMeta }
-	| { kind: "section"; sectionNum: string; titleNum: string };
+	| { kind: "section"; sectionKey: string };
 
 function compareKeys(
 	a: [number, [number, string] | string],
@@ -73,17 +75,12 @@ function resolveLevelParentStringId(
 
 function resolveSectionParentStringId(
 	rootStringId: string,
-	section: USCSection,
+	parentRef: USCParentRef,
 ): string {
-	const parentMatch = section.parentLevelId.match(/^lvl_usc_([^_]+)_(.+)$/);
-	if (parentMatch) {
-		const [, levelType, identifier] = parentMatch;
-		if (levelType === "title") {
-			return `${rootStringId}/title-${identifier}`;
-		}
-		return `${rootStringId}/${levelType}-${identifier}`;
+	if (parentRef.kind === "title") {
+		return `${rootStringId}/title-${parentRef.titleNum}`;
 	}
-	return `${rootStringId}/title-${section.titleNum}`;
+	return `${rootStringId}/${parentRef.levelType}-${parentRef.identifier}`;
 }
 
 export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
@@ -149,14 +146,15 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 			return { unitId: unit.id, shardItems: [] };
 		}
 
-		const stream = streamUSCXmlFromChunks(chunks, unit.titleNum, unit.url, {
-			includeSectionContent: false,
-		});
+		const stream = streamUSCStructureXmlFromChunks(
+			chunks,
+			unit.titleNum,
+			unit.url,
+		);
 		const shardItems: Array<ShardWorkItem<UscShardMeta>> = [];
 
 		const seenLevelIds = new Set<string>();
 		const levelTypeByIdentifier = new Map<string, USCLevelType>();
-		const sectionCounts = new Map<string, number>();
 		const seenSections = new Set<string>();
 		let levelSortOrder = 0;
 
@@ -189,15 +187,10 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 			});
 		};
 
-		while (true) {
-			const { value, done } = await stream.next();
-			if (done) {
-				ensureTitleShard(value.titleNum, value.titleName);
-				break;
-			}
-
+		for await (const value of stream) {
 			if (value.type === "title") {
 				ensureTitleShard(value.titleNum, value.titleName);
+				continue;
 			}
 
 			if (value.type === "level") {
@@ -237,41 +230,33 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 
 				levelTypeByIdentifier.set(level.identifier, level.levelType);
 				seenLevelIds.add(level.identifier);
+				continue;
 			}
 
-			if (value.type === "section") {
-				const section = value.section;
-				const parentStringId = resolveSectionParentStringId(
-					rootStringId,
-					section,
-				);
-
-				const baseSectionNum = section.sectionNum;
-				const sectionKey = `${section.titleNum}-${baseSectionNum}`;
-				const count = sectionCounts.get(sectionKey) ?? 0;
-				sectionCounts.set(sectionKey, count + 1);
-				const finalSectionNum =
-					count === 0 ? baseSectionNum : `${baseSectionNum}-${count + 1}`;
-
-				const stringId = `${parentStringId}/section-${finalSectionNum}`;
-				if (seenSections.has(stringId)) {
-					console.error(`Duplicate section found: ${stringId}`);
-					continue;
-				}
-				seenSections.add(stringId);
-
-				shardItems.push({
-					parentId: parentStringId,
-					childId: stringId,
-					sourceUrl: unit.url,
-					meta: {
-						kind: "section",
-						sectionNum: finalSectionNum,
-						titleNum: section.titleNum,
-					},
-				});
+			const section = value.section;
+			const parentStringId = resolveSectionParentStringId(
+				rootStringId,
+				section.parentRef,
+			);
+			const stringId = `${parentStringId}/section-${section.sectionNum}`;
+			if (seenSections.has(stringId)) {
+				console.error(`Duplicate section found: ${stringId}`);
+				continue;
 			}
+			seenSections.add(stringId);
+
+			shardItems.push({
+				parentId: parentStringId,
+				childId: stringId,
+				sourceUrl: unit.url,
+				meta: {
+					kind: "section",
+					sectionKey: section.sectionKey,
+				},
+			});
 		}
+
+		ensureTitleShard(unit.titleNum, `Title ${unit.titleNum}`);
 
 		console.log(
 			`Planned Title ${unit.titleNum}: ${shardItems.length} shard items`,
@@ -308,32 +293,23 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 			);
 		}
 
-		const stream = streamUSCXmlFromChunks(chunks, unit.titleNum, unit.url);
-		const sectionsByNum = new Map<string, USCSection>();
-		const sectionCounts = new Map<string, number>();
-
-		while (true) {
-			const { value, done } = await stream.next();
-			if (done) break;
-
-			if (value.type === "section") {
-				const baseSectionNum = value.section.sectionNum;
-				const sectionKey = `${value.section.titleNum}-${baseSectionNum}`;
-				const count = sectionCounts.get(sectionKey) ?? 0;
-				sectionCounts.set(sectionKey, count + 1);
-				const finalSectionNum =
-					count === 0 ? baseSectionNum : `${baseSectionNum}-${count + 1}`;
-				sectionsByNum.set(finalSectionNum, value.section);
-			}
+		const stream = streamUSCSectionContentXmlFromChunks(
+			chunks,
+			unit.titleNum,
+			unit.url,
+		);
+		const sectionsByKey = new Map<string, USCSection>();
+		for await (const section of stream) {
+			sectionsByKey.set(section.sectionKey, section);
 		}
 
 		for (const item of sectionItems) {
 			if (item.meta.kind !== "section") continue;
 
-			const section = sectionsByNum.get(item.meta.sectionNum);
+			const section = sectionsByKey.get(item.meta.sectionKey);
 			if (!section) {
 				throw new Error(
-					`Missing section ${item.meta.sectionNum} in Title ${item.meta.titleNum}`,
+					`Missing section ${item.meta.sectionKey} in Title ${unit.titleNum}`,
 				);
 			}
 
@@ -384,7 +360,7 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 				content.metadata = { cross_references: crossReferences };
 			}
 
-			const readableId = `${section.titleNum} USC ${item.meta.sectionNum}`;
+			const readableId = `${section.titleNum} USC ${section.sectionNum}`;
 
 			results.push({
 				node: {

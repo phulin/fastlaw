@@ -18,10 +18,11 @@ CREATE TABLE IF NOT EXISTS blobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_blobs_source ON blobs(source_id);
+CREATE INDEX IF NOT EXISTS idx_blobs_source_hash ON blobs(source_id, hash);
 CREATE INDEX IF NOT EXISTS idx_blobs_packfile ON blobs(packfile_key);
 
 CREATE TABLE IF NOT EXISTS source_versions (
-  id TEXT PRIMARY KEY,               -- e.g., 'cgs-2025', 'usc-2024'
+  id TEXT PRIMARY KEY,               -- e.g., 'cgs-2025', 'usc-119-73'
   source_id TEXT NOT NULL REFERENCES sources(id),
   version_date TEXT NOT NULL,        -- ISO date identifier for this version
   root_node_id TEXT,                 -- Tree root (set after nodes created)

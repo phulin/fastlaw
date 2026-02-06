@@ -444,10 +444,13 @@ describe("USC Parser - Title 1", () => {
 		// Paths and IDs
 		expect(section1.path).toBe("/statutes/usc/section/1/1");
 		expect(section1.docId).toBe("doc_usc_1-1");
-		expect(section1.levelId).toBe("lvl_usc_section_1-1");
+		expect(section1.sectionKey).toBe("1:1");
 
 		// Parent linkage (sections in chapter 1 should have chapter parent)
-		expect(section1.parentLevelId).toMatch(/^lvl_usc_chapter_/);
+		expect(section1.parentRef.kind).toBe("level");
+		if (section1.parentRef.kind === "level") {
+			expect(section1.parentRef.levelType).toBe("chapter");
+		}
 	});
 
 	it("extracts section 201 heading from the section header", async () => {
