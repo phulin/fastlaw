@@ -1,216 +1,116 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mglAdapter } from "../lib/mgl/adapter";
 import { extractSectionCrossReferences } from "../lib/mgl/cross-references";
 import { createRateLimiter } from "../lib/mgl/fetcher";
 import {
 	designatorSortOrder,
-	extractVersionIdFromRoot,
-	parseChaptersFromTitleResponse,
-	parsePartsFromRoot,
+	extractVersionIdFromLandingHtml,
+	type MglApiSection,
+	parseChapterDetail,
+	parsePartDetail,
+	parsePartSummary,
 	parseSectionContent,
-	parseSectionsFromChapterPage,
-	parseTitlesFromPart,
+	parseSectionSummary,
 } from "../lib/mgl/parser";
-import { normalizeMglUrl } from "../lib/mgl/utils";
-
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const fixturesDir = join(__dirname, "fixtures", "mgl", "chapter1");
-
-function loadFixture(filename: string): string {
-	return readFileSync(join(fixturesDir, filename), "utf-8");
-}
+import { normalizeMglApiUrl, normalizeMglPublicUrl } from "../lib/mgl/utils";
 
 function normalizeText(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
+}
+
+function baselineBodyFromApiText(value: string): string {
 	return value
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
 		.replace(/[\u00a0\u202f]/g, " ")
-		.replace(/\s+/g, " ")
+		.split("\n")
+		.map((line) => line.trim())
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
 		.trim();
-}
-
-function decodeHtml(value: string): string {
-	return value
-		.replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
-		.replace(/&#x([\da-fA-F]+);/g, (_, hex) =>
-			String.fromCharCode(Number.parseInt(hex, 16)),
-		)
-		.replace(/&nbsp;/g, " ")
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'");
-}
-
-function stripTags(value: string): string {
-	return value.replace(/<[^>]+>/g, " ");
-}
-
-function findFirstMismatch(a: string, b: string): number {
-	const limit = Math.min(a.length, b.length);
-	for (let i = 0; i < limit; i++) {
-		if (a[i] !== b[i]) return i;
-	}
-	return limit;
-}
-
-function contextAt(value: string, index: number): string {
-	const start = Math.max(0, index - 30);
-	const end = Math.min(value.length, index + 30);
-	return value.slice(start, end);
-}
-
-function extractBaselineSectionContent(html: string): {
-	heading: string;
-	body: string;
-} {
-	const headingMatch = html.match(
-		/<h2[^>]*id="skipTo"[^>]*>\s*Section\s*[^:<]+:\s*<small>([\s\S]*?)<\/small>/i,
-	);
-	const heading = headingMatch
-		? normalizeText(decodeHtml(stripTags(headingMatch[1])))
-		: "";
-
-	const contentStart = html.indexOf("</h2>");
-	const scriptStart = html.indexOf(
-		'<script src="/bundles/sidebar',
-		contentStart,
-	);
-	const footerStart = html.indexOf("<footer>", contentStart);
-	const contentEnd =
-		scriptStart !== -1
-			? scriptStart
-			: footerStart !== -1
-				? footerStart
-				: html.length;
-	const contentHtml =
-		contentStart === -1 ? "" : html.slice(contentStart + 5, contentEnd);
-
-	const bodyParts = [...contentHtml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)]
-		.map((match) => normalizeText(decodeHtml(stripTags(match[1]))))
-		.filter((text) => text.length > 0);
-
-	return {
-		heading,
-		body: bodyParts.join("\n\n").trim(),
-	};
 }
 
 describe("MGL parser", () => {
 	it("extracts version from disclaimer date", () => {
 		const html =
 			"This site includes all amendments to the General Laws passed before <strong>January 10</strong><strong>, 2025</strong>, for laws enacted since that time";
-		expect(extractVersionIdFromRoot(html)).toBe("2025-01-10");
+		expect(extractVersionIdFromLandingHtml(html)).toBe("2025-01-10");
 	});
 
-	it("extracts parts from root page", () => {
-		const html = `
-			<ul class="generalLawsList">
-				<li><a href="/Laws/GeneralLaws/PartI"><span class="part">Part I</span><span class="partTitle">ADMINISTRATION OF THE GOVERNMENT</span></a></li>
-				<li><a href="/Laws/GeneralLaws/PartII"><span class="part">Part II</span><span class="partTitle">REAL AND PERSONAL PROPERTY</span></a></li>
-			</ul>
-		`;
-
-		const parts = parsePartsFromRoot(
-			html,
-			"https://malegislature.gov/Laws/GeneralLaws",
-		);
-		expect(parts).toHaveLength(2);
-		expect(parts[0]).toMatchObject({
+	it("parses part/chapter/section API models", () => {
+		expect(
+			parsePartSummary(
+				{ Code: "I", Details: "http://malegislature.gov/api/Parts/I" },
+				"https://malegislature.gov/api/parts/i",
+			),
+		).toMatchObject({
 			partCode: "I",
-			partId: "1",
+			sortOrder: 1,
+		});
+
+		expect(
+			parsePartDetail(
+				{
+					Code: "I",
+					Name: "ADMINISTRATION OF THE GOVERNMENT",
+					FirstChapter: 1,
+					LastChapter: 182,
+					Details: "http://malegislature.gov/api/Parts/I",
+					Chapters: [],
+				},
+				"https://malegislature.gov/api/parts/i",
+			),
+		).toMatchObject({
+			partCode: "I",
 			partName: "ADMINISTRATION OF THE GOVERNMENT",
-			partUrl: "https://malegislature.gov/laws/generallaws/parti",
+		});
+
+		expect(
+			parseChapterDetail(
+				{
+					Code: "2A",
+					Name: "EMBLEMS",
+					IsRepealed: false,
+					StrickenText: null,
+					Details: "http://malegislature.gov/api/Chapters/2A",
+					Sections: [],
+				},
+				"https://malegislature.gov/api/chapters/2a",
+			),
+		).toMatchObject({
+			chapterCode: "2A",
+			chapterName: "EMBLEMS",
+		});
+
+		expect(
+			parseSectionSummary(
+				{
+					Code: "7A",
+					ChapterCode: "1",
+					Details: "http://malegislature.gov/api/Chapters/1/Sections/7A",
+				},
+				"https://malegislature.gov/api/chapters/1/sections/7a",
+			),
+		).toMatchObject({
+			sectionCode: "7A",
+			chapterCode: "1",
 		});
 	});
 
-	it("extracts titles from part page accordion panels", () => {
-		const html = `
-			<div id="Ititle" class="panel panel-default">
-				<div class="panel-heading">
-					<div class="row">
-						<div class="col-xs-2">
-							<h4 class="glTitle panel-title">
-								<a data-toggle="collapse" data-parent="#accordion" href="#titleI" class="fnRemoveClick1" onclick="accordionAjaxLoad('1', '1', 'I')">Title I</a>
-							</h4>
-						</div>
-						<div class="col-xs-10 col-sm-8">
-							<h4 class="panel-title">
-								<a data-toggle="collapse" data-parent="#accordion" href="#titleI" class="fnRemoveClick1" onclick="accordionAjaxLoad('1', '1', 'I')">JURISDICTION AND EMBLEMS</a>
-							</h4>
-						</div>
-					</div>
-				</div>
-			</div>
-		`;
-
-		const titles = parseTitlesFromPart(html);
-		expect(titles).toHaveLength(1);
-		expect(titles[0]).toMatchObject({
-			titleCode: "I",
-			titleId: "1",
-			titleName: "JURISDICTION AND EMBLEMS",
+	it("extracts section content from API text", () => {
+		const content = parseSectionContent({
+			Code: "7A",
+			ChapterCode: "1",
+			Details: "https://malegislature.gov/api/Chapters/1/Sections/7A",
+			Name: "Legislative jurisdiction over property",
+			IsRepealed: false,
+			Text: "Section 7A. The governor may accept retrocession.\r\n\r\nA copy of the notice shall be filed.",
 		});
-	});
-
-	it("extracts chapters from title endpoint response", () => {
-		const html = `
-			<div id="title" class="panel-collapse fnContentLoaded collapse">
-				<ul class="generalLawsList">
-					<li><a href="/Laws/GeneralLaws/PartI/TitleI/Chapter1"><span class="chapter">Chapter 1</span><span class="chapterTitle">JURISDICTION</span></a></li>
-					<li><a href="/Laws/GeneralLaws/PartI/TitleI/Chapter2A"><span class="chapter">Chapter 2A</span><span class="chapterTitle">EMBLEMS</span></a></li>
-				</ul>
-			</div>
-		`;
-
-		const chapters = parseChaptersFromTitleResponse(
-			html,
-			"https://malegislature.gov",
-		);
-		expect(chapters).toHaveLength(2);
-		expect(chapters[0].chapterNumber).toBe("1");
-		expect(chapters[1].chapterNumber).toBe("2A");
-		expect(chapters[1].chapterUrl).toBe(
-			"https://malegislature.gov/laws/generallaws/parti/titlei/chapter2a",
-		);
-	});
-
-	it("extracts sections and section body", () => {
-		const chapterHtml = `
-			<ul class="generalLawsList">
-				<li><a href="/Laws/GeneralLaws/PartI/TitleI/Chapter1/Section1"><span class="section">Section 1</span><span class="sectionTitle">Citizens of commonwealth defined</span></a></li>
-				<li><a href="/Laws/GeneralLaws/PartI/TitleI/Chapter1/Section7A"><span class="section">Section 7A</span><span class="sectionTitle">Retrocession</span></a></li>
-			</ul>
-		`;
-		const sections = parseSectionsFromChapterPage(
-			chapterHtml,
-			"https://malegislature.gov",
-		);
-		expect(sections).toHaveLength(2);
-		expect(sections[1]).toMatchObject({
-			sectionNumber: "7A",
-			sectionName: "Retrocession",
-			sectionUrl:
-				"https://malegislature.gov/laws/generallaws/parti/titlei/chapter1/section7a",
-		});
-
-		const sectionHtml = `
-			<h2 id="skipTo" class="h3 genLawHeading hidden-print">Section 7A: <small>Legislative jurisdiction over property</small></h2>
-			<p><p>Section 7A. The governor may accept retrocession.</p>
-			<p>A copy of the notice shall be filed with the state secretary.</p>
-			</p>
-			<script src="/bundles/sidebar?v=abc"></script>
-		`;
-		const content = parseSectionContent(sectionHtml);
 		expect(content.heading).toBe("Legislative jurisdiction over property");
 		expect(content.body).toContain(
 			"Section 7A. The governor may accept retrocession.",
 		);
-		expect(content.body).toContain(
-			"A copy of the notice shall be filed with the state secretary.",
-		);
+		expect(content.body).toContain("A copy of the notice shall be filed.");
 	});
 
 	it("sorts numeric and suffixed designators", () => {
@@ -222,36 +122,39 @@ describe("MGL parser", () => {
 });
 
 describe("MGL URL normalization", () => {
-	it("normalizes valid URLs and strips fragments", () => {
+	it("normalizes public and api URLs", () => {
 		expect(
-			normalizeMglUrl(
-				"/Laws/GeneralLaws/PartI/TitleI/Chapter1#foo",
+			normalizeMglPublicUrl(
+				"/Laws/GeneralLaws/Chapter1#foo",
 				"https://malegislature.gov/Laws/GeneralLaws",
 			),
-		).toBe("https://malegislature.gov/laws/generallaws/parti/titlei/chapter1");
+		).toBe("https://malegislature.gov/laws/generallaws/chapter1");
+		expect(
+			normalizeMglApiUrl(
+				"http://malegislature.gov/api/Chapters/1/Sections/1/",
+				"https://malegislature.gov",
+			),
+		).toBe("https://malegislature.gov/api/chapters/1/sections/1");
 	});
 
 	it("rejects disallowed protocols, hostnames, and paths", () => {
 		expect(
-			normalizeMglUrl(
+			normalizeMglPublicUrl(
 				"mailto:test@example.com",
 				"https://malegislature.gov/Laws/GeneralLaws",
 			),
 		).toBeNull();
 		expect(
-			normalizeMglUrl(
-				"javascript:alert(1)",
-				"https://malegislature.gov/Laws/GeneralLaws",
+			normalizeMglApiUrl("javascript:alert(1)", "https://malegislature.gov"),
+		).toBeNull();
+		expect(
+			normalizeMglApiUrl(
+				"https://example.com/api/Parts/I",
+				"https://malegislature.gov",
 			),
 		).toBeNull();
 		expect(
-			normalizeMglUrl(
-				"https://example.com/Laws/GeneralLaws/PartI",
-				"https://malegislature.gov/Laws/GeneralLaws",
-			),
-		).toBeNull();
-		expect(
-			normalizeMglUrl(
+			normalizeMglPublicUrl(
 				"https://malegislature.gov/Bills/Search",
 				"https://malegislature.gov/Laws/GeneralLaws",
 			),
@@ -261,36 +164,38 @@ describe("MGL URL normalization", () => {
 
 describe("MGL hierarchy planning", () => {
 	it("builds deterministic parent/child hierarchy for sections", async () => {
-		const partHtml = `
-			<div id="Ititle" class="panel panel-default">
-				<div class="panel-heading">
-					<h4 class="panel-title"><a onclick="accordionAjaxLoad('1', '1', 'I')">Title I</a></h4>
-					<h4 class="panel-title"><a onclick="accordionAjaxLoad('1', '1', 'I')">JURISDICTION</a></h4>
-				</div>
-			</div>
-		`;
-		const titleHtml = `
-			<div id="title" class="panel-collapse fnContentLoaded collapse">
-				<ul class="generalLawsList">
-					<li><a href="/Laws/GeneralLaws/PartI/TitleI/Chapter1"><span class="chapter">Chapter 1</span><span class="chapterTitle">JURISDICTION</span></a></li>
-				</ul>
-			</div>
-		`;
-		const chapterHtml = `
-			<ul class="generalLawsList">
-				<li><a href="/Laws/GeneralLaws/PartI/TitleI/Chapter1/Section7A"><span class="section">Section 7A</span><span class="sectionTitle">Retrocession</span></a></li>
-			</ul>
-		`;
-
 		const responses = new Map<string, string>([
-			["https://malegislature.gov/laws/generallaws/parti", partHtml],
 			[
-				"https://malegislature.gov/generallaws/getchaptersfortitle?partid=1&titleid=1&code=i",
-				titleHtml,
+				"https://malegislature.gov/api/parts/i",
+				JSON.stringify({
+					Code: "I",
+					Name: "ADMINISTRATION",
+					FirstChapter: 1,
+					LastChapter: 1,
+					Chapters: [
+						{
+							Code: "1",
+							Details: "http://malegislature.gov/api/Chapters/1",
+						},
+					],
+				}),
 			],
 			[
-				"https://malegislature.gov/laws/generallaws/parti/titlei/chapter1",
-				chapterHtml,
+				"https://malegislature.gov/api/chapters/1",
+				JSON.stringify({
+					Code: "1",
+					Name: "JURISDICTION",
+					IsRepealed: false,
+					StrickenText: null,
+					Details: "http://malegislature.gov/api/Chapters/1",
+					Sections: [
+						{
+							Code: "7A",
+							ChapterCode: "1",
+							Details: "http://malegislature.gov/api/Chapters/1/Sections/7A",
+						},
+					],
+				}),
 			],
 		]);
 
@@ -304,6 +209,7 @@ describe("MGL hierarchy planning", () => {
 					if (!value) return null;
 					return {
 						text: async () => value,
+						json: async () => JSON.parse(value),
 					};
 				},
 				put: async (key: string, value: string) => {
@@ -314,9 +220,10 @@ describe("MGL hierarchy planning", () => {
 
 		const originalFetch = globalThis.fetch;
 		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
-			const key = typeof input === "string" ? input : input.toString();
-			const normalized = key.toLowerCase();
-			const body = responses.get(normalized);
+			const key = (typeof input === "string" ? input : input.toString())
+				.toLowerCase()
+				.replace(/\/$/, "");
+			const body = responses.get(key);
 			if (!body) {
 				return new Response("not found", { status: 404 });
 			}
@@ -351,9 +258,8 @@ describe("MGL hierarchy planning", () => {
 				unit: {
 					id: "part-i",
 					partCode: "I",
-					partId: "1",
 					partName: "ADMINISTRATION",
-					partUrl: "https://malegislature.gov/laws/generallaws/parti",
+					partApiUrl: "https://malegislature.gov/api/parts/i",
 					sortOrder: 1,
 				},
 			});
@@ -363,10 +269,10 @@ describe("MGL hierarchy planning", () => {
 			);
 			expect(sectionItem).toBeDefined();
 			expect(sectionItem?.parentId).toBe(
-				"mgl/2025-01-10/root/part-i/title-i/chapter-1",
+				"mgl/2025-01-10/root/part-i/chapter-1",
 			);
 			expect(sectionItem?.childId).toBe(
-				"mgl/2025-01-10/root/part-i/title-i/chapter-1/section-7a",
+				"mgl/2025-01-10/root/part-i/chapter-1/section-7a",
 			);
 		} finally {
 			globalThis.fetch = originalFetch;
@@ -394,18 +300,25 @@ describe("MGL cross-references", () => {
 });
 
 describe("MGL baseline text comparison (medium unit)", () => {
-	it("matches parser content against simple baseline across Chapter 1 sections", () => {
-		const chapterHtml = loadFixture("chapter.html");
-		const sections = parseSectionsFromChapterPage(
-			chapterHtml,
-			"https://malegislature.gov",
-		);
-		expect(sections.length).toBeGreaterThanOrEqual(10);
+	it("matches parser content against simple baseline across 10 sections", () => {
+		const sections: MglApiSection[] = Array.from({ length: 10 }, (_, index) => {
+			const sectionNumber = String(index + 1);
+			return {
+				Code: sectionNumber,
+				ChapterCode: "1",
+				Details: `https://malegislature.gov/api/Chapters/1/Sections/${sectionNumber}`,
+				Name: `Section ${sectionNumber} heading`,
+				IsRepealed: false,
+				Text: `Section ${sectionNumber}. Line one.\r\n\r\nLine two with   extra spaces.`,
+			};
+		});
 
 		for (const section of sections) {
-			const sectionHtml = loadFixture(`section-${section.sectionNumber}.html`);
-			const parsed = parseSectionContent(sectionHtml);
-			const baseline = extractBaselineSectionContent(sectionHtml);
+			const parsed = parseSectionContent(section);
+			const baseline = {
+				heading: section.Name.trim(),
+				body: baselineBodyFromApiText(section.Text ?? ""),
+			};
 
 			const parserConcatenated = normalizeText(
 				`${parsed.heading}\n${parsed.body}`,
@@ -413,24 +326,7 @@ describe("MGL baseline text comparison (medium unit)", () => {
 			const baselineConcatenated = normalizeText(
 				`${baseline.heading}\n${baseline.body}`,
 			);
-
-			if (parserConcatenated !== baselineConcatenated) {
-				const mismatch = findFirstMismatch(
-					parserConcatenated,
-					baselineConcatenated,
-				);
-				const expectedContext = contextAt(baselineConcatenated, mismatch);
-				const actualContext = contextAt(parserConcatenated, mismatch);
-
-				throw new Error(
-					[
-						`Section ID: ${section.sectionNumber}`,
-						`First mismatch index: ${mismatch}`,
-						`Expected context: ${expectedContext}`,
-						`Actual context: ${actualContext}`,
-					].join("\n"),
-				);
-			}
+			expect(parserConcatenated).toBe(baselineConcatenated);
 		}
 	});
 });

@@ -7,24 +7,27 @@ import type {
 } from "../workflows/generic";
 import { extractSectionCrossReferences } from "./cross-references";
 import {
-	fetchMglHtmlWithCache,
-	fetchMglRootHtml,
-	fetchMglTitleChapters,
+	fetchMglChapter,
+	fetchMglLandingHtml,
+	fetchMglPart,
+	fetchMglParts,
+	fetchMglSection,
 } from "./fetcher";
 import {
 	designatorSortOrder,
-	extractVersionIdFromRoot,
+	extractVersionIdFromLandingHtml,
 	type MglPart,
-	parseChaptersFromTitleResponse,
-	parsePartsFromRoot,
+	parseChapterDetail,
+	parsePartDetail,
+	parsePartSummary,
 	parseSectionContent,
-	parseSectionsFromChapterPage,
-	parseTitlesFromPart,
+	parseSectionSummary,
 } from "./parser";
+import { normalizeMglApiUrl, normalizeMglPublicUrl } from "./utils";
 
 const SOURCE_CODE = "mgl";
 const SOURCE_NAME = "Massachusetts General Laws";
-const SECTION_LEVEL_INDEX = 3;
+const SECTION_LEVEL_INDEX = 2;
 const BLOB_STORE_BATCH_SIZE = 50;
 
 interface MglUnitRoot extends MglPart {
@@ -36,11 +39,9 @@ type MglShardMeta =
 	| {
 			kind: "section";
 			partCode: string;
-			titleCode: string;
-			chapterNumber: string;
-			sectionNumber: string;
-			sectionName: string;
-			sectionUrl: string;
+			chapterCode: string;
+			sectionCode: string;
+			sectionApiUrl: string;
 			sortOrder: number;
 	  };
 
@@ -69,20 +70,26 @@ function makePartId(rootId: string, partCode: string): string {
 	return `${rootId}/part-${partCode.toLowerCase()}`;
 }
 
-function makeTitleId(partId: string, titleCode: string): string {
-	return `${partId}/title-${titleCode.toLowerCase()}`;
+function makeChapterId(partId: string, chapterCode: string): string {
+	return `${partId}/chapter-${chapterCode.toLowerCase()}`;
 }
 
-function makeChapterId(titleId: string, chapterNumber: string): string {
-	return `${titleId}/chapter-${chapterNumber.toLowerCase()}`;
-}
-
-function makeSectionId(chapterId: string, sectionNumber: string): string {
-	return `${chapterId}/section-${sectionNumber.toLowerCase()}`;
+function makeSectionId(chapterId: string, sectionCode: string): string {
+	return `${chapterId}/section-${sectionCode.toLowerCase()}`;
 }
 
 function normalizeName(name: string): string {
 	return name.replace(/\s+/g, " ").trim();
+}
+
+function getApiUrl(rawUrl: string, baseUrl: string): string {
+	return (
+		normalizeMglApiUrl(rawUrl, baseUrl) ?? new URL(rawUrl, baseUrl).toString()
+	);
+}
+
+function chapterPageUrl(baseUrl: string, chapterCode: string): string {
+	return `${baseUrl}/laws/generallaws/chapter${chapterCode.toLowerCase()}`;
 }
 
 export const mglAdapter: GenericWorkflowAdapter<MglUnitRoot, MglShardMeta> = {
@@ -97,23 +104,42 @@ export const mglAdapter: GenericWorkflowAdapter<MglUnitRoot, MglShardMeta> = {
 
 	async discoverRoot({ env }): Promise<RootPlan<MglUnitRoot>> {
 		const startUrl = `${env.MGL_BASE_URL}${env.MGL_START_PATH}`;
-		const rootHtml = await fetchMglRootHtml(startUrl);
-		const versionId = extractVersionIdFromRoot(rootHtml);
+		const rootHtml = await fetchMglLandingHtml(startUrl);
+		const versionId = extractVersionIdFromLandingHtml(rootHtml);
 
 		await env.STORAGE.put(`sources/mgl/${versionId}/root.html`, rootHtml, {
 			httpMetadata: { contentType: "text/html" },
 		});
 
-		const parts = parsePartsFromRoot(rootHtml, startUrl);
-		const unitRoots: MglUnitRoot[] = parts.map((part) => ({
-			...part,
-			id: `part-${part.partCode.toLowerCase()}`,
-		}));
+		const partSummaries = await fetchMglParts(env, versionId, env.MGL_BASE_URL);
+		const units: MglUnitRoot[] = [];
+		for (const summary of partSummaries) {
+			const summaryPart = parsePartSummary(
+				summary,
+				getApiUrl(summary.Details, env.MGL_BASE_URL),
+			);
+			const detail = await fetchMglPart(
+				env,
+				versionId,
+				env.MGL_BASE_URL,
+				summaryPart.partCode,
+			);
+			const parsed = parsePartDetail(
+				detail,
+				getApiUrl(summary.Details, env.MGL_BASE_URL),
+			);
+			units.push({
+				...parsed,
+				id: `part-${parsed.partCode.toLowerCase()}`,
+			});
+		}
+
+		units.sort((a, b) => a.sortOrder - b.sortOrder);
 
 		return {
 			versionId,
 			rootNode: createRootNodePlan(versionId, startUrl),
-			unitRoots,
+			unitRoots: units,
 		};
 	},
 
@@ -134,116 +160,88 @@ export const mglAdapter: GenericWorkflowAdapter<MglUnitRoot, MglShardMeta> = {
 			path: `/statutes/mgl/part/${unit.partCode.toLowerCase()}`,
 			readable_id: `Part ${unit.partCode}`,
 			heading_citation: `Part ${unit.partCode}`,
-			source_url: unit.partUrl,
+			source_url: unit.partApiUrl,
 			accessed_at: accessedAt,
 		};
 
 		shardItems.push({
 			parentId: root.rootNode.id,
 			childId: partId,
-			sourceUrl: unit.partUrl,
+			sourceUrl: unit.partApiUrl,
 			meta: { kind: "node", node: partNode },
 		});
 
-		const partHtml = await fetchMglHtmlWithCache(
+		const part = await fetchMglPart(
 			env,
 			root.versionId,
-			unit.partUrl,
+			env.MGL_BASE_URL,
+			unit.partCode,
 		);
-		const titles = parseTitlesFromPart(partHtml);
+		const chapterSummaries = [...part.Chapters].sort(
+			(a, b) => designatorSortOrder(a.Code) - designatorSortOrder(b.Code),
+		);
 
-		for (const title of titles) {
-			const titleId = makeTitleId(partId, title.titleCode);
-			const titleNode: NodeMeta = {
-				id: titleId,
+		for (const chapterSummary of chapterSummaries) {
+			const chapterApiUrl = getApiUrl(chapterSummary.Details, env.MGL_BASE_URL);
+			const chapterDetail = await fetchMglChapter(
+				env,
+				root.versionId,
+				env.MGL_BASE_URL,
+				chapterSummary.Code,
+			);
+			const chapter = parseChapterDetail(chapterDetail, chapterApiUrl);
+			const chapterId = makeChapterId(partId, chapter.chapterCode);
+			const publicChapterUrl =
+				normalizeMglPublicUrl(chapterSummary.Details, env.MGL_BASE_URL) ??
+				chapterPageUrl(env.MGL_BASE_URL, chapter.chapterCode);
+
+			const chapterNode: NodeMeta = {
+				id: chapterId,
 				source_version_id: root.sourceVersionId,
 				parent_id: partId,
-				level_name: "title",
+				level_name: "chapter",
 				level_index: 1,
-				sort_order: title.sortOrder,
-				name: normalizeName(title.titleName),
-				path: `/statutes/mgl/part/${unit.partCode.toLowerCase()}/title/${title.titleCode.toLowerCase()}`,
-				readable_id: `Title ${title.titleCode}`,
-				heading_citation: `Title ${title.titleCode}`,
-				source_url: `${unit.partUrl}/Title${title.titleCode}`,
+				sort_order: chapter.sortOrder,
+				name: normalizeName(chapter.chapterName),
+				path: `/statutes/mgl/part/${unit.partCode.toLowerCase()}/chapter/${chapter.chapterCode.toLowerCase()}`,
+				readable_id: `Chapter ${chapter.chapterCode}`,
+				heading_citation: `Chapter ${chapter.chapterCode}`,
+				source_url: publicChapterUrl,
 				accessed_at: accessedAt,
 			};
 
 			shardItems.push({
 				parentId: partId,
-				childId: titleId,
-				sourceUrl: titleNode.source_url ?? unit.partUrl,
-				meta: { kind: "node", node: titleNode },
+				childId: chapterId,
+				sourceUrl: chapter.chapterApiUrl,
+				meta: { kind: "node", node: chapterNode },
 			});
 
-			const chaptersHtml = await fetchMglTitleChapters(
-				env,
-				root.versionId,
-				env.MGL_BASE_URL,
-				unit.partId,
-				title.titleId,
-				title.titleCode,
+			const sectionSummaries = [...chapterDetail.Sections].sort(
+				(a, b) => designatorSortOrder(a.Code) - designatorSortOrder(b.Code),
 			);
-			const chapters = parseChaptersFromTitleResponse(
-				chaptersHtml,
-				env.MGL_BASE_URL,
-			);
-
-			for (const chapter of chapters) {
-				const chapterId = makeChapterId(titleId, chapter.chapterNumber);
-				const chapterNode: NodeMeta = {
-					id: chapterId,
-					source_version_id: root.sourceVersionId,
-					parent_id: titleId,
-					level_name: "chapter",
-					level_index: 2,
-					sort_order: designatorSortOrder(chapter.chapterNumber),
-					name: normalizeName(chapter.chapterName),
-					path: `/statutes/mgl/part/${unit.partCode.toLowerCase()}/title/${title.titleCode.toLowerCase()}/chapter/${chapter.chapterNumber.toLowerCase()}`,
-					readable_id: `Chapter ${chapter.chapterNumber}`,
-					heading_citation: `Chapter ${chapter.chapterNumber}`,
-					source_url: chapter.chapterUrl,
-					accessed_at: accessedAt,
-				};
+			for (const sectionSummary of sectionSummaries) {
+				const section = parseSectionSummary(
+					sectionSummary,
+					getApiUrl(sectionSummary.Details, env.MGL_BASE_URL),
+				);
+				const sectionId = makeSectionId(chapterId, section.sectionCode);
+				if (seenSectionIds.has(sectionId)) continue;
+				seenSectionIds.add(sectionId);
 
 				shardItems.push({
-					parentId: titleId,
-					childId: chapterId,
-					sourceUrl: chapter.chapterUrl,
-					meta: { kind: "node", node: chapterNode },
+					parentId: chapterId,
+					childId: sectionId,
+					sourceUrl: section.sectionApiUrl,
+					meta: {
+						kind: "section",
+						partCode: unit.partCode,
+						chapterCode: chapter.chapterCode,
+						sectionCode: section.sectionCode,
+						sectionApiUrl: section.sectionApiUrl,
+						sortOrder: section.sortOrder,
+					},
 				});
-
-				const chapterHtml = await fetchMglHtmlWithCache(
-					env,
-					root.versionId,
-					chapter.chapterUrl,
-				);
-				const sections = parseSectionsFromChapterPage(
-					chapterHtml,
-					env.MGL_BASE_URL,
-				);
-
-				for (const section of sections) {
-					const sectionId = makeSectionId(chapterId, section.sectionNumber);
-					if (seenSectionIds.has(sectionId)) continue;
-					seenSectionIds.add(sectionId);
-
-					shardItems.push({
-						parentId: chapterId,
-						childId: sectionId,
-						sourceUrl: section.sectionUrl,
-						meta: {
-							kind: "section",
-							partCode: unit.partCode,
-							titleCode: title.titleCode,
-							chapterNumber: chapter.chapterNumber,
-							sectionNumber: section.sectionNumber,
-							sectionName: normalizeName(section.sectionName),
-							sectionUrl: section.sectionUrl,
-							sortOrder: section.sortOrder,
-						},
-					});
-				}
 			}
 		}
 
@@ -287,16 +285,17 @@ export const mglAdapter: GenericWorkflowAdapter<MglUnitRoot, MglShardMeta> = {
 		};
 
 		for (const item of sectionItems) {
-			const sectionHtml = await fetchMglHtmlWithCache(
+			const section = await fetchMglSection(
 				env,
 				root.versionId,
-				item.meta.sectionUrl,
+				env.MGL_BASE_URL,
+				item.meta.chapterCode,
+				item.meta.sectionCode,
 			);
-			const parsed = parseSectionContent(sectionHtml);
-			const sectionHeading = parsed.heading || item.meta.sectionName;
+			const parsed = parseSectionContent(section);
 			const crossReferences = extractSectionCrossReferences(parsed.body);
-			const readableId = `MGL c.${item.meta.chapterNumber} §${item.meta.sectionNumber}`;
-			const path = `/statutes/mgl/part/${item.meta.partCode.toLowerCase()}/title/${item.meta.titleCode.toLowerCase()}/chapter/${item.meta.chapterNumber.toLowerCase()}/section/${item.meta.sectionNumber.toLowerCase()}`;
+			const readableId = `MGL c.${item.meta.chapterCode} §${item.meta.sectionCode}`;
+			const path = `/statutes/mgl/part/${item.meta.partCode.toLowerCase()}/chapter/${item.meta.chapterCode.toLowerCase()}/section/${item.meta.sectionCode.toLowerCase()}`;
 
 			pendingWrites.push({
 				node: {
@@ -306,11 +305,11 @@ export const mglAdapter: GenericWorkflowAdapter<MglUnitRoot, MglShardMeta> = {
 					level_name: "section",
 					level_index: SECTION_LEVEL_INDEX,
 					sort_order: item.meta.sortOrder,
-					name: sectionHeading,
+					name: parsed.heading,
 					path,
 					readable_id: readableId,
 					heading_citation: readableId,
-					source_url: item.meta.sectionUrl,
+					source_url: item.meta.sectionApiUrl,
 					accessed_at: accessedAt,
 				},
 				content: {
