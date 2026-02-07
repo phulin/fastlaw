@@ -2,7 +2,6 @@ import type { NodeMeta } from "../../types";
 import type {
 	GenericWorkflowAdapter,
 	RootPlan,
-	ShardItem,
 	ShardWorkItem,
 	UnitPlan,
 } from "../workflows/generic";
@@ -21,13 +20,13 @@ import {
 	type USCLevel,
 	type USCLevelType,
 	type USCParentRef,
-	type USCSection,
 } from "./parser";
 
 const SOURCE_CODE = "usc";
 const SOURCE_NAME = "United States Code";
 
 const SECTION_LEVEL_INDEX = Object.keys(USC_LEVEL_INDEX).length;
+const BLOB_STORE_BATCH_SIZE = 50;
 
 interface UscUnitRoot {
 	id: string;
@@ -38,6 +37,9 @@ interface UscUnitRoot {
 type UscShardMeta =
 	| { kind: "node"; node: NodeMeta }
 	| { kind: "section"; sectionKey: string };
+type UscSectionShardItem = ShardWorkItem<
+	Extract<UscShardMeta, { kind: "section" }>
+>;
 
 function compareKeys(
 	a: [number, [number, string] | string],
@@ -91,7 +93,7 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 		region: "US",
 		docType: "statute",
 	},
-	maxUnitConcurrency: 5,
+	maxUnitConcurrency: 1,
 
 	async discoverRoot({ env }): Promise<RootPlan<UscUnitRoot>> {
 		const titleUrls = await getUSCTitleUrls();
@@ -270,20 +272,36 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 		unit,
 		sourceVersionId,
 		items,
-	}): Promise<ShardItem[]> {
+		nodeStore,
+		blobStore,
+	}): Promise<void> {
 		const accessedAt = new Date().toISOString();
-		const results: ShardItem[] = [];
-		const sectionItems: Array<ShardWorkItem<UscShardMeta>> = [];
+		const sectionItems: UscSectionShardItem[] = [];
+		const pendingWrites: Array<{
+			node: NodeMeta;
+			content: unknown;
+		}> = [];
 
 		for (const item of items) {
 			if (item.meta.kind === "node") {
-				results.push({ node: item.meta.node, content: null });
+				await nodeStore.store(item.meta.node, null);
 				continue;
 			}
-			sectionItems.push(item);
+			sectionItems.push(item as UscSectionShardItem);
 		}
 
-		if (sectionItems.length === 0) return results;
+		if (sectionItems.length === 0) return;
+
+		const flushPendingWrites = async () => {
+			if (pendingWrites.length === 0) return;
+			const blobHashes = await blobStore.storeJsonBatch(
+				pendingWrites.map((entry) => entry.content),
+			);
+			for (let i = 0; i < pendingWrites.length; i++) {
+				await nodeStore.store(pendingWrites[i].node, blobHashes[i]);
+			}
+			pendingWrites.length = 0;
+		};
 
 		// Re-parse the title XML to extract section content
 		const chunks = await fetchUSCTitleStreaming(unit.url, env.STORAGE);
@@ -298,20 +316,13 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 			unit.titleNum,
 			unit.url,
 		);
-		const sectionsByKey = new Map<string, USCSection>();
+		const sectionItemByKey = new Map(
+			sectionItems.map((item) => [item.meta.sectionKey, item] as const),
+		);
+
 		for await (const section of stream) {
-			sectionsByKey.set(section.sectionKey, section);
-		}
-
-		for (const item of sectionItems) {
-			if (item.meta.kind !== "section") continue;
-
-			const section = sectionsByKey.get(item.meta.sectionKey);
-			if (!section) {
-				throw new Error(
-					`Missing section ${item.meta.sectionKey} in Title ${unit.titleNum}`,
-				);
-			}
+			const item = sectionItemByKey.get(section.sectionKey);
+			if (!item) continue;
 
 			const crossReferences = extractSectionCrossReferences(
 				[section.body, section.citations].filter(Boolean).join("\n"),
@@ -361,8 +372,7 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 			}
 
 			const readableId = `${section.titleNum} USC ${section.sectionNum}`;
-
-			results.push({
+			pendingWrites.push({
 				node: {
 					id: item.childId,
 					source_version_id: sourceVersionId,
@@ -379,9 +389,20 @@ export const uscAdapter: GenericWorkflowAdapter<UscUnitRoot, UscShardMeta> = {
 				},
 				content,
 			});
-		}
+			if (pendingWrites.length >= BLOB_STORE_BATCH_SIZE) {
+				await flushPendingWrites();
+			}
 
-		return results;
+			sectionItemByKey.delete(section.sectionKey);
+		}
+		await flushPendingWrites();
+
+		if (sectionItemByKey.size > 0) {
+			const missingKey = sectionItemByKey.keys().next().value;
+			throw new Error(
+				`Missing section ${missingKey} in Title ${unit.titleNum}`,
+			);
+		}
 	},
 };
 

@@ -6,12 +6,12 @@ import {
 	getOrCreateSource,
 	insertNodesBatched,
 } from "../../versioning";
+import { NodeStore } from "./node-store";
 import { promiseAllWithConcurrency } from "./promise-all-with-concurrency";
-import {
-	type GenericWorkflowAdapter,
-	type GenericWorkflowResult,
-	type RootContext,
-	toNodeInsert,
+import type {
+	GenericWorkflowAdapter,
+	GenericWorkflowResult,
+	RootContext,
 } from "./types";
 
 const SHARD_BATCH_SIZE = 100;
@@ -101,37 +101,23 @@ export async function runGenericWorkflow<
 							root.sourceId,
 							adapter.source.code,
 						);
+						const nodeStore = new NodeStore(env.DB);
 
-						const items = await adapter.loadShardItems({
+						await adapter.loadShardItems({
 							env,
 							root,
 							unit,
 							sourceId: root.sourceId,
 							sourceVersionId: root.sourceVersionId,
 							items: batch,
-						});
-
-						const itemsWithContent = items.filter(
-							(item) => item.content !== null,
-						);
-						const blobHashes = itemsWithContent.length
-							? await blobStore.storeJsonBatch(
-									itemsWithContent.map((item) => item.content),
-								)
-							: [];
-						let blobIndex = 0;
-						const nodes = items.map((item) => {
-							const blobHash =
-								item.content === null
-									? null
-									: (blobHashes[blobIndex++] ?? null);
-							return toNodeInsert(item.node, blobHash);
+							nodeStore,
+							blobStore,
 						});
 
 						await blobStore.flush();
-						await insertNodesBatched(env.DB, nodes);
+						const insertedCount = await nodeStore.flush();
 
-						return { insertedCount: nodes.length };
+						return { insertedCount };
 					},
 				);
 

@@ -2,7 +2,6 @@ import type { Env, NodeMeta } from "../../types";
 import type {
 	GenericWorkflowAdapter,
 	RootPlan,
-	ShardItem,
 	ShardWorkItem,
 	UnitPlan,
 } from "../workflows/generic";
@@ -22,6 +21,7 @@ import {
 
 const SOURCE_CODE = "cgs";
 const SOURCE_NAME = "Connecticut General Statutes";
+const BLOB_STORE_BATCH_SIZE = 50;
 
 interface CgaUnitRoot {
 	id: string;
@@ -31,6 +31,9 @@ interface CgaUnitRoot {
 type CgaShardMeta =
 	| { kind: "node"; node: NodeMeta }
 	| { kind: "section"; sectionSlug: string };
+type CgaSectionShardItem = ShardWorkItem<
+	Extract<CgaShardMeta, { kind: "section" }>
+>;
 
 function createRootNodePlan(versionId: string, startUrl: string): NodeMeta {
 	const accessedAt = new Date().toISOString();
@@ -248,22 +251,23 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 		root,
 		sourceVersionId,
 		items,
-	}): Promise<ShardItem[]> {
+		nodeStore,
+		blobStore,
+	}): Promise<void> {
 		const accessedAt = new Date().toISOString();
-		const results: ShardItem[] = [];
-		const itemsByUrl = new Map<string, Array<ShardWorkItem<CgaShardMeta>>>();
+		const itemsByUrl = new Map<string, CgaSectionShardItem[]>();
 
 		for (const item of items) {
 			if (item.meta.kind === "node") {
-				results.push({ node: item.meta.node, content: null });
+				await nodeStore.store(item.meta.node, null);
 				continue;
 			}
 
 			const list = itemsByUrl.get(item.sourceUrl);
 			if (list) {
-				list.push(item);
+				list.push(item as CgaSectionShardItem);
 			} else {
-				itemsByUrl.set(item.sourceUrl, [item]);
+				itemsByUrl.set(item.sourceUrl, [item as CgaSectionShardItem]);
 			}
 		}
 
@@ -275,24 +279,28 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 				0,
 				Number.MAX_SAFE_INTEGER,
 			);
-			const sectionBySlug = new Map(
-				sections.map((section) => [
-					extractSectionSlug(section.stringId),
-					section,
-				]),
+			const sectionItemBySlug = new Map(
+				urlItems.map((item) => [item.meta.sectionSlug, item] as const),
 			);
-
-			for (const item of urlItems) {
-				if (item.meta.kind !== "section") {
-					continue;
+			const pendingWrites: Array<{
+				node: NodeMeta;
+				content: unknown;
+			}> = [];
+			const flushPendingWrites = async () => {
+				if (pendingWrites.length === 0) return;
+				const blobHashes = await blobStore.storeJsonBatch(
+					pendingWrites.map((entry) => entry.content),
+				);
+				for (let i = 0; i < pendingWrites.length; i++) {
+					await nodeStore.store(pendingWrites[i].node, blobHashes[i]);
 				}
+				pendingWrites.length = 0;
+			};
 
-				const section = sectionBySlug.get(item.meta.sectionSlug);
-				if (!section) {
-					throw new Error(
-						`Missing section ${item.meta.sectionSlug} in ${sourceUrl}`,
-					);
-				}
+			for (const section of sections) {
+				const slug = extractSectionSlug(section.stringId);
+				const item = sectionItemBySlug.get(slug);
+				if (!item) continue;
 
 				const crossReferences = extractSectionCrossReferences(
 					[section.body, section.seeAlso].filter(Boolean).join("\n"),
@@ -306,7 +314,7 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 					};
 				}
 
-				results.push({
+				pendingWrites.push({
 					node: {
 						id: item.childId,
 						source_version_id: sourceVersionId,
@@ -325,10 +333,19 @@ export const cgaAdapter: GenericWorkflowAdapter<CgaUnitRoot, CgaShardMeta> = {
 					},
 					content,
 				});
+				if (pendingWrites.length >= BLOB_STORE_BATCH_SIZE) {
+					await flushPendingWrites();
+				}
+
+				sectionItemBySlug.delete(slug);
+			}
+			await flushPendingWrites();
+
+			if (sectionItemBySlug.size > 0) {
+				const missingSlug = sectionItemBySlug.keys().next().value;
+				throw new Error(`Missing section ${missingSlug} in ${sourceUrl}`);
 			}
 		}
-
-		return results;
 	},
 };
 

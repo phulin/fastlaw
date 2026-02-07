@@ -1,4 +1,6 @@
-import type { Env, NodeInsert, NodeMeta } from "../../../types";
+import type { Env, NodeMeta } from "../../../types";
+import type { BlobStore } from "../../packfile";
+import type { NodeStore } from "./node-store";
 
 export interface SourceDescriptor {
 	code: string;
@@ -33,11 +35,6 @@ export interface UnitPlan<TShardMeta> {
 	shardItems: Array<ShardWorkItem<TShardMeta>>;
 }
 
-export interface ShardItem {
-	node: NodeMeta;
-	content: unknown | null;
-}
-
 export interface GenericWorkflowAdapter<
 	TUnit extends Rpc.Serializable<TUnit>,
 	TShardMeta extends Rpc.Serializable<TShardMeta>,
@@ -57,7 +54,9 @@ export interface GenericWorkflowAdapter<
 		sourceId: string;
 		sourceVersionId: string;
 		items: Array<ShardWorkItem<TShardMeta>>;
-	}): Promise<ShardItem[]>;
+		nodeStore: NodeStore;
+		blobStore: BlobStore;
+	}): Promise<void>;
 }
 
 export interface GenericWorkflowResult {
@@ -66,14 +65,4 @@ export interface GenericWorkflowResult {
 	unitsProcessed: number;
 	shardsProcessed: number;
 	nodesInserted: number;
-}
-
-export function toNodeInsert(
-	node: NodeMeta,
-	blobHash: string | null,
-): NodeInsert {
-	return {
-		...node,
-		blob_hash: blobHash,
-	};
 }
