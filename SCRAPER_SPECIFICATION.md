@@ -4,6 +4,8 @@ This document defines how to implement a new statute scraper in `packages/ingest
 
 The goal is simple: produce a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
 
+DO NOT return success without a fully compliant scraper. Keep iterating on your own until you have met all requirements in this document.
+
 ## 0. New Jurisdiction Implementation Playbook
 
 When adding a scraper for a new jurisdiction, follow this sequence:
@@ -47,6 +49,11 @@ A new scraper is not complete until all of the following pass:
    - include at least five ordinary sections
    - include at least five of each type of complex/edge section (for example repealed/reserved/transferred/table-heavy)
    - verify heading, body, history/citations routing, and path/ID correctness
+
+### 0.4 Politeness rules
+
+- Limit scraping to 10 requests/second.
+- First, try to find a bulk data download. If you can't find bulk data, try to find an API. If you can't do that, scrape any official-source HTML you can find.
 
 Do not report success until all checks above pass.
 

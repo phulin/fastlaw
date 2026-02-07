@@ -1,5 +1,5 @@
 import type { WorkflowStep } from "cloudflare:workers";
-import type { Env } from "../../../types";
+import type { Env, GenericWorkflowParams } from "../../../types";
 import { BlobStore } from "../../packfile";
 import {
 	ensureSourceVersion,
@@ -20,13 +20,25 @@ function safeStepId(raw: string): string {
 	return raw.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 48);
 }
 
+function unitIdFromRoot<TUnit extends Rpc.Serializable<TUnit>>(
+	unit: TUnit,
+): string {
+	if (
+		"id" in (unit as { id?: unknown }) &&
+		typeof (unit as { id?: unknown }).id === "string"
+	) {
+		return (unit as { id: string }).id;
+	}
+	throw new Error("Unit root is missing string id");
+}
+
 export async function runGenericWorkflow<
 	TUnit extends Rpc.Serializable<TUnit>,
 	TShardMeta extends Rpc.Serializable<TShardMeta>,
 >(args: {
 	env: Env;
 	step: WorkflowStep;
-	payload: { force?: boolean };
+	payload: GenericWorkflowParams;
 	adapter: GenericWorkflowAdapter<TUnit, TShardMeta>;
 }): Promise<GenericWorkflowResult> {
 	const { env, step, payload, adapter } = args;
@@ -74,18 +86,35 @@ export async function runGenericWorkflow<
 		return rootContext;
 	});
 
-	const maxUnitConcurrency =
-		adapter.maxUnitConcurrency ?? root.unitRoots.length;
+	const unitsToProcess = payload.unitId
+		? root.unitRoots.filter((unit) => unitIdFromRoot(unit) === payload.unitId)
+		: root.unitRoots;
+
+	if (payload.unitId && unitsToProcess.length === 0) {
+		throw new Error(`Unknown unit id: ${payload.unitId}`);
+	}
+
+	if (unitsToProcess.length === 0) {
+		return {
+			sourceVersionId: root.sourceVersionId,
+			canonicalName: root.canonicalName,
+			unitsProcessed: 0,
+			shardsProcessed: 0,
+			nodesInserted: 0,
+		};
+	}
+
+	const maxUnitConcurrency = Math.min(
+		adapter.maxUnitConcurrency ?? unitsToProcess.length,
+		unitsToProcess.length,
+	);
+
 	const unitResults = await promiseAllWithConcurrency(
-		root.unitRoots.map((unit) => async () => {
-			const unitKey = safeStepId(
-				"id" in (unit as { id?: string })
-					? String((unit as { id?: string }).id ?? "unit")
-					: "unit",
-			);
-			const plan = await step.do(`unit-${unitKey}-plan`, async () => {
-				return await adapter.planUnit({ env, root, unit });
-			});
+		unitsToProcess.map((unit) => async () => {
+			const unitKey = safeStepId(unitIdFromRoot(unit));
+			// Keep unit plan out of step output storage to avoid the 1MiB limit
+			// when large units produce many shard items.
+			const plan = await adapter.planUnit({ env, root, unit });
 
 			let shardsProcessed = 0;
 			let nodesInserted = 0;
@@ -142,7 +171,7 @@ export async function runGenericWorkflow<
 	return {
 		sourceVersionId: root.sourceVersionId,
 		canonicalName: root.canonicalName,
-		unitsProcessed: root.unitRoots.length,
+		unitsProcessed: unitsToProcess.length,
 		shardsProcessed: totalShardsProcessed,
 		nodesInserted: totalNodesInserted,
 	};

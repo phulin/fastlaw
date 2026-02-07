@@ -191,7 +191,7 @@ export async function getNodeIdByStringId(
 	return result?.id ?? null;
 }
 
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 100;
 
 /**
  * Insert multiple nodes in batches for better performance.

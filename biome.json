@@ -5,6 +5,7 @@
 			"**/*",
 			"!.output",
 			"!data",
+			"!**/fixtures",
 			"!**/.wrangler",
 			"!**/dist",
 			"!**/node_modules"

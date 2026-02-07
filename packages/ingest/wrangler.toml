@@ -34,6 +34,11 @@ binding = "USC_WORKFLOW"
 class_name = "USCIngestWorkflow"
 
 [[workflows]]
+name = "mgl-ingest-workflow"
+binding = "MGL_WORKFLOW"
+class_name = "MGLIngestWorkflow"
+
+[[workflows]]
 name = "vector-ingest-workflow"
 binding = "VECTOR_WORKFLOW"
 class_name = "VectorIngestWorkflow"
@@ -42,6 +47,8 @@ class_name = "VectorIngestWorkflow"
 # Source URLs
 CGA_BASE_URL = "https://www.cga.ct.gov"
 CGA_START_PATH = "/current/pub/titles.htm"
+MGL_BASE_URL = "https://malegislature.gov"
+MGL_START_PATH = "/Laws/GeneralLaws"
 USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
 
 [observability]

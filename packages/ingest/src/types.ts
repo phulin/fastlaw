@@ -62,6 +62,8 @@ export interface IngestionResult {
 export interface GenericWorkflowParams {
 	/** Force re-ingestion even if version exists */
 	force?: boolean;
+	/** Process only a single unit by id */
+	unitId?: string;
 }
 
 export interface VectorWorkflowParams extends GenericWorkflowParams {
@@ -78,9 +80,12 @@ export interface Env {
 	GODADDY_CA?: Fetcher; // Only available in deployed workers
 	CGA_BASE_URL: string;
 	CGA_START_PATH: string;
+	MGL_BASE_URL: string;
+	MGL_START_PATH: string;
 	USC_DOWNLOAD_BASE: string;
 	INGEST_RUNNER: DurableObjectNamespace;
 	CGA_WORKFLOW: Workflow<GenericWorkflowParams>;
+	MGL_WORKFLOW: Workflow<GenericWorkflowParams>;
 	USC_WORKFLOW: Workflow<GenericWorkflowParams>;
 	VECTOR_WORKFLOW: Workflow<VectorWorkflowParams>;
 }

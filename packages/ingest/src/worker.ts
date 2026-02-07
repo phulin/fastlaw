@@ -1,15 +1,106 @@
 import { Hono } from "hono";
+import { cgaAdapter } from "./lib/cga/adapter";
 import { CGAIngestWorkflow } from "./lib/cga/workflow";
+import { mglAdapter } from "./lib/mgl/adapter";
+import { MGLIngestWorkflow } from "./lib/mgl/workflow";
+import { uscAdapter } from "./lib/usc/adapter";
 import { USCIngestWorkflow } from "./lib/usc/workflow";
 import { VectorIngestWorkflow } from "./lib/vector/workflow";
 import { computeDiff } from "./lib/versioning";
-import type { Env, VectorWorkflowParams } from "./types";
+import type { Env, GenericWorkflowParams, VectorWorkflowParams } from "./types";
 
 type AppContext = {
 	Bindings: Env;
 };
 
 const app = new Hono<AppContext>();
+
+async function readForceParam(c: {
+	req: { json: <T>() => Promise<T> };
+}): Promise<boolean | undefined> {
+	const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
+	return "force" in body ? body.force : undefined;
+}
+
+function normalizeUnitToken(value: string): string {
+	const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
+	if (normalized.startsWith("title-")) {
+		return normalized;
+	}
+	return `title-${normalized}`;
+}
+
+function readUnitSelectors(unitsQuery: string | undefined): string[] {
+	if (!unitsQuery) {
+		return [];
+	}
+	return unitsQuery
+		.split(",")
+		.map((value) => value.trim())
+		.filter((value) => value.length > 0);
+}
+
+function selectUnits<TUnit extends { id: string }>(
+	units: TUnit[],
+	selectors: string[],
+): { selected: TUnit[]; unknown: string[] } {
+	if (selectors.length === 0) {
+		return { selected: units, unknown: [] };
+	}
+
+	const byId = new Map<string, TUnit>();
+	for (const unit of units) {
+		byId.set(unit.id.toLowerCase(), unit);
+		byId.set(normalizeUnitToken(unit.id), unit);
+	}
+
+	const selected: TUnit[] = [];
+	const selectedIds = new Set<string>();
+	const unknown: string[] = [];
+
+	for (const selector of selectors) {
+		const normalizedSelector = normalizeUnitToken(selector);
+		const unit =
+			byId.get(selector.toLowerCase()) ?? byId.get(normalizedSelector);
+		if (!unit) {
+			unknown.push(selector);
+			continue;
+		}
+		if (selectedIds.has(unit.id)) {
+			continue;
+		}
+		selectedIds.add(unit.id);
+		selected.push(unit);
+	}
+
+	return { selected, unknown };
+}
+
+async function createUnitWorkflowInstances<TUnit extends { id: string }>(
+	workflow: Workflow<GenericWorkflowParams>,
+	units: TUnit[],
+	force: boolean | undefined,
+): Promise<{
+	totalUnits: number;
+	instances: Array<{ unitId: string; instanceId: string }>;
+}> {
+	const instances = await Promise.all(
+		units.map(async (unit) => {
+			const instance = await workflow.create({
+				params: { force, unitId: unit.id },
+			});
+			return {
+				unitId: unit.id,
+				instanceId: instance.id,
+			};
+		}),
+	);
+
+	return {
+		totalUnits: instances.length,
+		instances,
+	};
+}
 
 // Health check
 app.get("/", (c) => {
@@ -66,17 +157,24 @@ app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
 // Trigger CGA ingestion via Cloudflare Workflow
 app.post("/api/ingest/cga/workflow", async (c) => {
 	try {
-		const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
-		const force = "force" in body ? body.force : undefined;
+		const force = await readForceParam(c);
+		const unitSelectors = readUnitSelectors(c.req.query("units"));
 
-		const instance = await c.env.CGA_WORKFLOW.create({
-			params: { force },
+		const discovery = await cgaAdapter.discoverRoot({
+			env: c.env,
+			force: force ?? false,
 		});
+		const { selected, unknown } = selectUnits(
+			discovery.unitRoots,
+			unitSelectors,
+		);
+		if (unknown.length > 0) {
+			return c.json({ error: "Unknown units", unknown }, 400);
+		}
 
-		return c.json({
-			instanceId: instance.id,
-			status: await instance.status(),
-		});
+		return c.json(
+			await createUnitWorkflowInstances(c.env.CGA_WORKFLOW, selected, force),
+		);
 	} catch (error) {
 		console.error("CGA workflow creation failed:", error);
 		return c.json({ error: "CGA workflow creation failed" }, 500);
@@ -99,20 +197,70 @@ app.get("/api/ingest/cga/workflow/:instanceId", async (c) => {
 	}
 });
 
-// Trigger USC ingestion via Cloudflare Workflow
-app.post("/api/ingest/usc/workflow", async (c) => {
+// Trigger MGL ingestion via Cloudflare Workflow
+app.post("/api/ingest/mgl/workflow", async (c) => {
 	try {
-		const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
-		const force = "force" in body ? body.force : undefined;
+		const force = await readForceParam(c);
+		const unitSelectors = readUnitSelectors(c.req.query("units"));
 
-		const instance = await c.env.USC_WORKFLOW.create({
-			params: { force },
+		const discovery = await mglAdapter.discoverRoot({
+			env: c.env,
+			force: force ?? false,
 		});
+		const { selected, unknown } = selectUnits(
+			discovery.unitRoots,
+			unitSelectors,
+		);
+		if (unknown.length > 0) {
+			return c.json({ error: "Unknown units", unknown }, 400);
+		}
+
+		return c.json(
+			await createUnitWorkflowInstances(c.env.MGL_WORKFLOW, selected, force),
+		);
+	} catch (error) {
+		console.error("MGL workflow creation failed:", error);
+		return c.json({ error: "MGL workflow creation failed" }, 500);
+	}
+});
+
+// Get MGL workflow status
+app.get("/api/ingest/mgl/workflow/:instanceId", async (c) => {
+	try {
+		const instanceId = c.req.param("instanceId");
+		const instance = await c.env.MGL_WORKFLOW.get(instanceId);
 
 		return c.json({
 			instanceId: instance.id,
 			status: await instance.status(),
 		});
+	} catch (error) {
+		console.error("MGL workflow status failed:", error);
+		return c.json({ error: "MGL workflow status failed" }, 500);
+	}
+});
+
+// Trigger USC ingestion via Cloudflare Workflow
+app.post("/api/ingest/usc/workflow", async (c) => {
+	try {
+		const force = await readForceParam(c);
+		const unitSelectors = readUnitSelectors(c.req.query("units"));
+
+		const discovery = await uscAdapter.discoverRoot({
+			env: c.env,
+			force: force ?? false,
+		});
+		const { selected, unknown } = selectUnits(
+			discovery.unitRoots,
+			unitSelectors,
+		);
+		if (unknown.length > 0) {
+			return c.json({ error: "Unknown units", unknown }, 400);
+		}
+
+		return c.json(
+			await createUnitWorkflowInstances(c.env.USC_WORKFLOW, selected, force),
+		);
 	} catch (error) {
 		console.error("USC workflow creation failed:", error);
 		return c.json({ error: "USC workflow creation failed" }, 500);
@@ -203,4 +351,9 @@ app.post("/api/admin/reset", async (c) => {
 export default app;
 
 // Export workflow classes for Cloudflare
-export { CGAIngestWorkflow, USCIngestWorkflow, VectorIngestWorkflow };
+export {
+	CGAIngestWorkflow,
+	MGLIngestWorkflow,
+	USCIngestWorkflow,
+	VectorIngestWorkflow,
+};
