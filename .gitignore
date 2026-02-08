@@ -23,6 +23,7 @@ venv/
 
 # CF/Wrangler
 .wrangler/
+.dev.vars
 
 # Data/artifacts
 *.sqlite3

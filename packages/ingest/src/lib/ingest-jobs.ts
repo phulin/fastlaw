@@ -12,8 +12,8 @@ export interface IngestJobRecord {
 	source_code: IngestSourceCode;
 	source_version_id: string | null;
 	status: IngestJobStatus;
-	total_shards: number;
-	processed_shards: number;
+	total_titles: number;
+	processed_titles: number;
 	error_count: number;
 	last_error: string | null;
 	started_at: string;
@@ -42,17 +42,17 @@ export async function completePlanning(
 	db: D1Database,
 	jobId: string,
 	sourceVersionId: string,
-	totalShards: number,
+	totalTitles: number,
 ): Promise<void> {
 	await db
 		.prepare(
 			`UPDATE ingest_jobs
 			SET
 				source_version_id = ?,
-				total_shards = ?,
+				total_titles = ?,
 				status = CASE
 					WHEN ? = 0 THEN 'completed'
-					WHEN processed_shards >= ? THEN
+					WHEN processed_titles >= ? THEN
 						CASE
 							WHEN error_count > 0 THEN 'completed_with_errors'
 							ELSE 'completed'
@@ -60,7 +60,7 @@ export async function completePlanning(
 					ELSE 'running'
 				END,
 				completed_at = CASE
-					WHEN ? = 0 OR processed_shards >= ? THEN CURRENT_TIMESTAMP
+					WHEN ? = 0 OR processed_titles >= ? THEN CURRENT_TIMESTAMP
 					ELSE completed_at
 				END,
 				updated_at = CURRENT_TIMESTAMP
@@ -68,11 +68,11 @@ export async function completePlanning(
 		)
 		.bind(
 			sourceVersionId,
-			totalShards,
-			totalShards,
-			totalShards,
-			totalShards,
-			totalShards,
+			totalTitles,
+			totalTitles,
+			totalTitles,
+			totalTitles,
+			totalTitles,
 			jobId,
 		)
 		.run();
@@ -98,19 +98,19 @@ export async function markPlanningFailed(
 		.run();
 }
 
-export async function incrementProcessedShards(
+export async function incrementProcessedTitles(
 	db: D1Database,
 	jobId: string,
-	processedShardCount: number,
+	count: number,
 ): Promise<void> {
 	await db
 		.prepare(
 			`UPDATE ingest_jobs
 			SET
-				processed_shards = processed_shards + ?,
+				processed_titles = processed_titles + ?,
 				status = CASE
 					WHEN status = 'planning' THEN 'planning'
-					WHEN processed_shards + ? >= total_shards THEN
+					WHEN processed_titles + ? >= total_titles THEN
 						CASE
 							WHEN error_count > 0 THEN 'completed_with_errors'
 							ELSE 'completed'
@@ -118,18 +118,18 @@ export async function incrementProcessedShards(
 					ELSE status
 				END,
 				completed_at = CASE
-					WHEN status != 'planning' AND processed_shards + ? >= total_shards
+					WHEN status != 'planning' AND processed_titles + ? >= total_titles
 						THEN CURRENT_TIMESTAMP
 					ELSE completed_at
 				END,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ? AND status IN ('planning', 'running', 'completed_with_errors')`,
 		)
-		.bind(processedShardCount, processedShardCount, processedShardCount, jobId)
+		.bind(count, count, count, jobId)
 		.run();
 }
 
-export async function recordShardError(
+export async function recordTitleError(
 	db: D1Database,
 	jobId: string,
 	errorMessage: string,

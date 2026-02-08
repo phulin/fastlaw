@@ -28,8 +28,8 @@ export interface IngestJobRecord {
 	source_code: string;
 	source_version_id: string | null;
 	status: IngestJobStatus;
-	total_shards: number;
-	processed_shards: number;
+	total_titles: number;
+	processed_titles: number;
 	error_count: number;
 	last_error: string | null;
 	started_at: string;

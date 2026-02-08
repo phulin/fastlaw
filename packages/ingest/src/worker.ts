@@ -1,16 +1,16 @@
 import { Hono } from "hono";
-import { cgaAdapter } from "./lib/cga/adapter";
-import { NodeStore } from "./lib/ingest/node-store";
+import { signCallbackUrl, verifyCallback } from "./lib/callback-auth";
+import { IngestContainer } from "./lib/ingest-container";
 import {
 	completePlanning,
 	createIngestJob,
-	incrementProcessedShards,
-	markPlanningFailed,
-	recordShardError,
+	incrementProcessedTitles,
+	recordTitleError,
 } from "./lib/ingest-jobs";
-import { mglAdapter } from "./lib/mgl/adapter";
-import { BlobStore } from "./lib/packfile";
+import { hash64, hash64ToHex } from "./lib/packfile/hash";
+import { PackfileDO } from "./lib/packfile-do";
 import { uscAdapter } from "./lib/usc/adapter";
+import { streamXmlFromZip } from "./lib/usc/fetcher";
 import { VectorIngestWorkflow } from "./lib/vector/workflow";
 import {
 	computeDiff,
@@ -18,94 +18,116 @@ import {
 	getOrCreateSource,
 	insertNodesBatched,
 } from "./lib/versioning";
-import type {
-	Env,
-	IngestQueueMessage,
-	IngestQueueShardWorkItem,
-	IngestShardQueueMessage,
-	IngestSourceCode,
-	NodeMeta,
-	VectorWorkflowParams,
-} from "./types";
-
-const SHARD_MESSAGE_ITEM_BATCH_SIZE = 200;
-const QUEUE_SEND_BATCH_SIZE = 3;
-const INGEST_QUEUE_MAX_RETRIES = 3;
+import type { Env, IngestNode, VectorWorkflowParams } from "./types";
 
 type AppContext = {
 	Bindings: Env;
 };
 
-type IngestRouteCode = "cga" | "mgl" | "usc";
-type UnitWithId = { id: string };
-type RootDiscovery = {
-	versionId: string;
-	rootNode: NodeMeta;
-	unitRoots: UnitWithId[];
-};
-type PlannedUnit = {
-	unitId: string;
-	shardItems: IngestQueueShardWorkItem[];
-};
-type AdapterRegistration = {
-	sourceCode: IngestSourceCode;
-	adapter: {
-		source: {
-			code: string;
-			name: string;
-			jurisdiction: string;
-			region: string;
-			docType: string;
-		};
-		discoverRoot: (args: {
-			env: Env;
-			force: boolean;
-		}) => Promise<RootDiscovery>;
-		planUnit: (args: {
-			env: Env;
-			root: unknown;
-			unit: unknown;
-		}) => Promise<PlannedUnit>;
-		loadShardItems: (args: {
-			env: Env;
-			root: unknown;
-			unit: unknown;
-			sourceId: string;
-			sourceVersionId: string;
-			items: IngestQueueShardWorkItem[];
-			nodeStore: NodeStore;
-			blobStore: BlobStore;
-		}) => Promise<void>;
-	};
-};
-
-const ADAPTERS_BY_ROUTE: Record<IngestRouteCode, AdapterRegistration> = {
-	cga: {
-		sourceCode: "cgs",
-		adapter: cgaAdapter as unknown as AdapterRegistration["adapter"],
-	},
-	mgl: {
-		sourceCode: "mgl",
-		adapter: mglAdapter as unknown as AdapterRegistration["adapter"],
-	},
-	usc: {
-		sourceCode: "usc",
-		adapter: uscAdapter as unknown as AdapterRegistration["adapter"],
-	},
-};
-
-const ADAPTERS_BY_SOURCE = new Map(
-	Object.values(ADAPTERS_BY_ROUTE).map((entry) => [entry.sourceCode, entry]),
-);
-
 const app = new Hono<AppContext>();
 
-async function readForceParam(c: {
-	req: { json: <T>() => Promise<T> };
-}): Promise<boolean | undefined> {
-	const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
-	return "force" in body ? body.force : undefined;
-}
+// ──────────────────────────────────────────────────────────────
+// Health & admin
+// ──────────────────────────────────────────────────────────────
+
+app.get("/", (c) => {
+	return c.json({ status: "ok", service: "fastlaw-ingest" });
+});
+
+app.get("/api/versions", async (c) => {
+	const { results } = await c.env.DB.prepare(`
+		SELECT sv.*, s.id as source_code, s.name as source_name
+		FROM source_versions sv
+		JOIN sources s ON sv.source_id = s.id
+		ORDER BY sv.created_at DESC
+		LIMIT 50
+	`).all();
+	return c.json({ versions: results });
+});
+
+app.get("/api/ingest/jobs", async (c) => {
+	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
+	const { results } = await c.env.DB.prepare(
+		`SELECT
+			id, source_code, source_version_id, status,
+			total_titles, processed_titles, error_count, last_error,
+			started_at, completed_at, created_at, updated_at
+		FROM ingest_jobs
+		ORDER BY created_at DESC
+		LIMIT ?`,
+	)
+		.bind(limit)
+		.all();
+	return c.json({ jobs: results });
+});
+
+app.get("/api/ingest/jobs/:jobId", async (c) => {
+	const job = await c.env.DB.prepare(
+		`SELECT
+			id, source_code, source_version_id, status,
+			total_titles, processed_titles, error_count, last_error,
+			started_at, completed_at, created_at, updated_at
+		FROM ingest_jobs
+		WHERE id = ?`,
+	)
+		.bind(c.req.param("jobId"))
+		.first();
+
+	if (!job) return c.json({ error: "Job not found" }, 404);
+	return c.json({ job });
+});
+
+app.get("/api/storage/objects", async (c) => {
+	const prefix = c.req.query("prefix");
+	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
+	const cursor = c.req.query("cursor");
+	const result = await c.env.STORAGE.list({ prefix, limit, cursor });
+	const cursorValue = "cursor" in result ? result.cursor : null;
+	return c.json({
+		objects: result.objects.map((obj) => ({
+			key: obj.key,
+			size: obj.size,
+			etag: obj.etag,
+			uploaded: obj.uploaded,
+		})),
+		truncated: result.truncated,
+		cursor: cursorValue,
+	});
+});
+
+app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
+	const diff = await computeDiff(
+		c.env.DB,
+		c.req.param("oldVersionId"),
+		c.req.param("newVersionId"),
+	);
+	return c.json({ diff });
+});
+
+app.post("/api/admin/reset", async (c) => {
+	let cursor: string | undefined;
+	do {
+		const listResult = await c.env.STORAGE.list({ limit: 1000, cursor });
+		if (listResult.objects.length > 0) {
+			await c.env.STORAGE.delete(listResult.objects.map((obj) => obj.key));
+		}
+		cursor = "cursor" in listResult ? listResult.cursor : undefined;
+	} while (cursor);
+
+	await c.env.DB.batch([
+		c.env.DB.prepare("DELETE FROM ingest_jobs"),
+		c.env.DB.prepare("DELETE FROM nodes"),
+		c.env.DB.prepare("DELETE FROM blobs"),
+		c.env.DB.prepare("DELETE FROM source_versions"),
+		c.env.DB.prepare("DELETE FROM sources"),
+	]);
+
+	return c.json({ status: "ok" });
+});
+
+// ──────────────────────────────────────────────────────────────
+// USC ingest via containers
+// ──────────────────────────────────────────────────────────────
 
 function normalizeUnitToken(value: string): string {
 	const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
@@ -113,16 +135,6 @@ function normalizeUnitToken(value: string): string {
 		return normalized;
 	}
 	return `title-${normalized}`;
-}
-
-function readUnitSelectors(unitsQuery: string | undefined): string[] {
-	if (!unitsQuery) {
-		return [];
-	}
-	return unitsQuery
-		.split(",")
-		.map((value) => value.trim())
-		.filter((value) => value.length > 0);
 }
 
 function selectUnits<TUnit extends { id: string }>(
@@ -151,9 +163,7 @@ function selectUnits<TUnit extends { id: string }>(
 			unknown.push(selector);
 			continue;
 		}
-		if (selectedIds.has(unit.id)) {
-			continue;
-		}
+		if (selectedIds.has(unit.id)) continue;
 		selectedIds.add(unit.id);
 		selected.push(unit);
 	}
@@ -161,323 +171,320 @@ function selectUnits<TUnit extends { id: string }>(
 	return { selected, unknown };
 }
 
-function toErrorMessage(error: unknown): string {
-	if (error instanceof Error) {
-		return `${error.name}: ${error.message}`;
-	}
-	return String(error);
-}
-
-async function sendShardMessages(
-	env: Env,
-	messages: MessageSendRequest<IngestShardQueueMessage>[],
-): Promise<void> {
-	for (let i = 0; i < messages.length; i += QUEUE_SEND_BATCH_SIZE) {
-		await env.INGEST_SHARDS_QUEUE.sendBatch(
-			messages.slice(i, i + QUEUE_SEND_BATCH_SIZE),
-		);
-	}
-}
-
-async function startIngestJob(
-	c: {
-		env: Env;
-		req: {
-			query: (name: string) => string | undefined;
-			json: <T>() => Promise<T>;
-		};
-		json: (body: unknown, status?: number) => Response;
-	},
-	routeCode: IngestRouteCode,
-): Promise<Response> {
-	const registration = ADAPTERS_BY_ROUTE[routeCode];
-	const force = await readForceParam(c);
-	const unitSelectors = readUnitSelectors(c.req.query("units"));
-
-	const discovery = await registration.adapter.discoverRoot({
-		env: c.env,
-		force: force ?? false,
-	});
-	const { selected, unknown } = selectUnits(discovery.unitRoots, unitSelectors);
-	if (unknown.length > 0) {
-		return c.json({ error: "Unknown units", unknown }, 400);
-	}
-
-	const sourceId = await getOrCreateSource(
-		c.env.DB,
-		registration.adapter.source.code,
-		registration.adapter.source.name,
-		registration.adapter.source.jurisdiction,
-		registration.adapter.source.region,
-		registration.adapter.source.docType,
-	);
-
-	const sourceVersionId = `${registration.adapter.source.code}-${discovery.versionId}`;
-	await ensureSourceVersion(
-		c.env.DB,
-		sourceId,
-		discovery.versionId,
-		discovery.rootNode.id,
-	);
-
-	await insertNodesBatched(c.env.DB, [
-		{
-			...discovery.rootNode,
-			source_version_id: sourceVersionId,
-			blob_hash: null,
-		},
-	]);
-
-	const jobId = await createIngestJob(c.env.DB, registration.sourceCode);
-	let totalShards = 0;
-	let totalQueueMessageBatches = 0;
-	let totalQueueMessages = 0;
-	let totalQueuedNodes = 0;
-
+app.post("/api/ingest/usc/jobs", async (c) => {
 	try {
-		const rootContext = {
-			sourceId,
-			sourceVersionId,
-			rootNodeId: discovery.rootNode.id,
-			versionId: discovery.versionId,
-			rootNode: discovery.rootNode,
-			unitRoots: discovery.unitRoots,
-		};
+		const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
+		const force = "force" in body ? body.force : false;
+		const unitSelectors = (c.req.query("units") ?? "")
+			.split(",")
+			.map((v) => v.trim())
+			.filter((v) => v.length > 0);
 
-		for (const unit of selected) {
-			const plan = await registration.adapter.planUnit({
-				env: c.env,
-				root: rootContext,
-				unit,
-			});
-
-			const queueMessages: MessageSendRequest<IngestShardQueueMessage>[] = [];
-			for (
-				let i = 0;
-				i < plan.shardItems.length;
-				i += SHARD_MESSAGE_ITEM_BATCH_SIZE
-			) {
-				queueMessages.push({
-					body: {
-						kind: "ingest-shard",
-						jobId,
-						sourceCode: registration.sourceCode,
-						sourceId,
-						sourceVersionId,
-						unit,
-						items: plan.shardItems.slice(i, i + SHARD_MESSAGE_ITEM_BATCH_SIZE),
-					},
-				});
-			}
-
-			await sendShardMessages(c.env, queueMessages);
-
-			totalShards += plan.shardItems.length;
-			totalQueuedNodes += plan.shardItems.length;
-			totalQueueMessages += queueMessages.length;
-			totalQueueMessageBatches += Math.ceil(
-				queueMessages.length / QUEUE_SEND_BATCH_SIZE,
-			);
+		const discovery = await uscAdapter.discoverRoot({
+			env: c.env,
+			force: force ?? false,
+		});
+		const { selected, unknown } = selectUnits(
+			discovery.unitRoots,
+			unitSelectors,
+		);
+		if (unknown.length > 0) {
+			return c.json({ error: "Unknown units", unknown }, 400);
 		}
 
-		console.log("Ingest queue enqueue summary", {
-			jobId,
-			sourceCode: registration.sourceCode,
-			sourceVersionId,
-			totalQueueMessageBatches,
-			totalQueueMessages,
-			totalQueuedNodes,
-		});
+		const sourceId = await getOrCreateSource(
+			c.env.DB,
+			uscAdapter.source.code,
+			uscAdapter.source.name,
+			uscAdapter.source.jurisdiction,
+			uscAdapter.source.region,
+			uscAdapter.source.docType,
+		);
 
-		await completePlanning(c.env.DB, jobId, sourceVersionId, totalShards);
+		const sourceVersionId = `${uscAdapter.source.code}-${discovery.versionId}`;
+		await ensureSourceVersion(
+			c.env.DB,
+			sourceId,
+			discovery.versionId,
+			discovery.rootNode.id,
+		);
+
+		await insertNodesBatched(c.env.DB, [
+			{
+				...discovery.rootNode,
+				source_version_id: sourceVersionId,
+				blob_hash: null,
+			},
+		]);
+
+		const jobId = await createIngestJob(c.env.DB, "usc");
+		await completePlanning(c.env.DB, jobId, sourceVersionId, selected.length);
+
+		// In local dev, containers run in Docker and can't reach the host via
+		// localhost. Replace with host.docker.internal so callbacks work.
+		const origin = new URL(c.req.url).origin;
+		const callbackBase = origin.replace(
+			/localhost|127\.0\.0\.1/,
+			"host.docker.internal",
+		);
+		const callbackParams = { jobId, sourceVersionId, sourceId };
+
+		const insertCallbackUrl = await signCallbackUrl(
+			`${callbackBase}/api/callback/insertNodeBatch`,
+			callbackParams,
+			c.env.CALLBACK_SECRET,
+		);
+		const doneCallbackUrl = await signCallbackUrl(
+			`${callbackBase}/api/callback/containerDone`,
+			callbackParams,
+			c.env.CALLBACK_SECRET,
+		);
+		const cacheCallbackUrl = await signCallbackUrl(
+			`${callbackBase}/api/proxy/cache`,
+			callbackParams,
+			c.env.CALLBACK_SECRET,
+		);
+		const r2ReadCallbackUrl = await signCallbackUrl(
+			`${callbackBase}/api/proxy/r2-read`,
+			callbackParams,
+			c.env.CALLBACK_SECRET,
+		);
+
+		const container = c.env.INGEST_CONTAINER.getByName(sourceVersionId);
+		c.executionCtx.waitUntil(
+			container
+				.fetch(
+					new Request("http://container/ingest", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							units: selected.map((unit, i) => ({
+								unit,
+								titleSortOrder: i,
+							})),
+							insertCallbackUrl,
+							doneCallbackUrl,
+							cacheCallbackUrl,
+							r2ReadCallbackUrl,
+							sourceVersionId,
+							rootNodeId: discovery.rootNode.id,
+						}),
+					}),
+				)
+				.then(async (res) => {
+					if (!res.ok) {
+						console.error(
+							`Container returned ${res.status}: ${await res.text()}`,
+						);
+					}
+				})
+				.catch((err) => console.error("Container start failed:", err)),
+		);
 
 		return c.json({
 			jobId,
-			sourceCode: registration.sourceCode,
+			sourceCode: "usc",
 			sourceVersionId,
 			totalUnits: selected.length,
-			totalShards,
-			status: totalShards === 0 ? "completed" : "running",
+			status: selected.length === 0 ? "completed" : "running",
 		});
-	} catch (error) {
-		const errorMessage = toErrorMessage(error);
-		await markPlanningFailed(c.env.DB, jobId, errorMessage);
-		console.error(`${routeCode.toUpperCase()} ingest planning failed:`, error);
-		return c.json(
-			{ error: `${routeCode.toUpperCase()} ingest planning failed` },
-			500,
-		);
-	}
-}
-
-async function processIngestShardMessage(
-	env: Env,
-	body: IngestShardQueueMessage,
-): Promise<void> {
-	const registration = ADAPTERS_BY_SOURCE.get(body.sourceCode);
-	if (!registration) {
-		throw new Error(`Unsupported source code: ${body.sourceCode}`);
-	}
-
-	const blobStore = new BlobStore(
-		env.DB,
-		env.STORAGE,
-		body.sourceId,
-		body.sourceCode,
-	);
-	const nodeStore = new NodeStore(env.DB);
-
-	await registration.adapter.loadShardItems({
-		env,
-		root: {
-			versionId: body.sourceVersionId,
-		},
-		unit: body.unit as { id: string },
-		sourceId: body.sourceId,
-		sourceVersionId: body.sourceVersionId,
-		items: body.items,
-		nodeStore,
-		blobStore,
-	});
-
-	await blobStore.flush();
-	await nodeStore.flush();
-	await incrementProcessedShards(env.DB, body.jobId, body.items.length);
-}
-
-// Health check
-app.get("/", (c) => {
-	return c.json({ status: "ok", service: "fastlaw-ingest" });
-});
-
-// List source versions
-app.get("/api/versions", async (c) => {
-	const { results } = await c.env.DB.prepare(`
-		SELECT sv.*, s.id as source_code, s.name as source_name
-		FROM source_versions sv
-		JOIN sources s ON sv.source_id = s.id
-		ORDER BY sv.created_at DESC
-		LIMIT 50
-	`).all();
-	return c.json({ versions: results });
-});
-
-app.get("/api/ingest/jobs", async (c) => {
-	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
-	const { results } = await c.env.DB.prepare(
-		`SELECT
-			id,
-			source_code,
-			source_version_id,
-			status,
-			total_shards,
-			processed_shards,
-			error_count,
-			last_error,
-			started_at,
-			completed_at,
-			created_at,
-			updated_at
-		FROM ingest_jobs
-		ORDER BY created_at DESC
-		LIMIT ?`,
-	)
-		.bind(limit)
-		.all();
-	return c.json({ jobs: results });
-});
-
-app.get("/api/ingest/jobs/:jobId", async (c) => {
-	const job = await c.env.DB.prepare(
-		`SELECT
-			id,
-			source_code,
-			source_version_id,
-			status,
-			total_shards,
-			processed_shards,
-			error_count,
-			last_error,
-			started_at,
-			completed_at,
-			created_at,
-			updated_at
-		FROM ingest_jobs
-		WHERE id = ?`,
-	)
-		.bind(c.req.param("jobId"))
-		.first();
-
-	if (!job) {
-		return c.json({ error: "Job not found" }, 404);
-	}
-
-	return c.json({ job });
-});
-
-// List R2 objects
-app.get("/api/storage/objects", async (c) => {
-	const prefix = c.req.query("prefix");
-	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
-	const cursor = c.req.query("cursor");
-
-	const result = await c.env.STORAGE.list({
-		prefix,
-		limit,
-		cursor,
-	});
-
-	const cursorValue = "cursor" in result ? result.cursor : null;
-
-	return c.json({
-		objects: result.objects.map((obj) => ({
-			key: obj.key,
-			size: obj.size,
-			etag: obj.etag,
-			uploaded: obj.uploaded,
-		})),
-		truncated: result.truncated,
-		cursor: cursorValue,
-	});
-});
-
-// Get diff between two versions
-app.get("/api/diff/:oldVersionId/:newVersionId", async (c) => {
-	const oldVersionId = c.req.param("oldVersionId");
-	const newVersionId = c.req.param("newVersionId");
-
-	const diff = await computeDiff(c.env.DB, oldVersionId, newVersionId);
-	return c.json({ diff });
-});
-
-app.post("/api/ingest/cga/jobs", async (c) => {
-	try {
-		return await startIngestJob(c, "cga");
-	} catch (error) {
-		console.error("CGA ingest start failed:", error);
-		return c.json({ error: "CGA ingest start failed" }, 500);
-	}
-});
-
-app.post("/api/ingest/mgl/jobs", async (c) => {
-	try {
-		return await startIngestJob(c, "mgl");
-	} catch (error) {
-		console.error("MGL ingest start failed:", error);
-		return c.json({ error: "MGL ingest start failed" }, 500);
-	}
-});
-
-app.post("/api/ingest/usc/jobs", async (c) => {
-	try {
-		return await startIngestJob(c, "usc");
 	} catch (error) {
 		console.error("USC ingest start failed:", error);
 		return c.json({ error: "USC ingest start failed" }, 500);
 	}
 });
 
-// Trigger vector ingestion via Cloudflare Workflow
+// ──────────────────────────────────────────────────────────────
+// Container callbacks
+// ──────────────────────────────────────────────────────────────
+
+interface CallbackNodePayload {
+	meta: {
+		id: string;
+		source_version_id: string;
+		parent_id: string | null;
+		level_name: string;
+		level_index: number;
+		sort_order: number;
+		name: string | null;
+		path: string | null;
+		readable_id: string | null;
+		heading_citation: string | null;
+		source_url: string | null;
+		accessed_at: string | null;
+	};
+	content: unknown | null;
+}
+
+app.post("/api/callback/insertNodeBatch", async (c) => {
+	const params = await verifyCallback(
+		new URL(c.req.url),
+		c.env.CALLBACK_SECRET,
+	);
+	const { nodes } = await c.req.json<{ nodes: CallbackNodePayload[] }>();
+
+	const newBlobs: Array<{ hashHex: string; content: number[] }> = [];
+	const nodeInserts: IngestNode[] = [];
+
+	for (const node of nodes) {
+		let blobHash: string | null = null;
+
+		if (node.content) {
+			const bytes = new TextEncoder().encode(JSON.stringify(node.content));
+			blobHash = hash64ToHex(await hash64(bytes));
+
+			const existing = await c.env.DB.prepare(
+				"SELECT 1 FROM blobs WHERE source_id = ? AND hash = ?",
+			)
+				.bind(params.sourceId, blobHash)
+				.first();
+
+			if (!existing) {
+				newBlobs.push({ hashHex: blobHash, content: Array.from(bytes) });
+			}
+		}
+
+		nodeInserts.push({
+			...node.meta,
+			source_version_id: params.sourceVersionId,
+			blob_hash: blobHash,
+		});
+	}
+
+	if (newBlobs.length > 0) {
+		const packfileDO = c.env.PACKFILE_DO.get(
+			c.env.PACKFILE_DO.idFromName(params.sourceId),
+		);
+		await packfileDO.appendBlobs(params.sourceId, params.sourceId, newBlobs);
+	}
+
+	await insertNodesBatched(c.env.DB, nodeInserts);
+	return c.json({ accepted: nodes.length });
+});
+
+app.post("/api/callback/containerDone", async (c) => {
+	const params = await verifyCallback(
+		new URL(c.req.url),
+		c.env.CALLBACK_SECRET,
+	);
+	const { unitId, status, error } = await c.req.json<{
+		unitId: string;
+		status: string;
+		error?: string;
+	}>();
+
+	if (status === "completed") {
+		await incrementProcessedTitles(c.env.DB, params.jobId, 1);
+		console.log(`Container ${unitId} completed for job ${params.jobId}`);
+	} else if (error) {
+		await recordTitleError(c.env.DB, params.jobId, error, false);
+		console.error(
+			`Container ${unitId} failed for job ${params.jobId}: ${error}`,
+		);
+	}
+
+	return c.json({ ok: true });
+});
+
+// ──────────────────────────────────────────────────────────────
+// Generic R2 cache proxy
+// ──────────────────────────────────────────────────────────────
+
+const CACHE_R2_PREFIX = "cache/";
+
+function getCacheKey(url: string, extractZip: boolean): string {
+	const urlObj = new URL(url);
+	const filename = urlObj.pathname.split("/").pop() ?? "unknown";
+	if (extractZip && filename.toLowerCase().endsWith(".zip")) {
+		return `${CACHE_R2_PREFIX}${filename.replace(/\.zip$/i, ".xml")}`;
+	}
+	return `${CACHE_R2_PREFIX}${filename}`;
+}
+
+app.post("/api/proxy/cache", async (c) => {
+	try {
+		await verifyCallback(new URL(c.req.url), c.env.CALLBACK_SECRET);
+	} catch {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const { url, extractZip } = await c.req.json<{
+		url: string;
+		extractZip?: boolean;
+	}>();
+	const r2Key = getCacheKey(url, extractZip ?? false);
+
+	// Check if already cached
+	const head = await c.env.STORAGE.head(r2Key);
+	if (head) {
+		return c.json({ r2Key, totalSize: head.size });
+	}
+
+	// Fetch the URL
+	const response = await fetch(url, {
+		headers: { "User-Agent": "fastlaw-ingest/1.0" },
+	});
+	if (!response.ok) {
+		return c.json({ error: `Failed to fetch ${url}: ${response.status}` }, 502);
+	}
+
+	let data: Uint8Array;
+	if (extractZip && response.body) {
+		// Extract XML from ZIP
+		const chunks: Uint8Array[] = [];
+		for await (const chunk of streamXmlFromZip(await response.arrayBuffer())) {
+			chunks.push(chunk);
+		}
+		const totalSize = chunks.reduce((sum, c) => sum + c.length, 0);
+		data = new Uint8Array(totalSize);
+		let offset = 0;
+		for (const chunk of chunks) {
+			data.set(chunk, offset);
+			offset += chunk.length;
+		}
+	} else {
+		data = new Uint8Array(await response.arrayBuffer());
+	}
+
+	// Cache in R2
+	await c.env.STORAGE.put(r2Key, data);
+	console.log(`Cached ${url} → ${r2Key} (${data.length} bytes)`);
+
+	return c.json({ r2Key, totalSize: data.length });
+});
+
+app.get("/api/proxy/r2-read", async (c) => {
+	try {
+		await verifyCallback(new URL(c.req.url), c.env.CALLBACK_SECRET);
+	} catch {
+		return c.json({ error: "Unauthorized" }, 401);
+	}
+
+	const key = c.req.query("key");
+	const offset = Number(c.req.query("offset") ?? "0");
+	const length = Number(c.req.query("length") ?? "0");
+
+	if (!key || !length) {
+		return c.json({ error: "Missing key or length" }, 400);
+	}
+
+	const obj = await c.env.STORAGE.get(key, {
+		range: { offset, length },
+	});
+
+	if (!obj) {
+		return c.json({ error: `Object not found: ${key}` }, 404);
+	}
+
+	return new Response(obj.body, {
+		headers: { "Content-Type": "application/octet-stream" },
+	});
+});
+
+// ──────────────────────────────────────────────────────────────
+// Vector workflow
+// ──────────────────────────────────────────────────────────────
+
 app.post("/api/ingest/vector/workflow", async (c) => {
 	try {
 		const body = await c.req
@@ -491,88 +498,31 @@ app.post("/api/ingest/vector/workflow", async (c) => {
 				batchSize: body.batchSize,
 			},
 		});
-
-		return c.json({
-			instanceId: instance.id,
-			status: await instance.status(),
-		});
+		return c.json({ instanceId: instance.id, status: await instance.status() });
 	} catch (error) {
 		console.error("Vector workflow creation failed:", error);
 		return c.json({ error: "Vector workflow creation failed" }, 500);
 	}
 });
 
-// Get vector workflow status
 app.get("/api/ingest/vector/workflow/:instanceId", async (c) => {
 	try {
-		const instanceId = c.req.param("instanceId");
-		const instance = await c.env.VECTOR_WORKFLOW.get(instanceId);
-
-		return c.json({
-			instanceId: instance.id,
-			status: await instance.status(),
-		});
+		const instance = await c.env.VECTOR_WORKFLOW.get(c.req.param("instanceId"));
+		return c.json({ instanceId: instance.id, status: await instance.status() });
 	} catch (error) {
 		console.error("Vector workflow status failed:", error);
 		return c.json({ error: "Vector workflow status failed" }, 500);
 	}
 });
 
-// Danger: delete all R2 objects and clear D1 tables
-app.post("/api/admin/reset", async (c) => {
-	let cursor: string | undefined;
-	do {
-		const listResult = await c.env.STORAGE.list({
-			limit: 1000,
-			cursor,
-		});
-		if (listResult.objects.length > 0) {
-			await c.env.STORAGE.delete(listResult.objects.map((obj) => obj.key));
-		}
-		cursor = "cursor" in listResult ? listResult.cursor : undefined;
-	} while (cursor);
+// ──────────────────────────────────────────────────────────────
+// Export
+// ──────────────────────────────────────────────────────────────
 
-	await c.env.DB.batch([
-		c.env.DB.prepare("DELETE FROM ingest_jobs"),
-		c.env.DB.prepare("DELETE FROM nodes"),
-		c.env.DB.prepare("DELETE FROM blobs"),
-		c.env.DB.prepare("DELETE FROM source_versions"),
-		c.env.DB.prepare("DELETE FROM sources"),
-	]);
-
-	return c.json({ status: "ok" });
-});
-
-const worker: ExportedHandler<Env, IngestQueueMessage> = {
+const worker: ExportedHandler<Env> = {
 	fetch: app.fetch,
-	queue: async (batch, env) => {
-		for (const message of batch.messages) {
-			try {
-				await processIngestShardMessage(env, message.body);
-				message.ack();
-			} catch (error) {
-				const finalFailure = message.attempts >= INGEST_QUEUE_MAX_RETRIES;
-				await recordShardError(
-					env.DB,
-					message.body.jobId,
-					toErrorMessage(error),
-					finalFailure,
-				);
-				if (finalFailure) {
-					console.error(
-						`Ingest shard permanently failed for job ${message.body.jobId}`,
-						error,
-					);
-					message.ack();
-				} else {
-					message.retry();
-				}
-			}
-		}
-	},
+	queue() {},
 };
 
 export default worker;
-
-// Export workflow class for Cloudflare
-export { VectorIngestWorkflow };
+export { IngestContainer, PackfileDO, VectorIngestWorkflow };

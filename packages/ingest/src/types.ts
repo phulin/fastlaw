@@ -1,3 +1,6 @@
+import type { IngestContainer } from "./lib/ingest-container";
+import type { PackfileDO } from "./lib/packfile-do";
+
 export interface BlobLocation {
 	packfileKey: string;
 	offset: number;
@@ -68,36 +71,20 @@ export interface VectorWorkflowParams {
 
 export type IngestSourceCode = "cgs" | "mgl" | "usc";
 
-export type IngestQueueShardWorkItem = {
-	parentId: string;
-	childId: string;
-	sourceUrl: string;
-	meta: unknown;
-};
-
-export interface IngestShardQueueMessage {
-	kind: "ingest-shard";
-	jobId: string;
-	sourceCode: IngestSourceCode;
-	sourceId: string;
-	sourceVersionId: string;
-	unit: unknown;
-	items: IngestQueueShardWorkItem[];
-}
-
 export interface Env {
 	DB: D1Database;
 	STORAGE: R2Bucket;
-	INGEST_SHARDS_QUEUE: Queue<IngestShardQueueMessage>;
+	INGEST_CONTAINER: DurableObjectNamespace<IngestContainer>;
+	PACKFILE_DO: DurableObjectNamespace<PackfileDO>;
 	AI: Ai;
 	VECTOR_SEARCH_INDEX: Vectorize;
-	GODADDY_CA?: Fetcher; // Only available in deployed workers
+	USC_DOWNLOAD_BASE: string;
+	CALLBACK_SECRET: string;
+	VECTOR_WORKFLOW: Workflow<VectorWorkflowParams>;
+	// CGA/MGL adapters (unhooked from worker, kept for future use)
+	GODADDY_CA: Fetcher;
 	CGA_BASE_URL: string;
 	CGA_START_PATH: string;
 	MGL_BASE_URL: string;
 	MGL_START_PATH: string;
-	USC_DOWNLOAD_BASE: string;
-	VECTOR_WORKFLOW: Workflow<VectorWorkflowParams>;
 }
-
-export type IngestQueueMessage = IngestShardQueueMessage;

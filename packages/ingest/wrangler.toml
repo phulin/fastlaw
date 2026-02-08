@@ -6,6 +6,24 @@ compatibility_flags = ["nodejs_compat"]
 [limits]
 cpu_ms = 300000
 
+[[containers]]
+class_name = "IngestContainer"
+image = "./Dockerfile"
+instance_type = "basic"
+max_instances = 60
+
+[[durable_objects.bindings]]
+class_name = "IngestContainer"
+name = "INGEST_CONTAINER"
+
+[[durable_objects.bindings]]
+class_name = "PackfileDO"
+name = "PACKFILE_DO"
+
+[[migrations]]
+new_sqlite_classes = ["IngestContainer", "PackfileDO"]
+tag = "v1"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "fastlaw"
@@ -15,15 +33,6 @@ migrations_dir = "../../db/migrations"
 [[r2_buckets]]
 binding = "STORAGE"
 bucket_name = "fastlaw-content"
-
-[[queues.producers]]
-binding = "INGEST_SHARDS_QUEUE"
-queue = "fastlaw-ingest-shards"
-
-[[queues.consumers]]
-queue = "fastlaw-ingest-shards"
-max_batch_size = 1
-max_retries = 3
 
 [ai]
 binding = "AI"
@@ -38,11 +47,6 @@ binding = "VECTOR_WORKFLOW"
 class_name = "VectorIngestWorkflow"
 
 [vars]
-# Source URLs
-CGA_BASE_URL = "https://www.cga.ct.gov"
-CGA_START_PATH = "/current/pub/titles.htm"
-MGL_BASE_URL = "https://malegislature.gov"
-MGL_START_PATH = "/Laws/GeneralLaws"
 USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
 
 [observability]

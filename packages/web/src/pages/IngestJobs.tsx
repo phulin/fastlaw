@@ -16,10 +16,10 @@ function formatDate(value: string | null): string {
 }
 
 function progressLabel(job: IngestJobRecord): string {
-	if (job.total_shards === 0) {
+	if (job.total_titles === 0) {
 		return "0 / 0";
 	}
-	return `${job.processed_shards} / ${job.total_shards}`;
+	return `${job.processed_titles} / ${job.total_titles}`;
 }
 
 export default function IngestJobsPage() {
@@ -93,7 +93,7 @@ export default function IngestJobsPage() {
 									<th>Job ID</th>
 									<th>Source</th>
 									<th>Status</th>
-									<th>Progress</th>
+									<th>Titles</th>
 									<th>Errors</th>
 									<th>Version</th>
 									<th>Started</th>

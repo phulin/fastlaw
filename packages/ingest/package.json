@@ -12,6 +12,7 @@
 		"test:watch": "vitest"
 	},
 	"dependencies": {
+		"@cloudflare/containers": "^0.1.0",
 		"@zip.js/zip.js": "^2.8.16",
 		"hono": "^4.6.4",
 		"htmlparser2": "^9.1.0",
