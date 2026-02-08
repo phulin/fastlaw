@@ -1,0 +1,69 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeMeta {
+    pub id: String,
+    pub source_version_id: String,
+    pub parent_id: Option<String>,
+    pub level_name: String,
+    pub level_index: i32,
+    pub sort_order: i32,
+    pub name: Option<String>,
+    pub path: Option<String>,
+    pub readable_id: Option<String>,
+    pub heading_citation: Option<String>,
+    pub source_url: Option<String>,
+    pub accessed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodePayload {
+    pub meta: NodeMeta,
+    pub content: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IngestConfig {
+    pub units: Vec<UnitEntry>,
+    pub callback_base: String,
+    pub callback_token: String,
+    pub source_version_id: String,
+    pub root_node_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnitEntry {
+    pub unit: UscUnit,
+    pub title_sort_order: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UscUnit {
+    pub id: String,
+    pub title_num: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentBlock {
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SectionContent {
+    pub blocks: Vec<ContentBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<SectionMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SectionMetadata {
+    pub cross_references: Vec<crate::cross_references::SectionCrossReference>,
+}

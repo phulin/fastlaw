@@ -8,7 +8,7 @@ cpu_ms = 300000
 
 [[containers]]
 class_name = "IngestContainer"
-image = "./Dockerfile"
+image = "./container-rust/Dockerfile"
 instance_type = "basic"
 max_instances = 60
 

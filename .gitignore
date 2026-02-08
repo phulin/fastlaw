@@ -33,6 +33,7 @@ data/
 dist/
 .turbo/
 packages/ingest/src/benchmarks
+packages/ingest/container-rust/target
 
 # planning-with-files
 task_plan.md
