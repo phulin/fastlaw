@@ -7,6 +7,7 @@ export function Header() {
 			<nav class="nav">
 				<a href="/statutes/cgs">CGA</a>
 				<a href="/statutes/usc">USC</a>
+				<a href="/ingest/jobs">Ingest</a>
 			</nav>
 		</header>
 	);

@@ -16,6 +16,28 @@ export interface SourceVersionRecord {
 	created_at: string | null;
 }
 
+export type IngestJobStatus =
+	| "planning"
+	| "running"
+	| "completed"
+	| "completed_with_errors"
+	| "failed";
+
+export interface IngestJobRecord {
+	id: string;
+	source_code: string;
+	source_version_id: string | null;
+	status: IngestJobStatus;
+	total_shards: number;
+	processed_shards: number;
+	error_count: number;
+	last_error: string | null;
+	started_at: string;
+	completed_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 export interface NodeRecord {
 	id: string;
 	source_version_id: string;

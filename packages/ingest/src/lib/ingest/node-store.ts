@@ -1,5 +1,5 @@
-import type { NodeInsert, NodeMeta } from "../../../types";
-import { insertNodesBatched } from "../../versioning";
+import type { NodeInsert, NodeMeta } from "../../types";
+import { insertNodesBatched } from "../versioning";
 
 const NODE_BATCH_SIZE = 100;
 

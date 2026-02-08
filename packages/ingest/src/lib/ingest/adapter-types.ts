@@ -1,5 +1,5 @@
-import type { Env, NodeMeta } from "../../../types";
-import type { BlobStore } from "../../packfile";
+import type { Env, NodeMeta } from "../../types";
+import type { BlobStore } from "../packfile";
 import type { NodeStore } from "./node-store";
 
 export interface SourceDescriptor {

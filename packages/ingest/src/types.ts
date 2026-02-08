@@ -59,22 +59,36 @@ export interface IngestionResult {
 	diff: DiffResult | null;
 }
 
-export interface GenericWorkflowParams {
-	/** Force re-ingestion even if version exists */
+export interface VectorWorkflowParams {
 	force?: boolean;
-	/** Process only a single unit by id */
-	unitId?: string;
-}
-
-export interface VectorWorkflowParams extends GenericWorkflowParams {
 	sourceId?: string;
 	sourceVersionId?: string;
 	batchSize?: number;
 }
 
+export type IngestSourceCode = "cgs" | "mgl" | "usc";
+
+export type IngestQueueShardWorkItem = {
+	parentId: string;
+	childId: string;
+	sourceUrl: string;
+	meta: unknown;
+};
+
+export interface IngestShardQueueMessage {
+	kind: "ingest-shard";
+	jobId: string;
+	sourceCode: IngestSourceCode;
+	sourceId: string;
+	sourceVersionId: string;
+	unit: unknown;
+	items: IngestQueueShardWorkItem[];
+}
+
 export interface Env {
 	DB: D1Database;
 	STORAGE: R2Bucket;
+	INGEST_SHARDS_QUEUE: Queue<IngestShardQueueMessage>;
 	AI: Ai;
 	VECTOR_SEARCH_INDEX: Vectorize;
 	GODADDY_CA?: Fetcher; // Only available in deployed workers
@@ -83,9 +97,7 @@ export interface Env {
 	MGL_BASE_URL: string;
 	MGL_START_PATH: string;
 	USC_DOWNLOAD_BASE: string;
-	INGEST_RUNNER: DurableObjectNamespace;
-	CGA_WORKFLOW: Workflow<GenericWorkflowParams>;
-	MGL_WORKFLOW: Workflow<GenericWorkflowParams>;
-	USC_WORKFLOW: Workflow<GenericWorkflowParams>;
 	VECTOR_WORKFLOW: Workflow<VectorWorkflowParams>;
 }
+
+export type IngestQueueMessage = IngestShardQueueMessage;

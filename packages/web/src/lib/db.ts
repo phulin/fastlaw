@@ -1,6 +1,7 @@
 import type {
 	BlobRecord,
 	Env,
+	IngestJobRecord,
 	NodeContent,
 	NodeRecord,
 	SourceRecord,
@@ -140,6 +141,58 @@ export async function getSourceVersionById(
 		.prepare("SELECT * FROM source_versions WHERE id = ?")
 		.bind(versionId)
 		.first<SourceVersionRecord>();
+}
+
+export async function listIngestJobs(limit = 100): Promise<IngestJobRecord[]> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`SELECT
+				id,
+				source_code,
+				source_version_id,
+				status,
+				total_shards,
+				processed_shards,
+				error_count,
+				last_error,
+				started_at,
+				completed_at,
+				created_at,
+				updated_at
+			FROM ingest_jobs
+			ORDER BY created_at DESC
+			LIMIT ?`,
+		)
+		.bind(limit)
+		.all<IngestJobRecord>();
+	return result.results;
+}
+
+export async function getIngestJobById(
+	jobId: string,
+): Promise<IngestJobRecord | null> {
+	const db = getDB();
+	return db
+		.prepare(
+			`SELECT
+				id,
+				source_code,
+				source_version_id,
+				status,
+				total_shards,
+				processed_shards,
+				error_count,
+				last_error,
+				started_at,
+				completed_at,
+				created_at,
+				updated_at
+			FROM ingest_jobs
+			WHERE id = ?`,
+		)
+		.bind(jobId)
+		.first<IngestJobRecord>();
 }
 
 // Nodes

@@ -16,27 +16,21 @@ migrations_dir = "../../db/migrations"
 binding = "STORAGE"
 bucket_name = "fastlaw-content"
 
+[[queues.producers]]
+binding = "INGEST_SHARDS_QUEUE"
+queue = "fastlaw-ingest-shards"
+
+[[queues.consumers]]
+queue = "fastlaw-ingest-shards"
+max_batch_size = 3
+max_retries = 3
+
 [ai]
 binding = "AI"
 
 [[vectorize]]
 binding = "VECTOR_SEARCH_INDEX"
 index_name = "fastlaw-search"
-
-[[workflows]]
-name = "cga-ingest-workflow"
-binding = "CGA_WORKFLOW"
-class_name = "CGAIngestWorkflow"
-
-[[workflows]]
-name = "usc-ingest-workflow"
-binding = "USC_WORKFLOW"
-class_name = "USCIngestWorkflow"
-
-[[workflows]]
-name = "mgl-ingest-workflow"
-binding = "MGL_WORKFLOW"
-class_name = "MGLIngestWorkflow"
 
 [[workflows]]
 name = "vector-ingest-workflow"

@@ -1031,3 +1031,98 @@ body {
 		justify-self: start;
 	}
 }
+
+.ingest-jobs-page {
+	padding: 8px 0 48px;
+}
+
+.ingest-jobs-meta {
+	color: var(--ink-soft);
+	margin-top: 10px;
+}
+
+.ingest-error {
+	color: #9f2f1f;
+	background: rgba(159, 47, 31, 0.08);
+	border: 1px solid rgba(159, 47, 31, 0.2);
+	padding: 12px 14px;
+	border-radius: 10px;
+	margin-bottom: 16px;
+}
+
+.jobs-table-wrap {
+	margin-top: 18px;
+	overflow-x: auto;
+	border: 1px solid var(--line);
+	border-radius: 14px;
+	background: rgba(255, 253, 250, 0.86);
+}
+
+.jobs-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.9rem;
+}
+
+.jobs-table th,
+.jobs-table td {
+	text-align: left;
+	padding: 12px;
+	border-bottom: 1px solid var(--line);
+	vertical-align: top;
+	white-space: nowrap;
+}
+
+.jobs-table th {
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--ink-soft);
+	background: rgba(255, 253, 250, 0.95);
+}
+
+.jobs-table tr:last-child td {
+	border-bottom: none;
+}
+
+.jobs-id {
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 0.8rem;
+	max-width: 240px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.status-pill {
+	display: inline-block;
+	padding: 2px 8px;
+	border-radius: 999px;
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+}
+
+.status-pill.planning {
+	background: rgba(95, 84, 74, 0.15);
+	color: #5f544a;
+}
+
+.status-pill.running {
+	background: rgba(44, 118, 188, 0.16);
+	color: #1f5f99;
+}
+
+.status-pill.completed {
+	background: rgba(34, 120, 70, 0.17);
+	color: #1d6f41;
+}
+
+.status-pill.completed_with_errors {
+	background: rgba(181, 117, 23, 0.2);
+	color: #9f650f;
+}
+
+.status-pill.failed {
+	background: rgba(159, 47, 31, 0.2);
+	color: #9f2f1f;
+}

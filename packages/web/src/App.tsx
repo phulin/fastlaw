@@ -3,6 +3,7 @@ import { Show } from "solid-js";
 import type { PageData as PageDataType } from "~/lib/types";
 import DeepSearchPage from "~/pages/DeepSearch";
 import Home from "~/pages/Home";
+import IngestJobsPage from "~/pages/IngestJobs";
 import { NodePage } from "~/pages/Node";
 import SearchPage from "~/pages/Search";
 
@@ -30,6 +31,9 @@ export default function App(props: AppProps) {
 			</Show>
 			<Show when={props.pathname === "/deepsearch"} fallback={null}>
 				<DeepSearchPage />
+			</Show>
+			<Show when={props.pathname === "/ingest/jobs"} fallback={null}>
+				<IngestJobsPage />
 			</Show>
 			<Show when={isDocumentRoute(props.pathname)} fallback={null}>
 				<Show when={props.pageData?.status === "found"}>

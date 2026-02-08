@@ -4,7 +4,7 @@ import type {
 	RootPlan,
 	ShardWorkItem,
 	UnitPlan,
-} from "../workflows/generic";
+} from "../ingest/adapter-types";
 import { extractSectionCrossReferences } from "./cross-references";
 import {
 	fetchUSCTitleStreaming,

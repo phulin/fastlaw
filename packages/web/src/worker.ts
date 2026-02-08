@@ -5,11 +5,13 @@ import { render } from "./entry-server";
 import {
 	getAncestorNodes,
 	getChildNodes,
+	getIngestJobById,
 	getLatestSourceVersion,
 	getNodeByPath,
 	getNodeContent,
 	getSiblingNodes,
 	getSourceByCode,
+	listIngestJobs,
 	setEnv,
 } from "./lib/db";
 import type { Env } from "./lib/types";
@@ -59,6 +61,18 @@ app.options("/api/quicksearch", async (c) =>
 app.post("/api/quicksearch", async (c) => handleQuickSearch(c.req.raw, c.env));
 app.options("/api/search", async (c) => handleSearch(c.req.raw, c.env));
 app.post("/api/search", async (c) => handleSearch(c.req.raw, c.env));
+app.get("/api/ingest/jobs", async (c) => {
+	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
+	const jobs = await listIngestJobs(limit);
+	return c.json({ jobs });
+});
+app.get("/api/ingest/jobs/:jobId", async (c) => {
+	const job = await getIngestJobById(c.req.param("jobId"));
+	if (!job) {
+		return c.json({ error: "Job not found" }, 404);
+	}
+	return c.json({ job });
+});
 
 app.get("*", async (c) => {
 	const url = new URL(c.req.url);
