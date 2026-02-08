@@ -55,7 +55,7 @@ async function fetchCachedChunks(
 	callbackBase: string,
 	callbackToken: string,
 	extractZip: boolean,
-): Promise<AsyncGenerator<Uint8Array, void, void>> {
+): Promise<AsyncGenerator<Uint8Array, void, void> | null> {
 	const cacheRes = await callbackFetch(
 		callbackBase,
 		callbackToken,
@@ -66,6 +66,12 @@ async function fetchCachedChunks(
 			body: JSON.stringify({ url, extractZip }),
 		},
 	);
+	if (cacheRes.status === 422) {
+		const body = (await cacheRes.json()) as { error: string };
+		if (body.error === "html_response") {
+			return null;
+		}
+	}
 	if (!cacheRes.ok) {
 		throw new Error(
 			`Cache proxy failed: ${cacheRes.status} ${await cacheRes.text()}`,
@@ -160,6 +166,8 @@ function resolveSectionParentStringId(
 // Per-unit ingest
 // ──────────────────────────────────────────────────────────────
 
+type UnitStatus = "completed" | "skipped";
+
 async function ingestUSCUnit(
 	unit: UscUnit,
 	titleSortOrder: number,
@@ -167,7 +175,7 @@ async function ingestUSCUnit(
 	callbackToken: string,
 	sourceVersionId: string,
 	rootNodeId: string,
-): Promise<void> {
+): Promise<UnitStatus> {
 	const accessedAt = new Date().toISOString();
 	const rootStringId = rootNodeId;
 
@@ -180,6 +188,10 @@ async function ingestUSCUnit(
 		callbackToken,
 		true,
 	);
+	if (!structureChunks) {
+		console.log(`[Container] Title ${unit.titleNum}: skipped (HTML response)`);
+		return "skipped";
+	}
 	const structureStream = streamUSCStructureXmlFromChunks(
 		structureChunks,
 		unit.titleNum,
@@ -303,6 +315,12 @@ async function ingestUSCUnit(
 			callbackToken,
 			true,
 		);
+		// Content was already cached in phase 1, so null here is unexpected
+		if (!contentChunks) {
+			throw new Error(
+				`Title ${unit.titleNum}: unexpected HTML response on second fetch`,
+			);
+		}
 		const contentStream = streamUSCSectionContentXmlFromChunks(
 			contentChunks,
 			unit.titleNum,
@@ -404,6 +422,7 @@ async function ingestUSCUnit(
 	}
 
 	console.log(`[Container] Title ${unit.titleNum}: done`);
+	return "completed";
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -418,7 +437,7 @@ export async function ingestUSC(config: IngestConfig): Promise<void> {
 
 	for (const { unit, titleSortOrder } of units) {
 		try {
-			await ingestUSCUnit(
+			const status = await ingestUSCUnit(
 				unit,
 				titleSortOrder,
 				callbackBase,
@@ -429,11 +448,11 @@ export async function ingestUSC(config: IngestConfig): Promise<void> {
 			await callbackFetch(
 				callbackBase,
 				callbackToken,
-				"/api/callback/containerDone",
+				"/api/callback/progress",
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ unitId: unit.id, status: "completed" }),
+					body: JSON.stringify({ unitId: unit.id, status }),
 				},
 			);
 		} catch (err) {
@@ -441,7 +460,7 @@ export async function ingestUSC(config: IngestConfig): Promise<void> {
 			await callbackFetch(
 				callbackBase,
 				callbackToken,
-				"/api/callback/containerDone",
+				"/api/callback/progress",
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/json" },

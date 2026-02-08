@@ -331,7 +331,7 @@ app.post("/api/callback/insertNodeBatch", async (c) => {
 	return c.json({ accepted: nodes.length });
 });
 
-app.post("/api/callback/containerDone", async (c) => {
+app.post("/api/callback/progress", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
 	const { unitId, status, error } = await c.req.json<{
@@ -340,14 +340,13 @@ app.post("/api/callback/containerDone", async (c) => {
 		error?: string;
 	}>();
 
-	if (status === "completed") {
+	if (status === "completed" || status === "skipped") {
 		await incrementProcessedTitles(c.env.DB, params.jobId, 1);
-		console.log(`Container ${unitId} completed for job ${params.jobId}`);
+		console.log(`Title ${unitId} ${status} for job ${params.jobId}`);
 	} else if (error) {
 		await recordTitleError(c.env.DB, params.jobId, error, false);
-		console.error(
-			`Container ${unitId} failed for job ${params.jobId}: ${error}`,
-		);
+		await incrementProcessedTitles(c.env.DB, params.jobId, 1);
+		console.error(`Title ${unitId} failed for job ${params.jobId}: ${error}`);
 	}
 
 	return c.json({ ok: true });
@@ -394,6 +393,11 @@ app.post("/api/proxy/cache", async (c) => {
 	});
 	if (!response.ok) {
 		return c.json({ error: `Failed to fetch ${url}: ${response.status}` }, 502);
+	}
+
+	const contentType = response.headers.get("content-type") ?? "";
+	if (extractZip && contentType.toLowerCase().includes("text/html")) {
+		return c.json({ error: "html_response" }, 422);
 	}
 
 	let data: Uint8Array;
