@@ -46,7 +46,7 @@ export async function getUSCTitleUrls(): Promise<string[]> {
 
 const USC_R2_PREFIX = "sources/usc/";
 const USC_XML_R2_PREFIX = `${USC_R2_PREFIX}xml/`;
-const MULTIPART_PART_SIZE = 5 * 1024 * 1024;
+const R2_READ_RANGE_SIZE = 5 * 1024 * 1024;
 
 /**
  * Extract filename from URL for R2 storage key
@@ -197,8 +197,8 @@ async function* streamXmlFromZipStream(
 /**
  * Fetch a single USC title and stream XML content as chunks.
  * Returns an async generator yielding Uint8Array chunks, or null if fetch fails.
- * Uses HTTP range requests / R2 range requests to avoid loading entire ZIP into memory.
- * Check R2 first and cache the original response.
+ * Reads cached extracted XML directly as a stream when present.
+ * Otherwise streams directly from network without local chunk buffering.
  */
 export async function fetchUSCTitleStreaming(
 	url: string,
@@ -208,11 +208,11 @@ export async function fetchUSCTitleStreaming(
 	const xmlCacheKey = getXmlCacheKey(url);
 	const isZip = filename.toLowerCase().endsWith(".zip");
 
-	// Read extracted XML cache first.
-	const cachedXml = await storage.get(xmlCacheKey);
-	if (cachedXml?.body) {
+	// Read extracted XML cache first with fixed-size range reads.
+	const cachedXmlStream = await streamR2ObjectByRange(storage, xmlCacheKey);
+	if (cachedXmlStream) {
 		console.log(`  -> Found extracted XML in R2: ${xmlCacheKey}`);
-		return streamFromReadableStream(cachedXml.body);
+		return cachedXmlStream;
 	}
 
 	try {
@@ -234,32 +234,59 @@ export async function fetchUSCTitleStreaming(
 		const urlIsZip = isZip || contentType.toLowerCase().includes("zip");
 
 		if (urlIsZip) {
-			// Stream unzip from network, then cache extracted XML via multipart upload.
+			// Stream unzip from network directly.
 			if (!response.body) {
 				console.warn(`Failed to fetch ${url}: no response body`);
 				return null;
 			}
-			return streamWithMultipartCache(
-				storage,
-				xmlCacheKey,
-				streamXmlFromZipStream(response.body),
-			);
+			return streamXmlFromZipStream(response.body);
 		}
 
-		// For raw XML, stream with multipart cache upload.
+		// For raw XML, stream directly from network.
 		if (!response.body) {
 			console.warn(`Failed to fetch ${url}: no response body`);
 			return null;
 		}
-		return streamWithMultipartCache(
-			storage,
-			xmlCacheKey,
-			streamFromReadableStream(response.body),
-		);
+		return streamFromReadableStream(response.body);
 	} catch (error) {
 		console.error(`Error fetching ${url}:`, error);
 		return null;
 	}
+}
+
+async function streamR2ObjectByRange(
+	storage: R2Bucket,
+	key: string,
+): Promise<AsyncGenerator<Uint8Array, void, void> | null> {
+	const firstChunk = await storage.get(key, {
+		range: { offset: 0, length: R2_READ_RANGE_SIZE },
+	});
+	if (!firstChunk) {
+		return null;
+	}
+
+	return (async function* () {
+		const firstBytes = new Uint8Array(await firstChunk.arrayBuffer());
+		if (firstBytes.length > 0) {
+			yield firstBytes;
+		}
+
+		const totalSize = firstChunk.size;
+		let offset = firstBytes.length;
+		while (offset < totalSize) {
+			const length = Math.min(R2_READ_RANGE_SIZE, totalSize - offset);
+			const part = await storage.get(key, { range: { offset, length } });
+			if (!part) {
+				throw new Error(`Missing R2 object during ranged read: ${key}`);
+			}
+			const bytes = new Uint8Array(await part.arrayBuffer());
+			if (bytes.length === 0) {
+				throw new Error(`Empty R2 range read for ${key} at offset ${offset}`);
+			}
+			offset += bytes.length;
+			yield bytes;
+		}
+	})();
 }
 
 /**
@@ -278,82 +305,4 @@ async function* streamFromReadableStream(
 	} finally {
 		reader.releaseLock();
 	}
-}
-
-async function* streamWithMultipartCache(
-	storage: R2Bucket,
-	key: string,
-	chunks: AsyncIterable<Uint8Array>,
-): AsyncGenerator<Uint8Array, void, void> {
-	const upload = await storage.createMultipartUpload(key);
-	type UploadedPart = Awaited<ReturnType<R2MultipartUpload["uploadPart"]>>;
-	const uploadedParts: UploadedPart[] = [];
-	const bufferedChunks: Uint8Array[] = [];
-	let bufferedSize = 0;
-	let partNumber = 1;
-	let completed = false;
-
-	try {
-		for await (const chunk of chunks) {
-			bufferedChunks.push(chunk);
-			bufferedSize += chunk.length;
-			while (bufferedSize >= MULTIPART_PART_SIZE) {
-				const partData = consumeBufferedBytes(
-					bufferedChunks,
-					MULTIPART_PART_SIZE,
-				);
-				bufferedSize -= MULTIPART_PART_SIZE;
-				const uploaded = await upload.uploadPart(partNumber, partData);
-				uploadedParts.push(uploaded);
-				partNumber += 1;
-			}
-			yield chunk;
-		}
-
-		if (bufferedSize > 0) {
-			const finalPartData = consumeBufferedBytes(bufferedChunks, bufferedSize);
-			bufferedSize = 0;
-			const uploaded = await upload.uploadPart(partNumber, finalPartData);
-			uploadedParts.push(uploaded);
-		}
-
-		if (uploadedParts.length === 0) {
-			await upload.abort();
-			await storage.put(key, new Uint8Array());
-		} else {
-			await upload.complete(uploadedParts);
-		}
-		completed = true;
-		console.log(`  -> Saved extracted XML to R2: ${key}`);
-	} catch (error) {
-		console.error(`Failed to cache extracted XML: ${key}`, error);
-		throw error;
-	} finally {
-		if (!completed) {
-			try {
-				await upload.abort();
-			} catch {}
-		}
-	}
-}
-
-function consumeBufferedBytes(chunks: Uint8Array[], size: number): Uint8Array {
-	const output = new Uint8Array(size);
-	let written = 0;
-	while (written < size) {
-		const chunk = chunks.shift();
-		if (!chunk) {
-			throw new Error(`Buffer underflow while consuming ${size} bytes`);
-		}
-		const remaining = size - written;
-		if (chunk.length <= remaining) {
-			output.set(chunk, written);
-			written += chunk.length;
-			continue;
-		}
-		output.set(chunk.subarray(0, remaining), written);
-		chunks.unshift(chunk.subarray(remaining));
-		written += remaining;
-	}
-	return output;
 }

@@ -235,22 +235,21 @@ async function startIngestJob(
 	let totalQueuedNodes = 0;
 
 	try {
+		const rootContext = {
+			sourceId,
+			sourceVersionId,
+			rootNodeId: discovery.rootNode.id,
+			versionId: discovery.versionId,
+			rootNode: discovery.rootNode,
+			unitRoots: discovery.unitRoots,
+		};
+
 		for (const unit of selected) {
-			const rootContext = {
-				sourceId,
-				sourceVersionId,
-				rootNodeId: discovery.rootNode.id,
-				versionId: discovery.versionId,
-				rootNode: discovery.rootNode,
-				unitRoots: discovery.unitRoots,
-			};
 			const plan = await registration.adapter.planUnit({
 				env: c.env,
 				root: rootContext,
 				unit,
 			});
-			totalShards += plan.shardItems.length;
-			totalQueuedNodes += plan.shardItems.length;
 
 			const queueMessages: MessageSendRequest<IngestShardQueueMessage>[] = [];
 			for (
@@ -270,11 +269,15 @@ async function startIngestJob(
 					},
 				});
 			}
+
+			await sendShardMessages(c.env, queueMessages);
+
+			totalShards += plan.shardItems.length;
+			totalQueuedNodes += plan.shardItems.length;
 			totalQueueMessages += queueMessages.length;
 			totalQueueMessageBatches += Math.ceil(
 				queueMessages.length / QUEUE_SEND_BATCH_SIZE,
 			);
-			await sendShardMessages(c.env, queueMessages);
 		}
 
 		console.log("Ingest queue enqueue summary", {

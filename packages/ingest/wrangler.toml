@@ -22,7 +22,7 @@ queue = "fastlaw-ingest-shards"
 
 [[queues.consumers]]
 queue = "fastlaw-ingest-shards"
-max_batch_size = 3
+max_batch_size = 1
 max_retries = 3
 
 [ai]
