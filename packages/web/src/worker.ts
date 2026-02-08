@@ -12,6 +12,7 @@ import {
 	getSiblingNodes,
 	getSourceByCode,
 	listIngestJobs,
+	listIngestJobUnits,
 	setEnv,
 } from "./lib/db";
 import type { Env } from "./lib/types";
@@ -72,6 +73,10 @@ app.get("/api/ingest/jobs/:jobId", async (c) => {
 		return c.json({ error: "Job not found" }, 404);
 	}
 	return c.json({ job });
+});
+app.get("/api/ingest/jobs/:jobId/units", async (c) => {
+	const units = await listIngestJobUnits(c.req.param("jobId"));
+	return c.json({ units });
 });
 
 app.get("*", async (c) => {

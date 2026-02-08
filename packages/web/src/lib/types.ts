@@ -30,12 +30,33 @@ export interface IngestJobRecord {
 	status: IngestJobStatus;
 	total_titles: number;
 	processed_titles: number;
+	total_nodes: number;
+	processed_nodes: number;
 	error_count: number;
 	last_error: string | null;
 	started_at: string;
 	completed_at: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export type IngestJobUnitStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "skipped"
+	| "error";
+
+export interface IngestJobUnitRecord {
+	id: number;
+	job_id: string;
+	unit_id: string;
+	status: IngestJobUnitStatus;
+	total_nodes: number;
+	processed_nodes: number;
+	error: string | null;
+	started_at: string | null;
+	completed_at: string | null;
 }
 
 export interface NodeRecord {

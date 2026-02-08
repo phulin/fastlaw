@@ -15,11 +15,14 @@ function formatDate(value: string | null): string {
 	return new Date(value).toLocaleString();
 }
 
-function progressLabel(job: IngestJobRecord): string {
-	if (job.total_titles === 0) {
-		return "0 / 0";
-	}
+function titlesLabel(job: IngestJobRecord): string {
+	if (job.total_titles === 0) return "0 / 0";
 	return `${job.processed_titles} / ${job.total_titles}`;
+}
+
+function nodesLabel(job: IngestJobRecord): string {
+	if (job.total_nodes === 0) return "—";
+	return `${job.processed_nodes} / ${job.total_nodes}`;
 }
 
 export default function IngestJobsPage() {
@@ -94,6 +97,7 @@ export default function IngestJobsPage() {
 									<th>Source</th>
 									<th>Status</th>
 									<th>Titles</th>
+									<th>Nodes</th>
 									<th>Errors</th>
 									<th>Version</th>
 									<th>Started</th>
@@ -104,14 +108,17 @@ export default function IngestJobsPage() {
 								<For each={jobs()}>
 									{(job) => (
 										<tr>
-											<td class="jobs-id">{job.id}</td>
+											<td class="jobs-id">
+												<a href={`/ingest/jobs/${job.id}`}>{job.id}</a>
+											</td>
 											<td>{job.source_code.toUpperCase()}</td>
 											<td>
 												<span class={`status-pill ${job.status}`}>
 													{job.status.replace(/_/g, " ")}
 												</span>
 											</td>
-											<td>{progressLabel(job)}</td>
+											<td>{titlesLabel(job)}</td>
+											<td>{nodesLabel(job)}</td>
 											<td>{job.error_count}</td>
 											<td>{job.source_version_id ?? "—"}</td>
 											<td>{formatDate(job.started_at)}</td>

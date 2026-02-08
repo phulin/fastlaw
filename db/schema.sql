@@ -67,8 +67,10 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
   source_code TEXT NOT NULL,
   source_version_id TEXT,
   status TEXT NOT NULL DEFAULT 'planning',
-  total_shards INTEGER NOT NULL DEFAULT 0,
-  processed_shards INTEGER NOT NULL DEFAULT 0,
+  total_titles INTEGER NOT NULL DEFAULT 0,
+  processed_titles INTEGER NOT NULL DEFAULT 0,
+  total_nodes INTEGER NOT NULL DEFAULT 0,
+  processed_nodes INTEGER NOT NULL DEFAULT 0,
   error_count INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
   started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -82,6 +84,22 @@ CREATE INDEX IF NOT EXISTS idx_ingest_jobs_created_at
 
 CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status
   ON ingest_jobs(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ingest_job_units (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL REFERENCES ingest_jobs(id),
+  unit_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  total_nodes INTEGER NOT NULL DEFAULT 0,
+  processed_nodes INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  UNIQUE(job_id, unit_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_job_units_job
+  ON ingest_job_units(job_id);
 
 -- Add FK from source_versions.root_node_id after nodes table exists
 -- (SQLite doesn't enforce FKs by default anyway)

@@ -8,7 +8,11 @@ import { IngestContainer } from "./lib/ingest-container";
 import {
 	completePlanning,
 	createIngestJob,
+	createJobUnits,
 	incrementProcessedTitles,
+	incrementUnitProcessedNodes,
+	markUnitCompleted,
+	markUnitRunning,
 	recordTitleError,
 } from "./lib/ingest-jobs";
 import { hash64, hash64ToHex } from "./lib/packfile/hash";
@@ -54,13 +58,16 @@ app.get("/api/versions", async (c) => {
 	return c.json({ versions: results });
 });
 
+const INGEST_JOB_COLUMNS = `
+	id, source_code, source_version_id, status,
+	total_titles, processed_titles, total_nodes, processed_nodes,
+	error_count, last_error,
+	started_at, completed_at, created_at, updated_at`;
+
 app.get("/api/ingest/jobs", async (c) => {
 	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
 	const { results } = await c.env.DB.prepare(
-		`SELECT
-			id, source_code, source_version_id, status,
-			total_titles, processed_titles, error_count, last_error,
-			started_at, completed_at, created_at, updated_at
+		`SELECT ${INGEST_JOB_COLUMNS}
 		FROM ingest_jobs
 		ORDER BY created_at DESC
 		LIMIT ?`,
@@ -72,10 +79,7 @@ app.get("/api/ingest/jobs", async (c) => {
 
 app.get("/api/ingest/jobs/:jobId", async (c) => {
 	const job = await c.env.DB.prepare(
-		`SELECT
-			id, source_code, source_version_id, status,
-			total_titles, processed_titles, error_count, last_error,
-			started_at, completed_at, created_at, updated_at
+		`SELECT ${INGEST_JOB_COLUMNS}
 		FROM ingest_jobs
 		WHERE id = ?`,
 	)
@@ -84,6 +88,19 @@ app.get("/api/ingest/jobs/:jobId", async (c) => {
 
 	if (!job) return c.json({ error: "Job not found" }, 404);
 	return c.json({ job });
+});
+
+app.get("/api/ingest/jobs/:jobId/units", async (c) => {
+	const { results } = await c.env.DB.prepare(
+		`SELECT id, job_id, unit_id, status, total_nodes, processed_nodes,
+			error, started_at, completed_at
+		FROM ingest_job_units
+		WHERE job_id = ?
+		ORDER BY id`,
+	)
+		.bind(c.req.param("jobId"))
+		.all();
+	return c.json({ units: results });
 });
 
 app.get("/api/storage/objects", async (c) => {
@@ -124,6 +141,7 @@ app.post("/api/admin/reset", async (c) => {
 	} while (cursor);
 
 	await c.env.DB.batch([
+		c.env.DB.prepare("DELETE FROM ingest_job_units"),
 		c.env.DB.prepare("DELETE FROM ingest_jobs"),
 		c.env.DB.prepare("DELETE FROM nodes"),
 		c.env.DB.prepare("DELETE FROM blobs"),
@@ -228,6 +246,11 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 
 		const jobId = await createIngestJob(c.env.DB, "usc");
 		await completePlanning(c.env.DB, jobId, sourceVersionId, selected.length);
+		await createJobUnits(
+			c.env.DB,
+			jobId,
+			selected.map((u) => u.id),
+		);
 
 		// In local dev, containers run in Docker and can't reach the host via
 		// localhost. Replace with host.docker.internal so callbacks work.
@@ -287,10 +310,28 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 // Container callbacks
 // ──────────────────────────────────────────────────────────────
 
+app.post("/api/callback/unitStart", async (c) => {
+	const token = extractBearerToken(c.req.raw);
+	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	const { unitId, totalNodes } = await c.req.json<{
+		unitId: string;
+		totalNodes: number;
+	}>();
+
+	await markUnitRunning(c.env.DB, params.jobId, unitId, totalNodes);
+	console.log(
+		`Unit ${unitId} started for job ${params.jobId}: ${totalNodes} nodes`,
+	);
+	return c.json({ ok: true });
+});
+
 app.post("/api/callback/insertNodeBatch", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
-	const { nodes } = await c.req.json<{ nodes: NodePayload[] }>();
+	const { unitId, nodes } = await c.req.json<{
+		unitId: string;
+		nodes: NodePayload[];
+	}>();
 
 	const newBlobs: Array<{ hashHex: string; content: number[] }> = [];
 	const nodeInserts: IngestNode[] = [];
@@ -328,6 +369,12 @@ app.post("/api/callback/insertNodeBatch", async (c) => {
 	}
 
 	await insertNodesBatched(c.env.DB, nodeInserts);
+	await incrementUnitProcessedNodes(
+		c.env.DB,
+		params.jobId,
+		unitId,
+		nodes.length,
+	);
 	return c.json({ accepted: nodes.length });
 });
 
@@ -341,9 +388,16 @@ app.post("/api/callback/progress", async (c) => {
 	}>();
 
 	if (status === "completed" || status === "skipped") {
+		await markUnitCompleted(
+			c.env.DB,
+			params.jobId,
+			unitId,
+			status as "completed" | "skipped",
+		);
 		await incrementProcessedTitles(c.env.DB, params.jobId, 1);
 		console.log(`Title ${unitId} ${status} for job ${params.jobId}`);
 	} else if (error) {
+		await markUnitCompleted(c.env.DB, params.jobId, unitId, "error", error);
 		await recordTitleError(c.env.DB, params.jobId, error, false);
 		await incrementProcessedTitles(c.env.DB, params.jobId, 1);
 		console.error(`Title ${unitId} failed for job ${params.jobId}: ${error}`);

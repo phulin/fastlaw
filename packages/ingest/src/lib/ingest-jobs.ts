@@ -7,6 +7,13 @@ export type IngestJobStatus =
 	| "completed_with_errors"
 	| "failed";
 
+export type IngestJobUnitStatus =
+	| "pending"
+	| "running"
+	| "completed"
+	| "skipped"
+	| "error";
+
 export interface IngestJobRecord {
 	id: string;
 	source_code: IngestSourceCode;
@@ -14,12 +21,26 @@ export interface IngestJobRecord {
 	status: IngestJobStatus;
 	total_titles: number;
 	processed_titles: number;
+	total_nodes: number;
+	processed_nodes: number;
 	error_count: number;
 	last_error: string | null;
 	started_at: string;
 	completed_at: string | null;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface IngestJobUnitRecord {
+	id: number;
+	job_id: string;
+	unit_id: string;
+	status: IngestJobUnitStatus;
+	total_nodes: number;
+	processed_nodes: number;
+	error: string | null;
+	started_at: string | null;
+	completed_at: string | null;
 }
 
 export async function createIngestJob(
@@ -36,6 +57,94 @@ export async function createIngestJob(
 		.bind(jobId, sourceCode)
 		.run();
 	return jobId;
+}
+
+export async function createJobUnits(
+	db: D1Database,
+	jobId: string,
+	unitIds: string[],
+): Promise<void> {
+	const BATCH_SIZE = 50;
+	for (let i = 0; i < unitIds.length; i += BATCH_SIZE) {
+		const batch = unitIds.slice(i, i + BATCH_SIZE);
+		const statements = batch.map((unitId) =>
+			db
+				.prepare(
+					`INSERT INTO ingest_job_units (job_id, unit_id, status)
+					VALUES (?, ?, 'pending')`,
+				)
+				.bind(jobId, unitId),
+		);
+		await db.batch(statements);
+	}
+}
+
+export async function markUnitRunning(
+	db: D1Database,
+	jobId: string,
+	unitId: string,
+	totalNodes: number,
+): Promise<void> {
+	await db.batch([
+		db
+			.prepare(
+				`UPDATE ingest_job_units
+				SET status = 'running', total_nodes = ?, started_at = CURRENT_TIMESTAMP
+				WHERE job_id = ? AND unit_id = ?`,
+			)
+			.bind(totalNodes, jobId, unitId),
+		db
+			.prepare(
+				`UPDATE ingest_jobs
+				SET total_nodes = total_nodes + ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?`,
+			)
+			.bind(totalNodes, jobId),
+	]);
+}
+
+export async function incrementUnitProcessedNodes(
+	db: D1Database,
+	jobId: string,
+	unitId: string,
+	count: number,
+): Promise<void> {
+	await db.batch([
+		db
+			.prepare(
+				`UPDATE ingest_job_units
+				SET processed_nodes = processed_nodes + ?
+				WHERE job_id = ? AND unit_id = ?`,
+			)
+			.bind(count, jobId, unitId),
+		db
+			.prepare(
+				`UPDATE ingest_jobs
+				SET processed_nodes = processed_nodes + ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?`,
+			)
+			.bind(count, jobId),
+	]);
+}
+
+export async function markUnitCompleted(
+	db: D1Database,
+	jobId: string,
+	unitId: string,
+	status: "completed" | "skipped" | "error",
+	error?: string,
+): Promise<void> {
+	await db
+		.prepare(
+			`UPDATE ingest_job_units
+			SET
+				status = ?,
+				error = ?,
+				completed_at = CURRENT_TIMESTAMP
+			WHERE job_id = ? AND unit_id = ?`,
+		)
+		.bind(status, error?.slice(0, 1000) ?? null, jobId, unitId)
+		.run();
 }
 
 export async function completePlanning(

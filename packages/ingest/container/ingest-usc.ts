@@ -112,6 +112,7 @@ async function fetchCachedChunks(
 async function postNodeBatch(
 	callbackBase: string,
 	callbackToken: string,
+	unitId: string,
 	nodes: NodePayload[],
 ): Promise<void> {
 	const res = await callbackFetch(
@@ -121,12 +122,35 @@ async function postNodeBatch(
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ nodes }),
+			body: JSON.stringify({ unitId, nodes }),
 		},
 	);
 	if (!res.ok) {
 		throw new Error(
 			`Insert callback failed: ${res.status} ${await res.text()}`,
+		);
+	}
+}
+
+async function postUnitStart(
+	callbackBase: string,
+	callbackToken: string,
+	unitId: string,
+	totalNodes: number,
+): Promise<void> {
+	const res = await callbackFetch(
+		callbackBase,
+		callbackToken,
+		"/api/callback/unitStart",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ unitId, totalNodes }),
+		},
+	);
+	if (!res.ok) {
+		throw new Error(
+			`Unit start callback failed: ${res.status} ${await res.text()}`,
 		);
 	}
 }
@@ -294,11 +318,15 @@ async function ingestUSCUnit(
 
 	ensureTitleNode(unit.titleNum, `Title ${unit.titleNum}`);
 
+	const totalNodes = pendingNodes.length + sectionRefs.length;
+	await postUnitStart(callbackBase, callbackToken, unit.id, totalNodes);
+
 	// Flush structure nodes in batches
 	for (let i = 0; i < pendingNodes.length; i += BATCH_SIZE) {
 		await postNodeBatch(
 			callbackBase,
 			callbackToken,
+			unit.id,
 			pendingNodes.slice(i, i + BATCH_SIZE),
 		);
 	}
@@ -402,7 +430,7 @@ async function ingestUSCUnit(
 			});
 
 			if (sectionBatch.length >= BATCH_SIZE) {
-				await postNodeBatch(callbackBase, callbackToken, sectionBatch);
+				await postNodeBatch(callbackBase, callbackToken, unit.id, sectionBatch);
 				sectionBatch.length = 0;
 			}
 
@@ -410,7 +438,7 @@ async function ingestUSCUnit(
 		}
 
 		if (sectionBatch.length > 0) {
-			await postNodeBatch(callbackBase, callbackToken, sectionBatch);
+			await postNodeBatch(callbackBase, callbackToken, unit.id, sectionBatch);
 		}
 
 		if (sectionByKey.size > 0) {

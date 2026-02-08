@@ -2,6 +2,7 @@ import type {
 	BlobRecord,
 	Env,
 	IngestJobRecord,
+	IngestJobUnitRecord,
 	NodeContent,
 	NodeRecord,
 	SourceRecord,
@@ -143,23 +144,17 @@ export async function getSourceVersionById(
 		.first<SourceVersionRecord>();
 }
 
+const INGEST_JOB_COLUMNS = `
+	id, source_code, source_version_id, status,
+	total_titles, processed_titles, total_nodes, processed_nodes,
+	error_count, last_error,
+	started_at, completed_at, created_at, updated_at`;
+
 export async function listIngestJobs(limit = 100): Promise<IngestJobRecord[]> {
 	const db = getDB();
 	const result = await db
 		.prepare(
-			`SELECT
-				id,
-				source_code,
-				source_version_id,
-				status,
-				total_titles,
-				processed_titles,
-				error_count,
-				last_error,
-				started_at,
-				completed_at,
-				created_at,
-				updated_at
+			`SELECT ${INGEST_JOB_COLUMNS}
 			FROM ingest_jobs
 			ORDER BY created_at DESC
 			LIMIT ?`,
@@ -175,24 +170,29 @@ export async function getIngestJobById(
 	const db = getDB();
 	return db
 		.prepare(
-			`SELECT
-				id,
-				source_code,
-				source_version_id,
-				status,
-				total_titles,
-				processed_titles,
-				error_count,
-				last_error,
-				started_at,
-				completed_at,
-				created_at,
-				updated_at
+			`SELECT ${INGEST_JOB_COLUMNS}
 			FROM ingest_jobs
 			WHERE id = ?`,
 		)
 		.bind(jobId)
 		.first<IngestJobRecord>();
+}
+
+export async function listIngestJobUnits(
+	jobId: string,
+): Promise<IngestJobUnitRecord[]> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`SELECT id, job_id, unit_id, status, total_nodes, processed_nodes,
+				error, started_at, completed_at
+			FROM ingest_job_units
+			WHERE job_id = ?
+			ORDER BY id`,
+		)
+		.bind(jobId)
+		.all<IngestJobUnitRecord>();
+	return result.results;
 }
 
 // Nodes

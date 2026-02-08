@@ -1126,3 +1126,70 @@ body {
 	background: rgba(159, 47, 31, 0.2);
 	color: #9f2f1f;
 }
+
+.status-pill.pending {
+	background: rgba(95, 84, 74, 0.1);
+	color: #7a6e63;
+}
+
+.status-pill.skipped {
+	background: rgba(95, 84, 74, 0.12);
+	color: #5f544a;
+}
+
+.status-pill.error {
+	background: rgba(159, 47, 31, 0.2);
+	color: #9f2f1f;
+}
+
+/* Job detail page */
+
+.job-detail-meta {
+	margin-top: 18px;
+	border: 1px solid var(--line);
+	border-radius: 14px;
+	background: rgba(255, 253, 250, 0.86);
+	padding: 18px 22px;
+}
+
+.job-detail-grid {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 6px 18px;
+	margin: 0;
+	font-size: 0.9rem;
+}
+
+.job-detail-grid dt {
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.1em;
+	color: var(--ink-soft);
+	align-self: center;
+}
+
+.job-detail-grid dd {
+	margin: 0;
+}
+
+.job-units-heading {
+	margin-top: 28px;
+	margin-bottom: 8px;
+	font-size: 1.1rem;
+}
+
+.progress-bar-wrap {
+	width: 100%;
+	min-width: 80px;
+	height: 8px;
+	background: rgba(0, 0, 0, 0.06);
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.progress-bar-fill {
+	height: 100%;
+	background: #2c76bc;
+	border-radius: 4px;
+	transition: width 0.3s ease;
+}
