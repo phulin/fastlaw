@@ -7,6 +7,7 @@ import {
 	type USCLevelType,
 	type USCParentRef,
 } from "../src/lib/usc/parser";
+import type { NodePayload } from "../src/types";
 
 export interface UscUnit {
 	id: string;
@@ -16,30 +17,10 @@ export interface UscUnit {
 
 export interface IngestConfig {
 	units: Array<{ unit: UscUnit; titleSortOrder: number }>;
-	insertCallbackUrl: string;
-	doneCallbackUrl: string;
-	cacheCallbackUrl: string;
-	r2ReadCallbackUrl: string;
+	callbackBase: string;
+	callbackToken: string;
 	sourceVersionId: string;
 	rootNodeId: string;
-}
-
-interface NodePayload {
-	meta: {
-		id: string;
-		source_version_id: string;
-		parent_id: string | null;
-		level_name: string;
-		level_index: number;
-		sort_order: number;
-		name: string | null;
-		path: string | null;
-		readable_id: string | null;
-		heading_citation: string | null;
-		source_url: string | null;
-		accessed_at: string | null;
-	};
-	content: unknown | null;
 }
 
 const BATCH_SIZE = 50;
@@ -47,20 +28,44 @@ const R2_CHUNK_SIZE = 5 * 1024 * 1024;
 const SECTION_LEVEL_INDEX = Object.keys(USC_LEVEL_INDEX).length;
 
 // ──────────────────────────────────────────────────────────────
+// Authenticated fetch helper
+// ──────────────────────────────────────────────────────────────
+
+function callbackFetch(
+	callbackBase: string,
+	callbackToken: string,
+	path: string,
+	init?: RequestInit,
+): Promise<Response> {
+	return fetch(`${callbackBase}${path}`, {
+		...init,
+		headers: {
+			...(init?.headers as Record<string, string> | undefined),
+			Authorization: `Bearer ${callbackToken}`,
+		},
+	});
+}
+
+// ──────────────────────────────────────────────────────────────
 // Proxy-based streaming from worker R2 cache
 // ──────────────────────────────────────────────────────────────
 
 async function fetchCachedChunks(
 	url: string,
-	cacheCallbackUrl: string,
-	r2ReadCallbackUrl: string,
+	callbackBase: string,
+	callbackToken: string,
 	extractZip: boolean,
 ): Promise<AsyncGenerator<Uint8Array, void, void>> {
-	const cacheRes = await fetch(cacheCallbackUrl, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ url, extractZip }),
-	});
+	const cacheRes = await callbackFetch(
+		callbackBase,
+		callbackToken,
+		"/api/proxy/cache",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ url, extractZip }),
+		},
+	);
 	if (!cacheRes.ok) {
 		throw new Error(
 			`Cache proxy failed: ${cacheRes.status} ${await cacheRes.text()}`,
@@ -75,11 +80,16 @@ async function fetchCachedChunks(
 		let offset = 0;
 		while (offset < totalSize) {
 			const length = Math.min(R2_CHUNK_SIZE, totalSize - offset);
-			const readUrl = new URL(r2ReadCallbackUrl);
-			readUrl.searchParams.set("key", r2Key);
-			readUrl.searchParams.set("offset", String(offset));
-			readUrl.searchParams.set("length", String(length));
-			const chunkRes = await fetch(readUrl.toString());
+			const params = new URLSearchParams({
+				key: r2Key,
+				offset: String(offset),
+				length: String(length),
+			});
+			const chunkRes = await callbackFetch(
+				callbackBase,
+				callbackToken,
+				`/api/proxy/r2-read?${params}`,
+			);
 			if (!chunkRes.ok) {
 				throw new Error(`R2 read failed: ${chunkRes.status}`);
 			}
@@ -94,14 +104,20 @@ async function fetchCachedChunks(
 // ──────────────────────────────────────────────────────────────
 
 async function postNodeBatch(
-	insertCallbackUrl: string,
+	callbackBase: string,
+	callbackToken: string,
 	nodes: NodePayload[],
 ): Promise<void> {
-	const res = await fetch(insertCallbackUrl, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ nodes }),
-	});
+	const res = await callbackFetch(
+		callbackBase,
+		callbackToken,
+		"/api/callback/insertNodeBatch",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ nodes }),
+		},
+	);
 	if (!res.ok) {
 		throw new Error(
 			`Insert callback failed: ${res.status} ${await res.text()}`,
@@ -147,9 +163,8 @@ function resolveSectionParentStringId(
 async function ingestUSCUnit(
 	unit: UscUnit,
 	titleSortOrder: number,
-	insertCallbackUrl: string,
-	cacheCallbackUrl: string,
-	r2ReadCallbackUrl: string,
+	callbackBase: string,
+	callbackToken: string,
 	sourceVersionId: string,
 	rootNodeId: string,
 ): Promise<void> {
@@ -161,8 +176,8 @@ async function ingestUSCUnit(
 	// ── Phase 1: Parse structure ─────────────────────────────
 	const structureChunks = await fetchCachedChunks(
 		unit.url,
-		cacheCallbackUrl,
-		r2ReadCallbackUrl,
+		callbackBase,
+		callbackToken,
 		true,
 	);
 	const structureStream = streamUSCStructureXmlFromChunks(
@@ -270,7 +285,8 @@ async function ingestUSCUnit(
 	// Flush structure nodes in batches
 	for (let i = 0; i < pendingNodes.length; i += BATCH_SIZE) {
 		await postNodeBatch(
-			insertCallbackUrl,
+			callbackBase,
+			callbackToken,
 			pendingNodes.slice(i, i + BATCH_SIZE),
 		);
 	}
@@ -283,8 +299,8 @@ async function ingestUSCUnit(
 	if (sectionRefs.length > 0) {
 		const contentChunks = await fetchCachedChunks(
 			unit.url,
-			cacheCallbackUrl,
-			r2ReadCallbackUrl,
+			callbackBase,
+			callbackToken,
 			true,
 		);
 		const contentStream = streamUSCSectionContentXmlFromChunks(
@@ -368,7 +384,7 @@ async function ingestUSCUnit(
 			});
 
 			if (sectionBatch.length >= BATCH_SIZE) {
-				await postNodeBatch(insertCallbackUrl, sectionBatch);
+				await postNodeBatch(callbackBase, callbackToken, sectionBatch);
 				sectionBatch.length = 0;
 			}
 
@@ -376,7 +392,7 @@ async function ingestUSCUnit(
 		}
 
 		if (sectionBatch.length > 0) {
-			await postNodeBatch(insertCallbackUrl, sectionBatch);
+			await postNodeBatch(callbackBase, callbackToken, sectionBatch);
 		}
 
 		if (sectionByKey.size > 0) {
@@ -395,15 +411,8 @@ async function ingestUSCUnit(
 // ──────────────────────────────────────────────────────────────
 
 export async function ingestUSC(config: IngestConfig): Promise<void> {
-	const {
-		units,
-		insertCallbackUrl,
-		doneCallbackUrl,
-		cacheCallbackUrl,
-		r2ReadCallbackUrl,
-		sourceVersionId,
-		rootNodeId,
-	} = config;
+	const { units, callbackBase, callbackToken, sourceVersionId, rootNodeId } =
+		config;
 
 	console.log(`[Container] Starting ingest for ${units.length} units`);
 
@@ -412,28 +421,37 @@ export async function ingestUSC(config: IngestConfig): Promise<void> {
 			await ingestUSCUnit(
 				unit,
 				titleSortOrder,
-				insertCallbackUrl,
-				cacheCallbackUrl,
-				r2ReadCallbackUrl,
+				callbackBase,
+				callbackToken,
 				sourceVersionId,
 				rootNodeId,
 			);
-			await fetch(doneCallbackUrl, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ unitId: unit.id, status: "completed" }),
-			});
+			await callbackFetch(
+				callbackBase,
+				callbackToken,
+				"/api/callback/containerDone",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ unitId: unit.id, status: "completed" }),
+				},
+			);
 		} catch (err) {
 			console.error(`[Container] Title ${unit.titleNum} failed:`, err);
-			await fetch(doneCallbackUrl, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					unitId: unit.id,
-					status: "error",
-					error: err instanceof Error ? err.message : String(err),
-				}),
-			}).catch(() => {});
+			await callbackFetch(
+				callbackBase,
+				callbackToken,
+				"/api/callback/containerDone",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						unitId: unit.id,
+						status: "error",
+						error: err instanceof Error ? err.message : String(err),
+					}),
+				},
+			).catch(() => {});
 		}
 	}
 

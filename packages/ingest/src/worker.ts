@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { signCallbackUrl, verifyCallback } from "./lib/callback-auth";
+import {
+	extractBearerToken,
+	signCallbackToken,
+	verifyCallbackToken,
+} from "./lib/callback-auth";
 import { IngestContainer } from "./lib/ingest-container";
 import {
 	completePlanning,
@@ -18,7 +22,12 @@ import {
 	getOrCreateSource,
 	insertNodesBatched,
 } from "./lib/versioning";
-import type { Env, IngestNode, VectorWorkflowParams } from "./types";
+import type {
+	Env,
+	IngestNode,
+	NodePayload,
+	VectorWorkflowParams,
+} from "./types";
 
 type AppContext = {
 	Bindings: Env;
@@ -227,26 +236,8 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 			/localhost|127\.0\.0\.1/,
 			"host.docker.internal",
 		);
-		const callbackParams = { jobId, sourceVersionId, sourceId };
-
-		const insertCallbackUrl = await signCallbackUrl(
-			`${callbackBase}/api/callback/insertNodeBatch`,
-			callbackParams,
-			c.env.CALLBACK_SECRET,
-		);
-		const doneCallbackUrl = await signCallbackUrl(
-			`${callbackBase}/api/callback/containerDone`,
-			callbackParams,
-			c.env.CALLBACK_SECRET,
-		);
-		const cacheCallbackUrl = await signCallbackUrl(
-			`${callbackBase}/api/proxy/cache`,
-			callbackParams,
-			c.env.CALLBACK_SECRET,
-		);
-		const r2ReadCallbackUrl = await signCallbackUrl(
-			`${callbackBase}/api/proxy/r2-read`,
-			callbackParams,
+		const callbackToken = await signCallbackToken(
+			{ jobId, sourceVersionId, sourceId },
 			c.env.CALLBACK_SECRET,
 		);
 
@@ -262,10 +253,8 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 								unit,
 								titleSortOrder: i,
 							})),
-							insertCallbackUrl,
-							doneCallbackUrl,
-							cacheCallbackUrl,
-							r2ReadCallbackUrl,
+							callbackBase,
+							callbackToken,
 							sourceVersionId,
 							rootNodeId: discovery.rootNode.id,
 						}),
@@ -298,30 +287,10 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 // Container callbacks
 // ──────────────────────────────────────────────────────────────
 
-interface CallbackNodePayload {
-	meta: {
-		id: string;
-		source_version_id: string;
-		parent_id: string | null;
-		level_name: string;
-		level_index: number;
-		sort_order: number;
-		name: string | null;
-		path: string | null;
-		readable_id: string | null;
-		heading_citation: string | null;
-		source_url: string | null;
-		accessed_at: string | null;
-	};
-	content: unknown | null;
-}
-
 app.post("/api/callback/insertNodeBatch", async (c) => {
-	const params = await verifyCallback(
-		new URL(c.req.url),
-		c.env.CALLBACK_SECRET,
-	);
-	const { nodes } = await c.req.json<{ nodes: CallbackNodePayload[] }>();
+	const token = extractBearerToken(c.req.raw);
+	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	const { nodes } = await c.req.json<{ nodes: NodePayload[] }>();
 
 	const newBlobs: Array<{ hashHex: string; content: number[] }> = [];
 	const nodeInserts: IngestNode[] = [];
@@ -363,10 +332,8 @@ app.post("/api/callback/insertNodeBatch", async (c) => {
 });
 
 app.post("/api/callback/containerDone", async (c) => {
-	const params = await verifyCallback(
-		new URL(c.req.url),
-		c.env.CALLBACK_SECRET,
-	);
+	const token = extractBearerToken(c.req.raw);
+	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
 	const { unitId, status, error } = await c.req.json<{
 		unitId: string;
 		status: string;
@@ -403,7 +370,8 @@ function getCacheKey(url: string, extractZip: boolean): string {
 
 app.post("/api/proxy/cache", async (c) => {
 	try {
-		await verifyCallback(new URL(c.req.url), c.env.CALLBACK_SECRET);
+		const token = extractBearerToken(c.req.raw);
+		await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
 	} catch {
 		return c.json({ error: "Unauthorized" }, 401);
 	}
@@ -455,7 +423,8 @@ app.post("/api/proxy/cache", async (c) => {
 
 app.get("/api/proxy/r2-read", async (c) => {
 	try {
-		await verifyCallback(new URL(c.req.url), c.env.CALLBACK_SECRET);
+		const token = extractBearerToken(c.req.raw);
+		await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
 	} catch {
 		return c.json({ error: "Unauthorized" }, 401);
 	}

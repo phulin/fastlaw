@@ -23,47 +23,58 @@ async function hmacSha256(payload: string, secret: string): Promise<string> {
 	return toHex(sig);
 }
 
-export async function signCallbackUrl(
-	baseUrl: string,
+export async function signCallbackToken(
 	params: CallbackParams,
 	secret: string,
 ): Promise<string> {
-	const url = new URL(baseUrl);
-	url.searchParams.set("jobId", params.jobId);
-	url.searchParams.set("svid", params.sourceVersionId);
-	url.searchParams.set("sid", params.sourceId);
 	const exp = String(Date.now() + 3600_000);
-	url.searchParams.set("exp", exp);
 	const payload = `${params.jobId}|${params.sourceVersionId}|${params.sourceId}|${exp}`;
 	const sig = await hmacSha256(payload, secret);
-	url.searchParams.set("sig", sig);
-	return url.toString();
+	return btoa(
+		JSON.stringify({
+			jobId: params.jobId,
+			svid: params.sourceVersionId,
+			sid: params.sourceId,
+			exp,
+			sig,
+		}),
+	);
 }
 
-export async function verifyCallback(
-	url: URL,
+export async function verifyCallbackToken(
+	token: string,
 	secret: string,
 ): Promise<CallbackParams> {
-	const jobId = url.searchParams.get("jobId");
-	const svid = url.searchParams.get("svid");
-	const sid = url.searchParams.get("sid");
-	const exp = url.searchParams.get("exp");
-	const sig = url.searchParams.get("sig");
+	const { jobId, svid, sid, exp, sig } = JSON.parse(atob(token)) as {
+		jobId: string;
+		svid: string;
+		sid: string;
+		exp: string;
+		sig: string;
+	};
 
 	if (!jobId || !svid || !sid || !exp || !sig) {
-		throw new Error("Missing callback parameters");
+		throw new Error("Missing callback token fields");
 	}
 
 	const expiry = Number(exp);
 	if (Date.now() > expiry) {
-		throw new Error("Callback URL expired");
+		throw new Error("Callback token expired");
 	}
 
 	const payload = `${jobId}|${svid}|${sid}|${exp}`;
 	const expectedSig = await hmacSha256(payload, secret);
 	if (sig !== expectedSig) {
-		throw new Error("Invalid callback signature");
+		throw new Error("Invalid callback token signature");
 	}
 
 	return { jobId, sourceVersionId: svid, sourceId: sid };
+}
+
+export function extractBearerToken(request: Request): string {
+	const auth = request.headers.get("Authorization");
+	if (!auth?.startsWith("Bearer ")) {
+		throw new Error("Missing Bearer token");
+	}
+	return auth.slice(7);
 }

@@ -50,6 +50,11 @@ export interface IngestNode extends NodeMeta {
 
 export type NodeInsert = IngestNode;
 
+export interface NodePayload {
+	meta: NodeMeta;
+	content: unknown | null;
+}
+
 export interface DiffResult {
 	added: string[];
 	removed: string[];
