@@ -1,12 +1,11 @@
 use axum::{extract::Json, http::StatusCode, routing::post, Router};
 use serde_json::json;
-use usc_ingest::ingest::ingest_usc;
+use usc_ingest::ingest::ingest_source;
 use usc_ingest::types::IngestConfig;
 
 async fn handle_ingest(Json(config): Json<IngestConfig>) -> (StatusCode, Json<serde_json::Value>) {
-    // Spawn ingestion in background, ACK immediately
     tokio::spawn(async move {
-        if let Err(err) = ingest_usc(config).await {
+        if let Err(err) = ingest_source(config).await {
             tracing::error!("[Container] Ingest failed: {}", err);
         }
     });
@@ -32,7 +31,5 @@ async fn main() {
 
     tracing::info!("[Container] Listening on :8080");
 
-    axum::serve(listener, app)
-        .await
-        .expect("Server failed");
+    axum::serve(listener, app).await.expect("Server failed");
 }

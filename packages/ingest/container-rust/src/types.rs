@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    Usc,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeMeta {
     pub id: String,
@@ -25,6 +31,7 @@ pub struct NodePayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IngestConfig {
+    pub source: SourceKind,
     pub units: Vec<UnitEntry>,
     pub callback_base: String,
     pub callback_token: String,
@@ -35,16 +42,10 @@ pub struct IngestConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnitEntry {
-    pub unit: UscUnit,
-    pub title_sort_order: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UscUnit {
-    pub id: String,
-    pub title_num: String,
+    pub unit_id: String,
     pub url: String,
+    pub sort_order: i32,
+    pub payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,5 +66,5 @@ pub struct SectionContent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SectionMetadata {
-    pub cross_references: Vec<crate::cross_references::SectionCrossReference>,
+    pub cross_references: Vec<crate::sources::usc::cross_references::SectionCrossReference>,
 }

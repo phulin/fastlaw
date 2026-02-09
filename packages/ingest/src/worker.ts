@@ -271,9 +271,14 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
+						source: "usc",
 						units: selected.map((unit, i) => ({
-							unit,
-							titleSortOrder: i,
+							unitId: unit.id,
+							url: unit.url,
+							sortOrder: i,
+							payload: {
+								titleNum: unit.titleNum,
+							},
 						})),
 						callbackBase,
 						callbackToken,

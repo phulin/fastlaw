@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use usc_ingest::parser::{parse_usc_xml, usc_level_index};
+use usc_ingest::sources::usc::parser::{parse_usc_xml, usc_level_index};
 
 fn fixtures_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
@@ -165,10 +165,10 @@ fn extracts_section_1_with_correct_structure() {
 
     // Parent linkage (sections in chapter 1 should have chapter parent)
     match &section1.parent_ref {
-        usc_ingest::parser::USCParentRef::Level { level_type, .. } => {
+        usc_ingest::sources::usc::parser::USCParentRef::Level { level_type, .. } => {
             assert_eq!(level_type, "chapter");
         }
-        usc_ingest::parser::USCParentRef::Title { .. } => {
+        usc_ingest::sources::usc::parser::USCParentRef::Title { .. } => {
             panic!("Expected level parent, got title parent");
         }
     }
