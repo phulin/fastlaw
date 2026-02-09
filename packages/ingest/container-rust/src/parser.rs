@@ -6,10 +6,10 @@ use std::collections::HashMap;
 pub const USC_LEVEL_HIERARCHY: &[&str] = &[
     "title",
     "subtitle",
-    "chapter",
-    "subchapter",
     "part",
     "subpart",
+    "chapter",
+    "subchapter",
     "division",
     "subdivision",
 ];
@@ -296,6 +296,9 @@ struct DocContext {
     meta_depth: usize,
     meta_title_capture: bool,
     meta_title_buffer: String,
+    main_title_depth: usize,
+    main_title_heading_depth: usize,
+    main_title_heading_buffer: String,
     note_depth: usize,
     quoted_content_depth: usize,
 }
@@ -310,6 +313,9 @@ impl DocContext {
             meta_depth: 0,
             meta_title_capture: false,
             meta_title_buffer: String::new(),
+            main_title_depth: 0,
+            main_title_heading_depth: 0,
+            main_title_heading_buffer: String::new(),
             note_depth: 0,
             quoted_content_depth: 0,
         }
@@ -323,7 +329,12 @@ impl DocContext {
         }
     }
 
-    fn open_shared(&mut self, tag_name: &str, attrs: &HashMap<String, String>) {
+    fn open_shared(
+        &mut self,
+        tag_name: &str,
+        parent_tag: Option<&str>,
+        attrs: &HashMap<String, String>,
+    ) {
         self.ensure_title_num(attrs);
 
         if tag_name == "meta" {
@@ -333,6 +344,19 @@ impl DocContext {
         if self.meta_depth > 0 && tag_name == "title" {
             self.meta_title_capture = true;
             self.meta_title_buffer.clear();
+        }
+
+        if tag_name == "title" && parent_tag == Some("main") {
+            self.main_title_depth = 1;
+        } else if self.main_title_depth > 0 {
+            self.main_title_depth += 1;
+        }
+
+        if tag_name == "heading" && self.main_title_depth > 0 {
+            self.main_title_heading_depth = 1;
+            self.main_title_heading_buffer.clear();
+        } else if self.main_title_heading_depth > 0 {
+            self.main_title_heading_depth += 1;
         }
 
         if tag_name == "note" {
@@ -372,6 +396,9 @@ impl DocContext {
         if self.meta_title_capture {
             self.meta_title_buffer.push_str(text);
         }
+        if self.main_title_heading_depth > 0 {
+            self.main_title_heading_buffer.push_str(text);
+        }
     }
 
     fn close_shared(&mut self, tag_name: &str) {
@@ -386,6 +413,21 @@ impl DocContext {
             }
             self.meta_title_capture = false;
             self.meta_title_buffer.clear();
+        }
+
+        if self.main_title_heading_depth > 0 {
+            self.main_title_heading_depth -= 1;
+            if self.main_title_heading_depth == 0 {
+                let candidate = normalized_whitespace(&self.main_title_heading_buffer);
+                if !candidate.is_empty() && self.title_name.is_empty() {
+                    self.title_name = candidate;
+                }
+                self.main_title_heading_buffer.clear();
+            }
+        }
+
+        if self.main_title_depth > 0 {
+            self.main_title_depth -= 1;
         }
 
         if tag_name == "note" {
@@ -437,7 +479,7 @@ impl StructureSaxParser {
     }
 
     fn open(&mut self, tag_name: &str, parent_tag: Option<&str>, attrs: &HashMap<String, String>) {
-        self.ctx.open_shared(tag_name, attrs);
+        self.ctx.open_shared(tag_name, parent_tag, attrs);
 
         if tag_name == "heading"
             && !self.ctx.level_stack.is_empty()
@@ -635,7 +677,7 @@ impl SectionContentSaxParser {
     }
 
     fn open(&mut self, tag_name: &str, parent_tag: Option<&str>, attrs: &HashMap<String, String>) {
-        self.ctx.open_shared(tag_name, attrs);
+        self.ctx.open_shared(tag_name, parent_tag, attrs);
 
         let identifier = attrs.get("identifier").map(|s| s.as_str());
         let value = attrs.get("value").map(|s| s.as_str());
@@ -773,6 +815,7 @@ impl SectionContentSaxParser {
             && self.body_capture_depth > 0
             && self.skip_depth == 0
             && self.body_heading_depth == 0
+            && self.num_depth == 0
         {
             self.body_buffer.push_str(text);
         }
@@ -817,6 +860,22 @@ impl SectionContentSaxParser {
             }
         }
 
+        if self.current_section.is_some()
+            && self.num_target == Some(NumTarget::Section)
+            && self.body_capture_depth > 0
+            && self.skip_depth == 0
+            && self.body_heading_depth == 0
+            && self.ctx.tag_stack.last().map(|tag| tag.as_str()) != Some("section")
+            && !text.is_empty()
+        {
+            if !self.body_buffer.trim().is_empty() {
+                self.body_buffer.push_str("\n\n");
+            }
+            self.body_buffer.push_str("**");
+            self.body_buffer.push_str(text);
+            self.body_buffer.push_str("**");
+        }
+
         self.num_buffer.clear();
         self.num_target = None;
     }
@@ -857,12 +916,14 @@ impl SectionContentSaxParser {
             .trim()
             .to_string();
 
+        let body = normalized_whitespace(&section.body_parts.join("\n\n"));
+
         self.sections.push(USCSection {
             section_key: format!("{}:{}", self.ctx.title_num, final_section_num),
             title_num: self.ctx.title_num.clone(),
             section_num: final_section_num.clone(),
             heading: section.heading,
-            body: normalized_whitespace(&section.body_parts.join("\n\n")),
+            body,
             history_short: section.history_short,
             history_long: section.history_long_parts.join("\n\n"),
             citations,
@@ -1109,6 +1170,9 @@ fn collect_sax_events(xml: &str) -> Vec<SaxEvent> {
                 if let Ok(text) = e.unescape() {
                     events.push(SaxEvent::Text(text.to_string()));
                 }
+            }
+            Ok(Event::CData(ref e)) => {
+                events.push(SaxEvent::Text(String::from_utf8_lossy(e.as_ref()).to_string()));
             }
             Ok(Event::Eof) => break,
             Err(e) => {

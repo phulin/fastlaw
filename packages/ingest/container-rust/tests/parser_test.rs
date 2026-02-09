@@ -26,6 +26,69 @@ fn extracts_title_name() {
 }
 
 #[test]
+fn falls_back_to_main_title_heading_when_meta_title_is_empty() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t99">
+            <meta><title><![CDATA[]]></title></meta>
+            <main><title identifier="/us/usc/t99"><heading>TEST TITLE HEADING</heading></title></main>
+        </uscDoc>"#;
+    let result = parse_usc_xml(xml, "99", "");
+    assert_eq!(result.title_name, "TEST TITLE HEADING");
+}
+
+#[test]
+fn bolds_leading_outline_markers_in_section_body() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t99">
+            <main>
+                <title identifier="/us/usc/t99">
+                    <section identifier="/us/usc/t99/s1">
+                        <num value="1">§ 1.</num>
+                        <heading>Test section</heading>
+                        <content>
+                            <subsection><num>(a)</num>General rule.</subsection>
+                            <subsection><num>(1)</num>First item.</subsection>
+                            <paragraph><num>(A)</num>Upper item.</paragraph>
+                        </content>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+    let result = parse_usc_xml(xml, "99", "");
+    let section = result.sections.first().expect("section should exist");
+    assert!(section.body.contains("**(a)**General rule."));
+    assert!(section.body.contains("**(1)**First item."));
+    assert!(section.body.contains("**(A)**Upper item."));
+}
+
+#[test]
+fn inserts_line_break_before_nested_outline_marker_after_colon() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t99">
+            <main>
+                <title identifier="/us/usc/t99">
+                    <section identifier="/us/usc/t99/s1">
+                        <num value="1">§ 1.</num>
+                        <heading>Test section</heading>
+                        <subsection>
+                            <num>(a)</num>
+                            <content>Intro text:</content>
+                            <paragraph>
+                                <num>(1)</num>
+                                <content>First item.</content>
+                            </paragraph>
+                        </subsection>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "99", "");
+    let section = result.sections.first().expect("section should exist");
+    assert!(section.body.contains("Intro text:\n\n**(1)**"));
+}
+
+#[test]
 fn extracts_chapters_as_organizational_levels() {
     let xml = load_fixture("usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
