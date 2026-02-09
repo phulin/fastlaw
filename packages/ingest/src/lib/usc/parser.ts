@@ -198,6 +198,9 @@ interface SharedDocState {
 	metaDepth: number;
 	metaTitleCapture: boolean;
 	metaTitleBuffer: string;
+	mainTitleDepth: number;
+	mainTitleHeadingDepth: number;
+	mainTitleHeadingBuffer: string;
 	numDepth: number;
 	numBuffer: string;
 	numTarget: "level" | "section" | null;
@@ -241,6 +244,9 @@ function createSharedDocState(fileTitle: string): SharedDocState {
 		metaDepth: 0,
 		metaTitleCapture: false,
 		metaTitleBuffer: "",
+		mainTitleDepth: 0,
+		mainTitleHeadingDepth: 0,
+		mainTitleHeadingBuffer: "",
 		numDepth: 0,
 		numBuffer: "",
 		numTarget: null,
@@ -294,13 +300,11 @@ function ensureLevelIdentifier(state: SharedDocState, frame: LevelFrame) {
 
 function emitTitleIfNeeded(state: StructureState | FullState) {
 	if (state.titleEmitted) return;
-	if (!state.titleName) {
-		state.titleName = `Title ${state.titleNum}`;
-	}
+	const titleName = state.titleName || `Title ${state.titleNum}`;
 	const event = {
 		type: "title" as const,
 		titleNum: state.titleNum,
-		titleName: state.titleName,
+		titleName,
 	};
 	state.events.push(event);
 	state.titleEmitted = true;
@@ -482,7 +486,17 @@ function handleSharedOpen(
 	}
 
 	if (tagName === "title" && parentTag === "main") {
+		state.mainTitleDepth = 1;
 		emitTitleIfNeeded(state);
+	} else if (state.mainTitleDepth > 0) {
+		state.mainTitleDepth += 1;
+	}
+
+	if (tagName === "heading" && state.mainTitleDepth > 0) {
+		state.mainTitleHeadingDepth = 1;
+		state.mainTitleHeadingBuffer = "";
+	} else if (state.mainTitleHeadingDepth > 0) {
+		state.mainTitleHeadingDepth += 1;
 	}
 
 	if (tagName === "note") {
@@ -521,6 +535,10 @@ function handleSharedText(
 		state.metaTitleBuffer += textValue;
 	}
 
+	if (state.mainTitleHeadingDepth > 0) {
+		state.mainTitleHeadingBuffer += textValue;
+	}
+
 	if (state.headingTarget) {
 		state.headingBuffer += textValue;
 	}
@@ -547,6 +565,24 @@ function handleSharedClose(state: StructureState | FullState, tagName: string) {
 		}
 		state.metaTitleCapture = false;
 		state.metaTitleBuffer = "";
+	}
+
+	if (state.mainTitleHeadingDepth > 0) {
+		state.mainTitleHeadingDepth -= 1;
+		if (state.mainTitleHeadingDepth === 0) {
+			const candidate = normalizedWhitespace(state.mainTitleHeadingBuffer);
+			if (
+				candidate &&
+				(!state.titleName || state.titleName === `Title ${state.titleNum}`)
+			) {
+				state.titleName = candidate;
+			}
+			state.mainTitleHeadingBuffer = "";
+		}
+	}
+
+	if (state.mainTitleDepth > 0) {
+		state.mainTitleDepth -= 1;
 	}
 
 	if (tagName === "num") {

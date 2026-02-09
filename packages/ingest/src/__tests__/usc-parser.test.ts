@@ -396,7 +396,7 @@ describe("USC Parser - Title 1", () => {
 
 	it("extracts title name", async () => {
 		const result = await parseUSCXml(xml, "1", "https://uscode.house.gov/");
-		expect(result.titleName).toBe("Title 1");
+		expect(result.titleName).toBe("GENERAL PROVISIONS");
 	});
 
 	it("extracts chapters as organizational levels", async () => {
@@ -528,6 +528,30 @@ describe("USC Parser - Title 1", () => {
 });
 
 describe("USC Parser - Edge Cases", () => {
+	it("extracts title name from XML meta title", async () => {
+		const xml = `<?xml version="1.0"?>
+			<uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t99">
+				<meta><title>Special Test Title</title></meta>
+				<main><title identifier="/us/usc/t99"></title></main>
+			</uscDoc>`;
+		const result = await parseUSCXml(xml, "99", "");
+		expect(result.titleName).toBe("Special Test Title");
+	});
+
+	it("extracts title name from first heading inside main title", async () => {
+		const xml = `<?xml version="1.0"?>
+			<uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t99">
+				<main>
+					<title identifier="/us/usc/t99">
+						<heading>FIRST HEADING</heading>
+						<heading>SECOND HEADING</heading>
+					</title>
+				</main>
+			</uscDoc>`;
+		const result = await parseUSCXml(xml, "99", "");
+		expect(result.titleName).toBe("FIRST HEADING");
+	});
+
 	it("returns empty results for invalid XML", async () => {
 		const result = await parseUSCXml("<invalid>not usc xml</invalid>", "1", "");
 		expect(result.sections).toEqual([]);

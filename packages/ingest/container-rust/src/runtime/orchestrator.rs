@@ -1,11 +1,81 @@
 use crate::runtime::cache::{ensure_cached_xml, read_cached_xml};
 use crate::runtime::callbacks::{post_node_batch, post_unit_progress, post_unit_start};
-use crate::runtime::types::{BuildContext, UnitStatus};
+use crate::runtime::types::{BuildContext, IngestContext, NodeStore, BlobStore, UnitStatus};
 use crate::sources::adapter_for;
-use crate::types::IngestConfig;
+use crate::types::{IngestConfig, NodePayload};
 use reqwest::Client;
+use std::sync::Mutex;
+use async_trait::async_trait;
 
 const BATCH_SIZE: usize = 200;
+
+struct HttpNodeStore {
+    client: Client,
+    callback_base: String,
+    callback_token: String,
+    unit_id: String,
+    buffer: Mutex<Vec<NodePayload>>,
+}
+
+#[async_trait]
+impl NodeStore for HttpNodeStore {
+    async fn insert_node(&self, node: NodePayload) -> Result<(), String> {
+        let batch = {
+            let mut buffer = self.buffer.lock().map_err(|e| e.to_string())?;
+            buffer.push(node);
+            if buffer.len() >= BATCH_SIZE {
+                Some(std::mem::take(&mut *buffer))
+            } else {
+                None
+            }
+        };
+
+        if let Some(batch) = batch {
+            post_node_batch(
+                &self.client,
+                &self.callback_base,
+                &self.callback_token,
+                &self.unit_id,
+                &batch,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn flush(&self) -> Result<(), String> {
+        let batch = {
+            let mut buffer = self.buffer.lock().map_err(|e| e.to_string())?;
+            if !buffer.is_empty() {
+                Some(std::mem::take(&mut *buffer))
+            } else {
+                None
+            }
+        };
+
+        if let Some(batch) = batch {
+            post_node_batch(
+                &self.client,
+                &self.callback_base,
+                &self.callback_token,
+                &self.unit_id,
+                &batch,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}
+
+struct DummyBlobStore;
+
+#[async_trait]
+impl BlobStore for DummyBlobStore {
+    async fn store_blob(&self, _id: &str, _content: &[u8]) -> Result<String, String> {
+        // Placeholder implementation
+        Ok("dummy-blob-id".to_string())
+    }
+}
 
 pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     let client = Client::new();
@@ -85,54 +155,43 @@ async fn ingest_unit(
     )
     .await?;
 
-    let context = BuildContext {
+    let build_context = BuildContext {
         source_version_id: &config.source_version_id,
         root_node_id: &config.root_node_id,
         accessed_at: &accessed_at,
         unit_sort_order: entry.sort_order,
     };
 
-    let mut prepared = adapter.build_nodes(entry, &context, &xml)?;
-    let total_nodes = prepared.structure_nodes.len() + prepared.section_nodes.len();
+    let node_store = HttpNodeStore {
+        client: client.clone(),
+        callback_base: config.callback_base.clone(),
+        callback_token: config.callback_token.clone(),
+        unit_id: entry.unit_id.clone(),
+        buffer: Mutex::new(Vec::with_capacity(BATCH_SIZE)),
+    };
 
+    let blob_store = DummyBlobStore;
+
+    let mut context = IngestContext {
+        build: build_context,
+        nodes: Box::new(node_store),
+        blobs: Box::new(blob_store),
+    };
+
+    // We don't know the total nodes anymore, so we pass 0 for now.
+    // The backend might need to be updated if it strictly uses this.
     post_unit_start(
         client,
         &config.callback_base,
         &config.callback_token,
         &entry.unit_id,
-        total_nodes,
+        0,
     )
     .await?;
 
-    for chunk in prepared.structure_nodes.chunks(BATCH_SIZE) {
-        post_node_batch(
-            client,
-            &config.callback_base,
-            &config.callback_token,
-            &entry.unit_id,
-            chunk,
-        )
-        .await?;
-    }
+    adapter.process_unit(entry, &mut context, &xml).await?;
 
-    while !prepared.section_nodes.is_empty() {
-        let remainder = if prepared.section_nodes.len() > BATCH_SIZE {
-            prepared.section_nodes.split_off(BATCH_SIZE)
-        } else {
-            Vec::new()
-        };
-
-        post_node_batch(
-            client,
-            &config.callback_base,
-            &config.callback_token,
-            &entry.unit_id,
-            &prepared.section_nodes,
-        )
-        .await?;
-
-        prepared.section_nodes = remainder;
-    }
+    context.nodes.flush().await?;
 
     tracing::info!("[Container] {}: done", unit_label);
     Ok(UnitStatus::Completed)

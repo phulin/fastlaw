@@ -1,4 +1,5 @@
 use crate::types::NodePayload;
+use async_trait::async_trait;
 
 pub struct BuildContext<'a> {
     pub source_version_id: &'a str,
@@ -7,9 +8,21 @@ pub struct BuildContext<'a> {
     pub unit_sort_order: i32,
 }
 
-pub struct PreparedNodes {
-    pub structure_nodes: Vec<NodePayload>,
-    pub section_nodes: Vec<NodePayload>,
+#[async_trait]
+pub trait NodeStore: Send + Sync {
+    async fn insert_node(&self, node: NodePayload) -> Result<(), String>;
+    async fn flush(&self) -> Result<(), String>;
+}
+
+#[async_trait]
+pub trait BlobStore: Send + Sync {
+    async fn store_blob(&self, id: &str, content: &[u8]) -> Result<String, String>;
+}
+
+pub struct IngestContext<'a> {
+    pub build: BuildContext<'a>,
+    pub nodes: Box<dyn NodeStore>,
+    pub blobs: Box<dyn BlobStore>,
 }
 
 pub enum UnitStatus {

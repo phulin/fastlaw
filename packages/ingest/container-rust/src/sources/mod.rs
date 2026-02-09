@@ -1,15 +1,17 @@
-use crate::runtime::types::{BuildContext, PreparedNodes};
+use crate::runtime::types::IngestContext;
 use crate::types::{SourceKind, UnitEntry};
+use async_trait::async_trait;
 
 pub mod usc;
 
+#[async_trait]
 pub trait SourceAdapter: Send + Sync {
-    fn build_nodes(
+    async fn process_unit(
         &self,
         unit: &UnitEntry,
-        context: &BuildContext,
+        context: &mut IngestContext<'_>,
         xml: &str,
-    ) -> Result<PreparedNodes, String>;
+    ) -> Result<(), String>;
 
     fn unit_label(&self, unit: &UnitEntry) -> String;
 }

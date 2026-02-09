@@ -455,189 +455,20 @@ impl DocContext {
     }
 }
 
-struct StructureSaxParser {
+#[derive(Debug, Clone)]
+struct StreamingUscParser<'a, F>
+where
+    F: FnMut(USCStreamEvent),
+{
     ctx: DocContext,
-    levels: Vec<USCLevel>,
+    on_event: F,
     heading_target: Option<HeadingTarget>,
     heading_buffer: String,
     num_depth: usize,
     num_buffer: String,
     num_target: Option<NumTarget>,
-}
-
-impl StructureSaxParser {
-    fn new(file_title: &str) -> Self {
-        Self {
-            ctx: DocContext::new(file_title),
-            levels: Vec::new(),
-            heading_target: None,
-            heading_buffer: String::new(),
-            num_depth: 0,
-            num_buffer: String::new(),
-            num_target: None,
-        }
-    }
-
-    fn open(&mut self, tag_name: &str, parent_tag: Option<&str>, attrs: &HashMap<String, String>) {
-        self.ctx.open_shared(tag_name, parent_tag, attrs);
-
-        if tag_name == "heading"
-            && !self.ctx.level_stack.is_empty()
-            && parent_tag
-                .map(|tag| USC_LEVEL_HIERARCHY.contains(&tag))
-                .unwrap_or(false)
-        {
-            self.heading_target = Some(HeadingTarget::Level);
-            self.heading_buffer.clear();
-        }
-
-        if tag_name == "num" {
-            self.num_depth += 1;
-            if self.num_depth == 1 {
-                self.num_buffer.clear();
-                self.num_target = if !self.ctx.level_stack.is_empty() {
-                    Some(NumTarget::Level)
-                } else {
-                    None
-                };
-            }
-        }
-    }
-
-    fn text(&mut self, text: &str) {
-        self.ctx.text_shared(text);
-
-        if self.heading_target.is_some() {
-            self.heading_buffer.push_str(text);
-        }
-
-        if self.num_depth > 0 {
-            self.num_buffer.push_str(text);
-        }
-    }
-
-    fn ensure_level_identifier(&mut self, index: usize) {
-        let frame = &mut self.ctx.level_stack[index];
-        if frame.identifier.is_none() && frame.num.is_some() {
-            frame.identifier = Some(format!(
-                "{}-{}{}",
-                self.ctx.title_num,
-                level_id_prefix(&frame.level_type),
-                frame.num.as_ref().expect("num must exist for identifier")
-            ));
-        }
-    }
-
-    fn emit_level_if_ready(&mut self, index: usize) {
-        self.ensure_level_identifier(index);
-
-        let frame = &mut self.ctx.level_stack[index];
-        if frame.emitted || frame.identifier.is_none() || frame.num.is_none() {
-            return;
-        }
-
-        self.levels.push(USCLevel {
-            level_type: frame.level_type.clone(),
-            level_index: usc_level_index(&frame.level_type).expect("level_type must be valid USC level"),
-            identifier: frame.identifier.clone().expect("identifier must be present"),
-            num: frame.num.clone().expect("num must be present"),
-            heading: frame.heading.clone(),
-            title_num: self.ctx.title_num.clone(),
-            parent_identifier: frame.parent_identifier.clone(),
-        });
-        frame.emitted = true;
-    }
-
-    fn close_num_target(&mut self) {
-        if self.num_depth == 0 {
-            return;
-        }
-
-        self.num_depth -= 1;
-        if self.num_depth > 0 {
-            return;
-        }
-
-        if self.num_buffer.trim().starts_with('[') && self.num_target == Some(NumTarget::Level) {
-            if let Some(frame) = self.ctx.level_stack.last_mut() {
-                frame.bracketed_num = true;
-            }
-        }
-
-        self.num_buffer.clear();
-        self.num_target = None;
-    }
-
-    fn close(&mut self, tag_name: &str) {
-        if self.heading_target.is_some() && tag_name == "heading" {
-            let mut heading = normalized_whitespace(&self.heading_buffer);
-            if let Some(idx) = self.ctx.level_stack.len().checked_sub(1) {
-                let frame = &mut self.ctx.level_stack[idx];
-                if frame.bracketed_num && heading.ends_with(']') {
-                    heading = heading[..heading.len() - 1].trim().to_string();
-                }
-                frame.heading = heading;
-                self.emit_level_if_ready(idx);
-            }
-            self.heading_target = None;
-            self.heading_buffer.clear();
-        }
-
-        if tag_name == "num" {
-            self.close_num_target();
-        }
-
-        if is_usc_level(tag_name) {
-            if let Some(idx) = self.ctx.level_stack.len().checked_sub(1) {
-                self.emit_level_if_ready(idx);
-                self.ctx.level_stack.pop();
-            }
-        }
-
-        self.ctx.close_shared(tag_name);
-    }
-
-    fn parse_events(mut self, events: &[SaxEvent]) -> (Vec<USCLevel>, String, String) {
-        for event in events {
-            match event {
-                SaxEvent::Open {
-                    tag_name,
-                    parent_tag,
-                    attrs,
-                } => {
-                    self.ctx.tag_stack.push(tag_name.clone());
-                    self.open(tag_name, parent_tag.as_deref(), attrs);
-                }
-                SaxEvent::Close { tag_name } => {
-                    self.ctx.tag_stack.pop();
-                    self.close(tag_name);
-                }
-                SaxEvent::Text(text) => self.text(text),
-            }
-        }
-
-        let title_num = self.ctx.title_num.clone();
-        let title_name = if self.ctx.title_name.is_empty() {
-            format!("Title {}", title_num)
-        } else {
-            self.ctx.title_name.clone()
-        };
-
-        (self.levels, title_num, title_name)
-    }
-}
-
-struct SectionContentSaxParser {
-    ctx: DocContext,
-    sections: Vec<USCSection>,
-    section_counts: HashMap<String, usize>,
     current_section: Option<SectionBuilder>,
     current_note: Option<NoteFrame>,
-    heading_target: Option<HeadingTarget>,
-    heading_buffer: String,
-    num_depth: usize,
-    num_buffer: String,
-    num_target: Option<NumTarget>,
     skip_depth: usize,
     body_capture_depth: usize,
     body_buffer: String,
@@ -648,21 +479,25 @@ struct SectionContentSaxParser {
     body_heading_depth: usize,
     body_heading_buffer: String,
     ignored_section_depth: usize,
+    section_counts: HashMap<String, usize>,
+    _phantom: std::marker::PhantomData<&'a ()>,
 }
 
-impl SectionContentSaxParser {
-    fn new(file_title: &str) -> Self {
+impl<'a, F> StreamingUscParser<'a, F>
+where
+    F: FnMut(USCStreamEvent),
+{
+    fn new(file_title: &str, on_event: F) -> Self {
         Self {
             ctx: DocContext::new(file_title),
-            sections: Vec::new(),
-            section_counts: HashMap::new(),
-            current_section: None,
-            current_note: None,
+            on_event,
             heading_target: None,
             heading_buffer: String::new(),
             num_depth: 0,
             num_buffer: String::new(),
             num_target: None,
+            current_section: None,
+            current_note: None,
             skip_depth: 0,
             body_capture_depth: 0,
             body_buffer: String::new(),
@@ -673,6 +508,8 @@ impl SectionContentSaxParser {
             body_heading_depth: 0,
             body_heading_buffer: String::new(),
             ignored_section_depth: 0,
+            section_counts: HashMap::new(),
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -683,6 +520,17 @@ impl SectionContentSaxParser {
         let value = attrs.get("value").map(|s| s.as_str());
         let topic = attrs.get("topic").map(|s| s.as_str());
         let role = attrs.get("role").map(|s| s.as_str());
+
+        // Level heading logic (from StructureSaxParser)
+        if tag_name == "heading"
+            && !self.ctx.level_stack.is_empty()
+            && parent_tag
+                .map(|tag| USC_LEVEL_HIERARCHY.contains(&tag))
+                .unwrap_or(false)
+        {
+            self.heading_target = Some(HeadingTarget::Level);
+            self.heading_buffer.clear();
+        }
 
         if tag_name == "section" {
             if self.ctx.note_depth > 0 || self.ctx.quoted_content_depth > 0 {
@@ -738,48 +586,46 @@ impl SectionContentSaxParser {
             }
         }
 
-        if self.current_section.is_none() {
-            return;
-        }
+        if self.current_section.is_some() {
+            if is_section_skip_tag(tag_name)
+                || ((tag_name == "num" || tag_name == "heading") && parent_tag == Some("section"))
+            {
+                self.skip_depth += 1;
+            }
 
-        if is_section_skip_tag(tag_name)
-            || ((tag_name == "num" || tag_name == "heading") && parent_tag == Some("section"))
-        {
-            self.skip_depth += 1;
-        }
-
-        if tag_name == "num" {
-            if let Some(raw_value) = value {
-                if let Some(ref mut section) = self.current_section {
-                    if section.section_num.is_none() {
-                        section.section_num = Some(strip_leading_zeros(raw_value));
+            if tag_name == "num" {
+                if let Some(raw_value) = value {
+                    if let Some(ref mut section) = self.current_section {
+                        if section.section_num.is_none() {
+                            section.section_num = Some(strip_leading_zeros(raw_value));
+                        }
                     }
                 }
             }
-        }
 
-        if tag_name == "sourceCredit" {
-            self.source_credit_depth += 1;
-            self.source_credit_buffer.clear();
-        }
-
-        if is_section_body_tag(tag_name) && self.skip_depth == 0 {
-            self.body_capture_depth += 1;
-            if self.body_capture_depth == 1 {
-                self.body_buffer.clear();
+            if tag_name == "sourceCredit" {
+                self.source_credit_depth += 1;
+                self.source_credit_buffer.clear();
             }
-        }
 
-        if tag_name == "heading"
-            && parent_tag != Some("section")
-            && self.skip_depth == 0
-            && self.current_note.is_none()
-            && self.ctx.note_depth == 0
-            && self.body_capture_depth > 0
-        {
-            self.body_heading_depth += 1;
-            if self.body_heading_depth == 1 {
-                self.body_heading_buffer.clear();
+            if is_section_body_tag(tag_name) && self.skip_depth == 0 {
+                self.body_capture_depth += 1;
+                if self.body_capture_depth == 1 {
+                    self.body_buffer.clear();
+                }
+            }
+
+            if tag_name == "heading"
+                && parent_tag != Some("section")
+                && self.skip_depth == 0
+                && self.current_note.is_none()
+                && self.ctx.note_depth == 0
+                && self.body_capture_depth > 0
+            {
+                self.body_heading_depth += 1;
+                if self.body_heading_depth == 1 {
+                    self.body_heading_buffer.clear();
+                }
             }
         }
 
@@ -833,6 +679,39 @@ impl SectionContentSaxParser {
         }
     }
 
+    fn ensure_level_identifier(&mut self, index: usize) {
+        let frame = &mut self.ctx.level_stack[index];
+        if frame.identifier.is_none() && frame.num.is_some() {
+            frame.identifier = Some(format!(
+                "{}-{}{}",
+                self.ctx.title_num,
+                level_id_prefix(&frame.level_type),
+                frame.num.as_ref().expect("num must exist for identifier")
+            ));
+        }
+    }
+
+    fn emit_level_if_ready(&mut self, index: usize) {
+        self.ensure_level_identifier(index);
+
+        let frame = &mut self.ctx.level_stack[index];
+        if frame.emitted || frame.identifier.is_none() || frame.num.is_none() {
+            return;
+        }
+
+        let level = USCLevel {
+            level_type: frame.level_type.clone(),
+            level_index: usc_level_index(&frame.level_type).expect("level_type must be valid USC level"),
+            identifier: frame.identifier.clone().expect("identifier must be present"),
+            num: frame.num.clone().expect("num must be present"),
+            heading: frame.heading.clone(),
+            title_num: self.ctx.title_num.clone(),
+            parent_identifier: frame.parent_identifier.clone(),
+        };
+        (self.on_event)(USCStreamEvent::Level(level));
+        frame.emitted = true;
+    }
+
     fn close_num_target(&mut self) {
         if self.num_depth == 0 {
             return;
@@ -844,16 +723,18 @@ impl SectionContentSaxParser {
         }
 
         let text = self.num_buffer.trim();
-        if text.starts_with('[') {
+        let is_bracketed = text.starts_with('[');
+
+        if is_bracketed {
             match self.num_target {
-                Some(NumTarget::Section) => {
-                    if let Some(ref mut section) = self.current_section {
-                        section.bracketed_num = true;
-                    }
-                }
                 Some(NumTarget::Level) => {
                     if let Some(frame) = self.ctx.level_stack.last_mut() {
                         frame.bracketed_num = true;
+                    }
+                }
+                Some(NumTarget::Section) => {
+                    if let Some(ref mut section) = self.current_section {
+                        section.bracketed_num = true;
                     }
                 }
                 None => {}
@@ -882,18 +763,21 @@ impl SectionContentSaxParser {
 
     fn close_current_section(&mut self) {
         let section = match self.current_section.take() {
-            Some(section) => section,
+            Some(s) => s,
             None => return,
         };
 
         let section_num = match section.section_num {
-            Some(num) => num,
+            Some(n) => n,
             None => return,
         };
 
-        let section_key = format!("{}-{}", self.ctx.title_num, section_num);
-        let count = self.section_counts.entry(section_key).or_insert(0);
-        *count += 1;
+        let count = self
+            .section_counts
+            .entry(section_num.clone())
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+
         let final_section_num = if *count == 1 {
             section_num
         } else {
@@ -918,7 +802,7 @@ impl SectionContentSaxParser {
 
         let body = normalized_whitespace(&section.body_parts.join("\n\n"));
 
-        self.sections.push(USCSection {
+        (self.on_event)(USCStreamEvent::Section(USCSection {
             section_key: format!("{}:{}", self.ctx.title_num, final_section_num),
             title_num: self.ctx.title_num.clone(),
             section_num: final_section_num.clone(),
@@ -932,7 +816,7 @@ impl SectionContentSaxParser {
                 self.ctx.title_num, final_section_num
             ),
             parent_ref: section.parent_ref,
-        });
+        }));
     }
 
     fn close(&mut self, tag_name: &str) {
@@ -959,11 +843,13 @@ impl SectionContentSaxParser {
                     }
                 }
                 Some(HeadingTarget::Level) => {
-                    if let Some(frame) = self.ctx.level_stack.last_mut() {
+                    if let Some(idx) = self.ctx.level_stack.len().checked_sub(1) {
+                        let frame = &mut self.ctx.level_stack[idx];
                         if frame.bracketed_num && heading.ends_with(']') {
                             heading = heading[..heading.len() - 1].trim().to_string();
                         }
                         frame.heading = heading;
+                        self.emit_level_if_ready(idx);
                     }
                 }
                 None => {}
@@ -1075,60 +961,24 @@ impl SectionContentSaxParser {
         }
 
         if is_usc_level(tag_name) {
-            self.ctx.level_stack.pop();
+            if let Some(idx) = self.ctx.level_stack.len().checked_sub(1) {
+                self.emit_level_if_ready(idx);
+                self.ctx.level_stack.pop();
+            }
         }
 
         self.ctx.close_shared(tag_name);
     }
-
-    fn parse_events(mut self, events: &[SaxEvent]) -> (Vec<USCSection>, String, String) {
-        for event in events {
-            match event {
-                SaxEvent::Open {
-                    tag_name,
-                    parent_tag,
-                    attrs,
-                } => {
-                    self.ctx.tag_stack.push(tag_name.clone());
-                    self.open(tag_name, parent_tag.as_deref(), attrs);
-                }
-                SaxEvent::Close { tag_name } => {
-                    self.ctx.tag_stack.pop();
-                    self.close(tag_name);
-                }
-                SaxEvent::Text(text) => self.text(text),
-            }
-        }
-
-        let title_num = self.ctx.title_num.clone();
-        let title_name = if self.ctx.title_name.is_empty() {
-            format!("Title {}", title_num)
-        } else {
-            self.ctx.title_name.clone()
-        };
-
-        (self.sections, title_num, title_name)
-    }
 }
 
-enum SaxEvent {
-    Open {
-        tag_name: String,
-        parent_tag: Option<String>,
-        attrs: HashMap<String, String>,
-    },
-    Close {
-        tag_name: String,
-    },
-    Text(String),
-}
-
-fn collect_sax_events(xml: &str) -> Vec<SaxEvent> {
+pub fn parse_usc_xml_stream<F>(xml: &str, file_title: &str, on_event: F) -> (String, String)
+where
+    F: FnMut(USCStreamEvent),
+{
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
     let mut buf = Vec::new();
-    let mut tag_stack: Vec<String> = Vec::new();
-    let mut events = Vec::new();
+    let mut parser = StreamingUscParser::new(file_title, on_event);
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -1136,43 +986,33 @@ fn collect_sax_events(xml: &str) -> Vec<SaxEvent> {
                 let raw_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 let tag_name = normalize_tag_name(&raw_name).to_string();
                 let attrs = extract_attrs(e);
-                let parent_tag = tag_stack.last().cloned();
-                events.push(SaxEvent::Open {
-                    tag_name: tag_name.clone(),
-                    parent_tag,
-                    attrs,
-                });
-                tag_stack.push(tag_name.clone());
+                let parent_tag = parser.ctx.tag_stack.last().cloned();
+                parser.open(&tag_name, parent_tag.as_deref(), &attrs);
+                parser.ctx.tag_stack.push(tag_name);
             }
             Ok(Event::Empty(ref e)) => {
                 let raw_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 let tag_name = normalize_tag_name(&raw_name).to_string();
                 let attrs = extract_attrs(e);
-                let parent_tag = tag_stack.last().cloned();
-                events.push(SaxEvent::Open {
-                    tag_name: tag_name.clone(),
-                    parent_tag,
-                    attrs,
-                });
-                events.push(SaxEvent::Close {
-                    tag_name: tag_name.clone(),
-                });
-                tag_stack.push(tag_name.clone());
-                tag_stack.pop();
+                let parent_tag = parser.ctx.tag_stack.last().cloned();
+                parser.open(&tag_name, parent_tag.as_deref(), &attrs);
+                parser.ctx.tag_stack.push(tag_name.clone());
+                parser.close(&tag_name);
+                parser.ctx.tag_stack.pop();
             }
             Ok(Event::End(ref e)) => {
                 let raw_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
                 let tag_name = normalize_tag_name(&raw_name).to_string();
-                tag_stack.pop();
-                events.push(SaxEvent::Close { tag_name });
+                parser.ctx.tag_stack.pop();
+                parser.close(&tag_name);
             }
             Ok(Event::Text(ref e)) => {
                 if let Ok(text) = e.unescape() {
-                    events.push(SaxEvent::Text(text.to_string()));
+                    parser.text(&text);
                 }
             }
             Ok(Event::CData(ref e)) => {
-                events.push(SaxEvent::Text(String::from_utf8_lossy(e.as_ref()).to_string()));
+                parser.text(&String::from_utf8_lossy(e.as_ref()));
             }
             Ok(Event::Eof) => break,
             Err(e) => {
@@ -1184,55 +1024,24 @@ fn collect_sax_events(xml: &str) -> Vec<SaxEvent> {
         buf.clear();
     }
 
-    events
-}
-
-pub fn parse_usc_full_xml(
-    xml: &str,
-    file_title: &str,
-    _source_url: &str,
-) -> (Vec<USCStreamEvent>, String, String) {
-    let events = collect_sax_events(xml);
-
-    let structure = StructureSaxParser::new(file_title);
-    let (levels, title_num_from_levels, title_name_from_levels) = structure.parse_events(&events);
-
-    let content = SectionContentSaxParser::new(file_title);
-    let (sections, title_num_from_sections, title_name_from_sections) =
-        content.parse_events(&events);
-
-    let title_num = if !title_num_from_sections.is_empty() {
-        title_num_from_sections
+    let title_num = parser.ctx.title_num.clone();
+    let title_name = if parser.ctx.title_name.is_empty() {
+        format!("Title {}", title_num)
     } else {
-        title_num_from_levels
+        parser.ctx.title_name.clone()
     };
 
-    let title_name = if title_name_from_sections.starts_with("Title ")
-        && !title_name_from_levels.starts_with("Title ")
-    {
-        title_name_from_levels
-    } else {
-        title_name_from_sections
-    };
-
-    let mut events = Vec::with_capacity(levels.len() + sections.len());
-    events.extend(levels.into_iter().map(USCStreamEvent::Level));
-    events.extend(sections.into_iter().map(USCStreamEvent::Section));
-
-    (events, title_num, title_name)
+    (title_num, title_name)
 }
 
-pub fn parse_usc_xml(xml: &str, file_title: &str, source_url: &str) -> ParseResult {
-    let (events, title_num, title_name) = parse_usc_full_xml(xml, file_title, source_url);
+pub fn parse_usc_xml(xml: &str, file_title: &str, _source_url: &str) -> ParseResult {
     let mut sections = Vec::new();
     let mut levels = Vec::new();
 
-    for event in events {
-        match event {
-            USCStreamEvent::Section(section) => sections.push(section),
-            USCStreamEvent::Level(level) => levels.push(level),
-        }
-    }
+    let (title_num, title_name) = parse_usc_xml_stream(xml, file_title, |event| match event {
+        USCStreamEvent::Section(s) => sections.push(s),
+        USCStreamEvent::Level(l) => levels.push(l),
+    });
 
     ParseResult {
         sections,
