@@ -98,7 +98,6 @@ fn extracts_section_1_with_correct_structure() {
 
     // Paths and IDs
     assert_eq!(section1.path, "/statutes/usc/section/1/1");
-    assert_eq!(section1.doc_id, "doc_usc_1-1");
     assert_eq!(section1.section_key, "1:1");
 
     // Parent linkage (sections in chapter 1 should have chapter parent)

@@ -18,7 +18,7 @@ export class IngestContainer extends Container {
 		}
 	}
 
-	override onError(error: string): void {
+	override onError(error: unknown): void {
 		console.error(`[IngestContainer] Container error: ${error}`);
 	}
 }

@@ -265,33 +265,31 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 		);
 
 		const container = c.env.INGEST_CONTAINER.getByName(sourceVersionId);
-		c.executionCtx.waitUntil(
-			container
-				.fetch(
-					new Request("http://container/ingest", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							units: selected.map((unit, i) => ({
-								unit,
-								titleSortOrder: i,
-							})),
-							callbackBase,
-							callbackToken,
-							sourceVersionId,
-							rootNodeId: discovery.rootNode.id,
-						}),
+		await container
+			.fetch(
+				new Request("http://container/ingest", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						units: selected.map((unit, i) => ({
+							unit,
+							titleSortOrder: i,
+						})),
+						callbackBase,
+						callbackToken,
+						sourceVersionId,
+						rootNodeId: discovery.rootNode.id,
 					}),
-				)
-				.then(async (res) => {
-					if (!res.ok) {
-						console.error(
-							`Container returned ${res.status}: ${await res.text()}`,
-						);
-					}
-				})
-				.catch((err) => console.error("Container start failed:", err)),
-		);
+				}),
+			)
+			.then(async (res) => {
+				if (!res.ok) {
+					console.error(
+						`Container returned ${res.status}: ${await res.text()}`,
+					);
+				}
+			})
+			.catch((err) => console.error("Container fetch failed:", err));
 
 		return c.json({
 			jobId,
@@ -488,16 +486,22 @@ app.get("/api/proxy/r2-read", async (c) => {
 	}
 
 	const key = c.req.query("key");
-	const offset = Number(c.req.query("offset") ?? "0");
-	const length = Number(c.req.query("length") ?? "0");
+	const offsetRaw = c.req.query("offset");
+	const lengthRaw = c.req.query("length");
 
-	if (!key || !length) {
-		return c.json({ error: "Missing key or length" }, 400);
+	if (!key) {
+		return c.json({ error: "Missing key" }, 400);
 	}
 
-	const obj = await c.env.STORAGE.get(key, {
-		range: { offset, length },
-	});
+	const obj =
+		lengthRaw == null
+			? await c.env.STORAGE.get(key)
+			: await c.env.STORAGE.get(key, {
+					range: {
+						offset: Number(offsetRaw ?? "0"),
+						length: Number(lengthRaw),
+					},
+				});
 
 	if (!obj) {
 		return c.json({ error: `Object not found: ${key}` }, 404);

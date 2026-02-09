@@ -7,7 +7,7 @@
 		"dev": "NODE_EXTRA_CA_CERTS=certs/godaddy-g2.pem wrangler dev --persist-to ../web/.wrangler/state",
 		"build": "wrangler deploy --dry-run --outdir=dist",
 		"deploy": "wrangler deploy",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "../../node_modules/.bin/tsc --noEmit && cd container-rust && cargo check",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},

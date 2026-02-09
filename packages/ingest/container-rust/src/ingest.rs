@@ -1,7 +1,6 @@
 use crate::cross_references::extract_section_cross_references;
 use crate::parser::{
-    parse_usc_section_content_xml, parse_usc_structure_events, section_level_index,
-    USCParentRef, USCStructureEvent,
+    parse_usc_xml, section_level_index, USCParentRef,
 };
 use crate::types::{
     ContentBlock, IngestConfig, NodePayload, NodeMeta, SectionContent, SectionMetadata,
@@ -10,8 +9,7 @@ use crate::types::{
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 
-const BATCH_SIZE: usize = 50;
-const R2_CHUNK_SIZE: usize = 5 * 1024 * 1024;
+const BATCH_SIZE: usize = 200;
 
 // ──────────────────────────────────────────────────────────────
 // Authenticated fetch helper
@@ -45,12 +43,18 @@ async fn callback_fetch(
 // Proxy-based streaming from worker R2 cache
 // ──────────────────────────────────────────────────────────────
 
-async fn fetch_cached_xml(
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheResponse {
+    r2_key: String,
+}
+
+async fn ensure_cached_xml(
     client: &Client,
     url: &str,
     callback_base: &str,
     callback_token: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<CacheResponse>, String> {
     let cache_res = callback_fetch(
         client,
         callback_base,
@@ -79,54 +83,44 @@ async fn fetch_cached_xml(
         return Err(format!("Cache proxy failed: {status} {text}"));
     }
 
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CacheResponse {
-        r2_key: String,
-        total_size: usize,
-    }
-
     let cache_info: CacheResponse = cache_res
         .json()
         .await
         .map_err(|e| format!("Failed to parse cache response: {e}"))?;
 
-    // Read all chunks into a single string
-    let mut xml_bytes = Vec::with_capacity(cache_info.total_size);
-    let mut offset = 0;
-    while offset < cache_info.total_size {
-        let length = std::cmp::min(R2_CHUNK_SIZE, cache_info.total_size - offset);
-        let params = format!(
-            "key={}&offset={}&length={}",
-            urlencoding::encode(&cache_info.r2_key),
-            offset,
-            length
-        );
-        let chunk_res = callback_fetch(
-            client,
-            callback_base,
-            callback_token,
-            &format!("/api/proxy/r2-read?{params}"),
-            reqwest::Method::GET,
-            None,
-        )
-        .await?;
+    Ok(Some(cache_info))
+}
 
-        if !chunk_res.status().is_success() {
-            return Err(format!("R2 read failed: {}", chunk_res.status()));
-        }
-
-        let bytes = chunk_res
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read chunk bytes: {e}"))?;
-        xml_bytes.extend_from_slice(&bytes);
-        offset += length;
+async fn read_cached_xml(
+    client: &Client,
+    cache: &CacheResponse,
+    callback_base: &str,
+    callback_token: &str,
+) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(&format!("{callback_base}/api/proxy/r2-read"))
+        .map_err(|e| format!("Invalid callback base URL: {e}"))?;
+    {
+        let mut qp = url.query_pairs_mut();
+        qp.append_pair("key", &cache.r2_key);
     }
 
-    String::from_utf8(xml_bytes)
-        .map(Some)
-        .map_err(|e| format!("Invalid UTF-8 in XML: {e}"))
+    let res = client
+        .request(reqwest::Method::GET, url)
+        .header("Authorization", format!("Bearer {callback_token}"))
+        .send()
+        .await
+        .map_err(|e| format!("R2 read request failed: {e}"))?;
+
+    if !res.status().is_success() {
+        return Err(format!("R2 read failed: {}", res.status()));
+    }
+
+    let xml_bytes = res
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read XML bytes: {e}"))?;
+
+    String::from_utf8(xml_bytes.to_vec()).map_err(|e| format!("XML bytes are not valid UTF-8: {e}"))
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -248,9 +242,8 @@ async fn ingest_usc_unit(
 
     tracing::info!("[Container] Starting ingest for Title {}", unit.title_num);
 
-    // ── Phase 1: Parse structure ─────────────────────────────
-    let xml = match fetch_cached_xml(client, &unit.url, callback_base, callback_token).await? {
-        Some(xml) => xml,
+    let cache = match ensure_cached_xml(client, &unit.url, callback_base, callback_token).await? {
+        Some(cache) => cache,
         None => {
             tracing::info!(
                 "[Container] Title {}: skipped (HTML response)",
@@ -260,12 +253,15 @@ async fn ingest_usc_unit(
         }
     };
 
-    let structure_events = parse_usc_structure_events(&xml, &unit.title_num, &unit.url);
+    let xml = read_cached_xml(client, &cache, callback_base, callback_token).await?;
+    let parsed = parse_usc_xml(&xml, &unit.title_num, &unit.url);
 
+    // ── Phase 1: Build structure nodes ──────────────────────
     let mut pending_nodes: Vec<NodePayload> = Vec::new();
     let mut seen_level_ids: HashSet<String> = HashSet::new();
     let mut level_type_by_identifier: HashMap<String, String> = HashMap::new();
-    let mut section_refs: Vec<SectionRefEntry> = Vec::new();
+    let mut seen_section_keys: HashSet<String> = HashSet::new();
+    let mut unique_sections = Vec::new();
     let mut level_sort_order: i32 = 0;
     let mut title_emitted = false;
 
@@ -301,83 +297,65 @@ async fn ingest_usc_unit(
         });
     };
 
-    for event in &structure_events {
-        match event {
-            USCStructureEvent::Title {
-                title_num,
-                title_name,
-            } => {
-                ensure_title_node(
-                    title_num,
-                    title_name,
-                    &mut pending_nodes,
-                    &mut seen_level_ids,
-                    &mut title_emitted,
-                );
-            }
-            USCStructureEvent::Level(level) => {
-                if seen_level_ids.contains(&level.identifier) {
-                    continue;
-                }
-                ensure_title_node(
-                    &level.title_num,
-                    &format!("Title {}", level.title_num),
-                    &mut pending_nodes,
-                    &mut seen_level_ids,
-                    &mut title_emitted,
-                );
+    ensure_title_node(
+        &parsed.title_num,
+        &parsed.title_name,
+        &mut pending_nodes,
+        &mut seen_level_ids,
+        &mut title_emitted,
+    );
 
-                let parent_string_id = resolve_level_parent_string_id(
-                    root_string_id,
-                    level.parent_identifier.as_deref(),
-                    &level.title_num,
-                    &level_type_by_identifier,
-                );
-                let string_id =
-                    format!("{root_string_id}/{}-{}", level.level_type, level.identifier);
-                let heading_citation = format!(
-                    "{} {}",
-                    capitalize_first(&level.level_type),
-                    level.num
-                );
+    for level in parsed.levels {
+        if seen_level_ids.contains(&level.identifier) {
+            continue;
+        }
 
-                pending_nodes.push(NodePayload {
-                    meta: NodeMeta {
-                        id: string_id,
-                        source_version_id: source_version_id.to_string(),
-                        parent_id: Some(parent_string_id),
-                        level_name: level.level_type.clone(),
-                        level_index: level.level_index as i32,
-                        sort_order: level_sort_order,
-                        name: Some(level.heading.clone()),
-                        path: Some(format!(
-                            "/statutes/usc/{}/{}/{}",
-                            level.level_type, level.title_num, level.num
-                        )),
-                        readable_id: Some(level.num.clone()),
-                        heading_citation: Some(heading_citation),
-                        source_url: None,
-                        accessed_at: Some(accessed_at.clone()),
-                    },
-                    content: None,
-                });
+        ensure_title_node(
+            &level.title_num,
+            &format!("Title {}", level.title_num),
+            &mut pending_nodes,
+            &mut seen_level_ids,
+            &mut title_emitted,
+        );
 
-                level_sort_order += 1;
-                level_type_by_identifier
-                    .insert(level.identifier.clone(), level.level_type.clone());
-                seen_level_ids.insert(level.identifier.clone());
-            }
-            USCStructureEvent::Section(section) => {
-                let parent_string_id =
-                    resolve_section_parent_string_id(root_string_id, &section.parent_ref);
-                let child_id = format!("{parent_string_id}/section-{}", section.section_num);
+        let parent_string_id = resolve_level_parent_string_id(
+            root_string_id,
+            level.parent_identifier.as_deref(),
+            &level.title_num,
+            &level_type_by_identifier,
+        );
+        let string_id = format!("{root_string_id}/{}-{}", level.level_type, level.identifier);
+        let heading_citation = format!("{} {}", capitalize_first(&level.level_type), level.num);
 
-                section_refs.push(SectionRefEntry {
-                    section_key: section.section_key.clone(),
-                    parent_id: parent_string_id,
-                    child_id,
-                });
-            }
+        pending_nodes.push(NodePayload {
+            meta: NodeMeta {
+                id: string_id,
+                source_version_id: source_version_id.to_string(),
+                parent_id: Some(parent_string_id),
+                level_name: level.level_type.clone(),
+                level_index: level.level_index as i32,
+                sort_order: level_sort_order,
+                name: Some(level.heading.clone()),
+                path: Some(format!(
+                    "/statutes/usc/{}/{}/{}",
+                    level.level_type, level.title_num, level.num
+                )),
+                readable_id: Some(level.num.clone()),
+                heading_citation: Some(heading_citation),
+                source_url: None,
+                accessed_at: Some(accessed_at.clone()),
+            },
+            content: None,
+        });
+
+        level_sort_order += 1;
+        level_type_by_identifier.insert(level.identifier.clone(), level.level_type.clone());
+        seen_level_ids.insert(level.identifier.clone());
+    }
+
+    for section in parsed.sections {
+        if seen_section_keys.insert(section.section_key.clone()) {
+            unique_sections.push(section);
         }
     }
 
@@ -389,7 +367,7 @@ async fn ingest_usc_unit(
         &mut title_emitted,
     );
 
-    let total_nodes = pending_nodes.len() + section_refs.len();
+    let total_nodes = pending_nodes.len() + unique_sections.len();
     post_unit_start(client, callback_base, callback_token, &unit.id, total_nodes).await?;
 
     // Flush structure nodes in batches
@@ -401,24 +379,15 @@ async fn ingest_usc_unit(
         "[Container] Title {}: {} structure nodes, {} sections",
         unit.title_num,
         pending_nodes.len(),
-        section_refs.len()
+        unique_sections.len()
     );
 
-    // ── Phase 2: Parse section content ───────────────────────
-    if !section_refs.is_empty() {
-        let sections = parse_usc_section_content_xml(&xml, &unit.title_num, &unit.url);
-
-        let mut section_by_key: HashMap<String, &SectionRefEntry> =
-            section_refs.iter().map(|s| (s.section_key.clone(), s)).collect();
+    // ── Phase 2: Build and flush section content nodes ──────
+    if !unique_sections.is_empty() {
         let mut section_batch: Vec<NodePayload> = Vec::new();
         let section_level_idx = section_level_index() as i32;
 
-        for section in &sections {
-            let item = match section_by_key.get(&section.section_key) {
-                Some(item) => *item,
-                None => continue,
-            };
-
+        let section_node_from_event = |section: crate::parser::USCSection| {
             let text_for_xrefs = [&section.body, &section.citations]
                 .iter()
                 .filter(|s| !s.is_empty())
@@ -464,11 +433,18 @@ async fn ingest_usc_unit(
             let content = SectionContent { blocks, metadata };
             let readable_id = format!("{} USC {}", section.title_num, section.section_num);
 
-            section_batch.push(NodePayload {
+            Some(NodePayload {
                 meta: NodeMeta {
-                    id: item.child_id.clone(),
+                    id: format!(
+                        "{}/section-{}",
+                        resolve_section_parent_string_id(root_string_id, &section.parent_ref),
+                        section.section_num
+                    ),
                     source_version_id: source_version_id.to_string(),
-                    parent_id: Some(item.parent_id.clone()),
+                    parent_id: Some(resolve_section_parent_string_id(
+                        root_string_id,
+                        &section.parent_ref,
+                    )),
                     level_name: "section".to_string(),
                     level_index: section_level_idx,
                     sort_order: 0,
@@ -480,9 +456,16 @@ async fn ingest_usc_unit(
                     accessed_at: Some(accessed_at.clone()),
                 },
                 content: Some(serde_json::to_value(&content).unwrap()),
-            });
+            })
+        };
 
-            if section_batch.len() >= BATCH_SIZE {
+        for section in unique_sections {
+            if let Some(node) = section_node_from_event(section) {
+                section_batch.push(node);
+            }
+
+            while section_batch.len() >= BATCH_SIZE {
+                let remainder = section_batch.split_off(BATCH_SIZE);
                 post_node_batch(
                     client,
                     callback_base,
@@ -491,10 +474,8 @@ async fn ingest_usc_unit(
                     &section_batch,
                 )
                 .await?;
-                section_batch.clear();
+                section_batch = remainder;
             }
-
-            section_by_key.remove(&section.section_key);
         }
 
         if !section_batch.is_empty() {
@@ -507,31 +488,10 @@ async fn ingest_usc_unit(
             )
             .await?;
         }
-
-        if !section_by_key.is_empty() {
-            let missing: Vec<_> = section_by_key.keys().take(5).collect();
-            tracing::warn!(
-                "[Container] Title {}: {} sections not found in content pass: {}",
-                unit.title_num,
-                section_by_key.len(),
-                missing
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
     }
 
     tracing::info!("[Container] Title {}: done", unit.title_num);
     Ok(UnitStatus::Completed)
-}
-
-#[derive(Debug)]
-struct SectionRefEntry {
-    section_key: String,
-    parent_id: String,
-    child_id: String,
 }
 
 fn capitalize_first(s: &str) -> String {
@@ -541,7 +501,6 @@ fn capitalize_first(s: &str) -> String {
         None => String::new(),
     }
 }
-
 // ──────────────────────────────────────────────────────────────
 // Main entry point
 // ──────────────────────────────────────────────────────────────
