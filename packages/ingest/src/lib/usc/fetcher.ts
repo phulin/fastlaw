@@ -86,7 +86,7 @@ export function getTitleNumFromUrl(url: string): string | null {
  */
 export function getReleasePointFromUrl(url: string): string | null {
 	const match = url.match(RELEASE_POINT_RE);
-	return match ? match[1].toLowerCase() : null;
+	return match ? match[1] : null;
 }
 
 /**
