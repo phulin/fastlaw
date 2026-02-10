@@ -13,6 +13,35 @@ async fn handle_ingest(Json(config): Json<IngestConfig>) -> (StatusCode, Json<se
     (StatusCode::OK, Json(json!({ "status": "accepted" })))
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct DiscoverParams {
+    source: String,
+}
+
+async fn handle_discover(
+    Json(params): Json<DiscoverParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let client = reqwest::Client::new();
+    let download_base = "https://uscode.house.gov/download/download.shtml"; // Default for now
+
+    match params.source.as_str() {
+        "usc" => {
+            match usc_ingest::sources::usc::discover::discover_usc_root(&client, download_base)
+                .await
+            {
+                Ok(result) => (StatusCode::OK, Json(json!(result))),
+                Err(err) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": err })),
+                ),
+            }
+        }
+        _ => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Unknown source: {}", params.source) })),
+        ),
+    }
+}
 async fn handle_health() -> &'static str {
     "ok"
 }
@@ -23,6 +52,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/ingest", post(handle_ingest))
+        .route("/discover", post(handle_discover))
         .fallback(handle_health);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")

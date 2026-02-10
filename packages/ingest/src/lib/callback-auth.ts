@@ -1,6 +1,6 @@
 export interface CallbackParams {
 	jobId: string;
-	sourceVersionId: string;
+	sourceVersionId?: string;
 	sourceId: string;
 }
 
@@ -28,12 +28,13 @@ export async function signCallbackToken(
 	secret: string,
 ): Promise<string> {
 	const exp = String(Date.now() + 3600_000);
-	const payload = `${params.jobId}|${params.sourceVersionId}|${params.sourceId}|${exp}`;
+	const svid = params.sourceVersionId ?? "";
+	const payload = `${params.jobId}|${svid}|${params.sourceId}|${exp}`;
 	const sig = await hmacSha256(payload, secret);
 	return btoa(
 		JSON.stringify({
 			jobId: params.jobId,
-			svid: params.sourceVersionId,
+			svid,
 			sid: params.sourceId,
 			exp,
 			sig,
@@ -47,13 +48,13 @@ export async function verifyCallbackToken(
 ): Promise<CallbackParams> {
 	const { jobId, svid, sid, exp, sig } = JSON.parse(atob(token)) as {
 		jobId: string;
-		svid: string;
+		svid?: string;
 		sid: string;
 		exp: string;
 		sig: string;
 	};
 
-	if (!jobId || !svid || !sid || !exp || !sig) {
+	if (!jobId || !sid || !exp || !sig) {
 		throw new Error("Missing callback token fields");
 	}
 
@@ -62,13 +63,13 @@ export async function verifyCallbackToken(
 		throw new Error("Callback token expired");
 	}
 
-	const payload = `${jobId}|${svid}|${sid}|${exp}`;
+	const payload = `${jobId}|${svid ?? ""}|${sid}|${exp}`;
 	const expectedSig = await hmacSha256(payload, secret);
 	if (sig !== expectedSig) {
 		throw new Error("Invalid callback token signature");
 	}
 
-	return { jobId, sourceVersionId: svid, sourceId: sid };
+	return { jobId, sourceVersionId: svid || undefined, sourceId: sid };
 }
 
 export function extractBearerToken(request: Request): string {

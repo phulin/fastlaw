@@ -5,7 +5,7 @@ use crate::types::{
 };
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tokio::sync::mpsc;
 
 use crate::sources::usc::cross_references::extract_section_cross_references;
@@ -25,6 +25,14 @@ struct UscUnitPayload {
 
 #[async_trait]
 impl SourceAdapter for UscAdapter {
+    async fn discover(
+        &self,
+        client: &reqwest::Client,
+        download_base: &str,
+    ) -> Result<crate::types::DiscoveryResult, String> {
+        crate::sources::usc::discover::discover_usc_root(client, download_base).await
+    }
+
     async fn process_unit(
         &self,
         unit: &UnitEntry,
@@ -35,7 +43,6 @@ impl SourceAdapter for UscAdapter {
             .map_err(|e| format!("Invalid USC unit payload for {}: {e}", unit.unit_id))?;
 
         let mut seen_level_ids: HashSet<String> = HashSet::new();
-        let mut level_type_by_identifier: HashMap<String, String> = HashMap::new();
         let mut seen_section_keys: HashSet<String> = HashSet::new();
         let mut level_sort_order: i32 = 0;
         let mut title_emitted = false;
@@ -85,12 +92,8 @@ impl SourceAdapter for UscAdapter {
                         context.build.root_node_id,
                         level.parent_identifier.as_deref(),
                         &level.title_num,
-                        &level_type_by_identifier,
                     );
-                    let string_id = format!(
-                        "{}/{}-{}",
-                        context.build.root_node_id, level.level_type, level.identifier
-                    );
+                    let string_id = format!("{}/{}", context.build.root_node_id, level.identifier);
                     let heading_citation =
                         format!("{} {}", capitalize_first(&level.level_type), level.num);
 
@@ -105,10 +108,7 @@ impl SourceAdapter for UscAdapter {
                                 level_index: level.level_index as i32,
                                 sort_order: level_sort_order,
                                 name: Some(level.heading.clone()),
-                                path: Some(format!(
-                                    "/statutes/usc/{}/{}/{}",
-                                    level.level_type, level.title_num, level.num
-                                )),
+                                path: Some(level.path.clone()),
                                 readable_id: Some(level.num.clone()),
                                 heading_citation: Some(heading_citation),
                                 source_url: None,
@@ -119,8 +119,6 @@ impl SourceAdapter for UscAdapter {
                         .await?;
 
                     level_sort_order += 1;
-                    level_type_by_identifier
-                        .insert(level.identifier.clone(), level.level_type.clone());
                     seen_level_ids.insert(level.identifier.clone());
                 }
                 USCStreamEvent::Section(section) => {
@@ -267,15 +265,12 @@ fn resolve_level_parent_string_id(
     root_string_id: &str,
     level_parent_identifier: Option<&str>,
     level_title_num: &str,
-    level_type_by_identifier: &HashMap<String, String>,
 ) -> String {
     if let Some(parent_id) = level_parent_identifier {
         if parent_id.ends_with("-title") {
             return format!("{root_string_id}/title-{level_title_num}");
         }
-        if let Some(parent_type) = level_type_by_identifier.get(parent_id) {
-            return format!("{root_string_id}/{parent_type}-{parent_id}");
-        }
+        return format!("{root_string_id}/{parent_id}");
     }
     format!("{root_string_id}/title-{level_title_num}")
 }
@@ -285,11 +280,8 @@ fn resolve_section_parent_string_id(root_string_id: &str, parent_ref: &USCParent
         USCParentRef::Title { title_num } => {
             format!("{root_string_id}/title-{title_num}")
         }
-        USCParentRef::Level {
-            level_type,
-            identifier,
-        } => {
-            format!("{root_string_id}/{level_type}-{identifier}")
+        USCParentRef::Level { identifier, .. } => {
+            format!("{root_string_id}/{identifier}")
         }
     }
 }

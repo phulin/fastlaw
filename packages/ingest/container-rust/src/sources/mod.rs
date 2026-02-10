@@ -6,6 +6,12 @@ pub mod usc;
 
 #[async_trait]
 pub trait SourceAdapter: Send + Sync {
+    async fn discover(
+        &self,
+        client: &reqwest::Client,
+        download_base: &str,
+    ) -> Result<crate::types::DiscoveryResult, String>;
+
     async fn process_unit(
         &self,
         unit: &UnitEntry,

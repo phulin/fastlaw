@@ -24,6 +24,17 @@ pub fn section_level_index() -> usize {
     USC_LEVEL_HIERARCHY.len()
 }
 
+pub fn title_sort_key(title_num: &str) -> (i32, String) {
+    let re = regex::Regex::new(r"^(\d+)([a-zA-Z]?)$").unwrap();
+    if let Some(caps) = re.captures(title_num) {
+        let n: i32 = caps[1].parse().unwrap_or(0);
+        let suffix = caps[2].to_lowercase();
+        (n, suffix)
+    } else {
+        (0, title_num.to_string())
+    }
+}
+
 fn is_usc_level(tag: &str) -> bool {
     USC_LEVEL_HIERARCHY.contains(&tag) && tag != "title"
 }
@@ -74,6 +85,7 @@ pub struct USCLevel {
     pub heading: String,
     pub title_num: String,
     pub parent_identifier: Option<String>,
+    pub path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +110,7 @@ pub enum USCParentRef {
     Level {
         level_type: String,
         identifier: String,
+        path: String,
     },
 }
 
@@ -123,6 +136,8 @@ struct LevelFrame {
     num: Option<String>,
     heading: Option<String>,
     parent_identifier: Option<String>,
+    parent_path: Option<String>,
+    path: Option<String>,
     emitted: bool,
     bracketed_num: bool,
 }
@@ -214,12 +229,22 @@ impl ParserState {
     }
 
     fn push_level(&mut self, level_type: String, attrs: &HashMap<String, String>) {
-        let parent_identifier = if let Some(parent) = self.level_stack.last() {
-            parent.identifier.clone()
-        } else {
-            // Default to title: {title_num}-title
-            Some(format!("{}-title", self.title_num))
-        };
+        if !self.level_stack.is_empty() {
+            let last_idx = self.level_stack.len() - 1;
+            self.ensure_level_identifier(last_idx);
+        }
+
+        let mut parent_identifier = Some(format!("{}-title", self.title_num));
+        let mut parent_path = Some(format!("/statutes/usc/{}", self.title_num));
+
+        // Find the closest parent that has an identifier/path
+        for frame in self.level_stack.iter().rev() {
+            if frame.identifier.is_some() {
+                parent_identifier = frame.identifier.clone();
+                parent_path = frame.path.clone();
+                break;
+            }
+        }
 
         let identifier_attr = attrs.get("identifier").cloned();
 
@@ -235,6 +260,8 @@ impl ParserState {
             num: num_from_id,
             heading: None,
             parent_identifier,
+            parent_path,
+            path: None,
             emitted: false,
             bracketed_num: false,
         });
@@ -244,12 +271,19 @@ impl ParserState {
         let frame = &mut self.level_stack[idx];
         if frame.identifier.is_none() {
             if let Some(ref num) = frame.num {
-                frame.identifier = Some(format!(
-                    "{}-{}{}",
-                    self.title_num,
-                    level_id_prefix(&frame.level_type),
-                    num
-                ));
+                let suffix = format!("{}-{}", frame.level_type, num);
+                frame.identifier = if let Some(ref parent_id) = frame.parent_identifier {
+                    Some(format!("{}/{}", parent_id, suffix))
+                } else {
+                    Some(format!("{}-{}", self.title_num, suffix))
+                };
+
+                let path_suffix = format!("{}-{}", frame.level_type, num);
+                frame.path = if let Some(ref parent_p) = frame.parent_path {
+                    Some(format!("{}/{}", parent_p, path_suffix))
+                } else {
+                    Some(format!("/statutes/usc/{}/{}", self.title_num, path_suffix))
+                };
             }
         }
     }
@@ -388,6 +422,10 @@ fn handle_start(
 
     // 3. Level Logic
     if is_usc_level(tag_name) {
+        if !state.level_stack.is_empty() {
+            let last_idx = state.level_stack.len() - 1;
+            state.ensure_level_identifier(last_idx);
+        }
         state.push_level(tag_name.to_string(), attrs);
     }
 
@@ -416,6 +454,10 @@ fn handle_start(
         if state.current_note.is_some() || inside_quoted_content(tag_stack) {
             // Ignore nested section
         } else {
+            if !state.level_stack.is_empty() {
+                let last_idx = state.level_stack.len() - 1;
+                state.ensure_level_identifier(last_idx);
+            }
             let identifier = attrs.get("identifier").cloned();
             let section_num = if let Some(ref id) = identifier {
                 parse_section_from_identifier(id)
@@ -428,6 +470,7 @@ fn handle_start(
                     USCParentRef::Level {
                         level_type: frame.level_type.clone(),
                         identifier: id.clone(),
+                        path: frame.path.clone().unwrap(),
                     }
                 } else {
                     USCParentRef::Title {
@@ -709,7 +752,7 @@ where
     state.ensure_level_identifier(idx);
     let frame = &mut state.level_stack[idx];
 
-    if !frame.emitted && frame.identifier.is_some() && frame.num.is_some() {
+    if !frame.emitted && frame.identifier.is_some() && frame.num.is_some() && frame.path.is_some() {
         let level = USCLevel {
             level_type: frame.level_type.clone(),
             level_index: usc_level_index(&frame.level_type).unwrap_or(0),
@@ -718,6 +761,7 @@ where
             heading: frame.heading.clone().unwrap_or_default(),
             title_num: state.title_num.clone(),
             parent_identifier: frame.parent_identifier.clone(),
+            path: frame.path.clone().unwrap(),
         };
         on_event(USCStreamEvent::Level(level));
         frame.emitted = true;
@@ -725,38 +769,44 @@ where
 }
 
 fn build_level_from_frame(frame: &LevelFrame, title_num: &str) -> Option<USCLevel> {
-    if let Some(id) = &frame.identifier {
-        if let Some(num) = &frame.num {
-            return Some(USCLevel {
-                level_type: frame.level_type.clone(),
-                level_index: usc_level_index(&frame.level_type).unwrap_or(0),
-                identifier: id.clone(),
-                num: num.clone(),
-                heading: frame.heading.clone().unwrap_or_default(),
-                title_num: title_num.to_string(),
-                parent_identifier: frame.parent_identifier.clone(),
-            });
-        }
+    if let (Some(id), Some(num), Some(path)) = (&frame.identifier, &frame.num, &frame.path) {
+        return Some(USCLevel {
+            level_type: frame.level_type.clone(),
+            level_index: usc_level_index(&frame.level_type).unwrap_or(0),
+            identifier: id.clone(),
+            num: num.clone(),
+            heading: frame.heading.clone().unwrap_or_default(),
+            title_num: title_num.to_string(),
+            parent_identifier: frame.parent_identifier.clone(),
+            path: path.clone(),
+        });
     }
-    // Try to recover identifier if num exists
-    if frame.identifier.is_none() {
-        if let Some(num) = &frame.num {
-            let id = format!(
-                "{}-{}{}",
-                title_num,
-                level_id_prefix(&frame.level_type),
-                num
-            );
-            return Some(USCLevel {
-                level_type: frame.level_type.clone(),
-                level_index: usc_level_index(&frame.level_type).unwrap_or(0),
-                identifier: id,
-                num: num.clone(),
-                heading: frame.heading.clone().unwrap_or_default(),
-                title_num: title_num.to_string(),
-                parent_identifier: frame.parent_identifier.clone(),
-            });
-        }
+
+    // Attempt recovery if possible
+    if let Some(num) = &frame.num {
+        let suffix = format!("{}-{}", frame.level_type, num);
+        let id = if let Some(ref parent_id) = frame.parent_identifier {
+            format!("{}/{}", parent_id, suffix)
+        } else {
+            format!("{}-{}", title_num, suffix)
+        };
+
+        let path = if let Some(ref parent_p) = frame.parent_path {
+            format!("{}/{}", parent_p, suffix)
+        } else {
+            format!("/statutes/usc/{}/{}", title_num, suffix)
+        };
+
+        return Some(USCLevel {
+            level_type: frame.level_type.clone(),
+            level_index: usc_level_index(&frame.level_type).unwrap_or(0),
+            identifier: id,
+            num: num.clone(),
+            heading: frame.heading.clone().unwrap_or_default(),
+            title_num: title_num.to_string(),
+            parent_identifier: frame.parent_identifier.clone(),
+            path,
+        });
     }
     None
 }
@@ -935,8 +985,8 @@ pub fn normalized_whitespace(s: &str) -> String {
 fn parse_section_from_identifier(ident: &str) -> Option<String> {
     let rest = ident.replace("/us/usc/", "");
     let rest = rest.trim_matches('/');
-    for part in rest.split('/') {
-        if part.starts_with('s') {
+    for part in rest.split('/').rev() {
+        if part.starts_with('s') && part.as_bytes().get(1).map_or(false, |b| b.is_ascii_digit()) {
             return Some(strip_leading_zeros(&part[1..]));
         }
     }

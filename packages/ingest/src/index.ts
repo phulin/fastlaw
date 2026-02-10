@@ -12,27 +12,6 @@ export {
 	formatDesignatorPadded,
 	normalizeDesignator,
 } from "./lib/cga/parser";
-export {
-	fetchUSCTitleStreaming,
-	getReleasePointFromTitleUrls,
-	getReleasePointFromUrl,
-	getTitleNumFromUrl,
-	getUSCTitleUrls,
-	streamXmlFromZip,
-} from "./lib/usc/fetcher";
-// USC
-export {
-	levelSortKey,
-	parseUSCXml,
-	sectionSortKey,
-	streamUSCXml,
-	streamUSCXmlFromChunks,
-	titleSortKey,
-	USC_LEVEL_HIERARCHY,
-	USC_LEVEL_INDEX,
-	type USCLevel,
-	type USCLevelType,
-} from "./lib/usc/parser";
 // Versioning
 export {
 	computeDiff,
@@ -42,6 +21,8 @@ export {
 	getOrCreateSource,
 	insertNode,
 } from "./lib/versioning";
+// Zip utils
+export { streamXmlFromZip, streamXmlFromZipStream } from "./lib/zip-utils";
 // Types
 export type {
 	DiffResult,

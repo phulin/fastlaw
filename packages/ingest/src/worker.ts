@@ -17,8 +17,6 @@ import {
 } from "./lib/ingest-jobs";
 import { hash64, hash64ToHex } from "./lib/packfile/hash";
 import { PackfileDO } from "./lib/packfile-do";
-import { uscAdapter } from "./lib/usc/adapter";
-import { streamXmlFromZip } from "./lib/usc/fetcher";
 import { VectorIngestWorkflow } from "./lib/vector/workflow";
 import {
 	computeDiff,
@@ -26,9 +24,11 @@ import {
 	getOrCreateSource,
 	insertNodesBatched,
 } from "./lib/versioning";
+import { streamXmlFromZip } from "./lib/zip-utils";
 import type {
 	Env,
 	IngestNode,
+	NodeMeta,
 	NodePayload,
 	VectorWorkflowParams,
 } from "./types";
@@ -156,101 +156,23 @@ app.post("/api/admin/reset", async (c) => {
 // USC ingest via containers
 // ──────────────────────────────────────────────────────────────
 
-function normalizeUnitToken(value: string): string {
-	const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
-	if (normalized.startsWith("title-") || normalized.startsWith("part-")) {
-		return normalized;
-	}
-	return `title-${normalized}`;
-}
-
-function selectUnits<TUnit extends { id: string }>(
-	units: TUnit[],
-	selectors: string[],
-): { selected: TUnit[]; unknown: string[] } {
-	if (selectors.length === 0) {
-		return { selected: units, unknown: [] };
-	}
-
-	const byId = new Map<string, TUnit>();
-	for (const unit of units) {
-		byId.set(unit.id.toLowerCase(), unit);
-		byId.set(normalizeUnitToken(unit.id), unit);
-	}
-
-	const selected: TUnit[] = [];
-	const selectedIds = new Set<string>();
-	const unknown: string[] = [];
-
-	for (const selector of selectors) {
-		const normalizedSelector = normalizeUnitToken(selector);
-		const unit =
-			byId.get(selector.toLowerCase()) ?? byId.get(normalizedSelector);
-		if (!unit) {
-			unknown.push(selector);
-			continue;
-		}
-		if (selectedIds.has(unit.id)) continue;
-		selectedIds.add(unit.id);
-		selected.push(unit);
-	}
-
-	return { selected, unknown };
-}
-
 app.post("/api/ingest/usc/jobs", async (c) => {
 	try {
-		const body = await c.req.json<{ force?: boolean }>().catch(() => ({}));
-		const force = "force" in body ? body.force : false;
 		const unitSelectors = (c.req.query("units") ?? "")
 			.split(",")
 			.map((v) => v.trim())
 			.filter((v) => v.length > 0);
 
-		const discovery = await uscAdapter.discoverRoot({
-			env: c.env,
-			force: force ?? false,
-		});
-		const { selected, unknown } = selectUnits(
-			discovery.unitRoots,
-			unitSelectors,
-		);
-		if (unknown.length > 0) {
-			return c.json({ error: "Unknown units", unknown }, 400);
-		}
-
 		const sourceId = await getOrCreateSource(
 			c.env.DB,
-			uscAdapter.source.code,
-			uscAdapter.source.name,
-			uscAdapter.source.jurisdiction,
-			uscAdapter.source.region,
-			uscAdapter.source.docType,
+			"usc",
+			"United States Code",
+			"federal",
+			"US",
+			"statute",
 		);
-
-		const sourceVersionId = `${uscAdapter.source.code}-${discovery.versionId}`;
-		await ensureSourceVersion(
-			c.env.DB,
-			sourceId,
-			discovery.versionId,
-			discovery.rootNode.id,
-		);
-
-		await insertNodesBatched(c.env.DB, [
-			{
-				...discovery.rootNode,
-				source_version_id: sourceVersionId,
-				blob_hash: null,
-			},
-		]);
 
 		const jobId = await createIngestJob(c.env.DB, "usc");
-		await completePlanning(c.env.DB, jobId, sourceVersionId, selected.length);
-		await createJobUnits(
-			c.env.DB,
-			jobId,
-			selected.map((u) => u.id),
-		);
 
 		// In local dev, containers run in Docker and can't reach the host via
 		// localhost. Replace with host.docker.internal so callbacks work.
@@ -259,12 +181,15 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 			/localhost|127\.0\.0\.1/,
 			"host.docker.internal",
 		);
+		// sourceVersionId is unknown at this point, so we omit/leave empty in token
 		const callbackToken = await signCallbackToken(
-			{ jobId, sourceVersionId, sourceId },
+			{ jobId, sourceId },
 			c.env.CALLBACK_SECRET,
 		);
 
-		const container = c.env.INGEST_CONTAINER.getByName(sourceVersionId);
+		const container = c.env.INGEST_CONTAINER.getByName("usc-discovery");
+		// Using "usc-discovery" as a stable name for the service
+		// We pass selectors but NO units. The container will discover.
 		await container
 			.fetch(
 				new Request("http://container/ingest", {
@@ -272,18 +197,10 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
 						source: "usc",
-						units: selected.map((unit, i) => ({
-							unitId: unit.id,
-							url: unit.url,
-							sortOrder: i,
-							payload: {
-								titleNum: unit.titleNum,
-							},
-						})),
+						sourceId,
+						selectors: unitSelectors.length > 0 ? unitSelectors : undefined,
 						callbackBase,
 						callbackToken,
-						sourceVersionId,
-						rootNodeId: discovery.rootNode.id,
 					}),
 				}),
 			)
@@ -299,9 +216,7 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 		return c.json({
 			jobId,
 			sourceCode: "usc",
-			sourceVersionId,
-			totalUnits: selected.length,
-			status: selected.length === 0 ? "completed" : "running",
+			status: "planning", // Container is planning/discovering
 		});
 	} catch (error) {
 		console.error("USC ingest start failed:", error);
@@ -309,10 +224,57 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 	}
 });
 
-// ──────────────────────────────────────────────────────────────
-// Container callbacks
-// ──────────────────────────────────────────────────────────────
+app.post("/api/callback/ensureSourceVersion", async (c) => {
+	const token = extractBearerToken(c.req.raw);
+	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	const { sourceId, sourceVersionId, rootNode, units } = await c.req.json<{
+		sourceId: string;
+		sourceVersionId: string;
+		rootNode: NodeMeta;
+		units: Array<{ id: string; title_num: string; url: string }>;
+	}>();
 
+	console.log(
+		`[Worker] ensureSourceVersion callback. jobId=${params.jobId}, svid=${sourceVersionId}, units=${units.length}`,
+	);
+
+	// ensureSourceVersion takes (db, sourceId, versionDate, rootNodeId).
+	// Rust sends `usc-{version_id}`, so we extract the version suffix.
+	const versionDate = sourceVersionId.replace(`${sourceId}-`, "");
+
+	try {
+		await ensureSourceVersion(c.env.DB, sourceId, versionDate, rootNode.id);
+
+		// Insert root node
+		await insertNodesBatched(c.env.DB, [
+			{
+				...rootNode,
+				source_version_id: sourceVersionId,
+				blob_hash: null,
+			},
+		]);
+
+		// Create job units and complete planning
+		await completePlanning(
+			c.env.DB,
+			params.jobId,
+			sourceVersionId,
+			units.length,
+		);
+		await createJobUnits(
+			c.env.DB,
+			params.jobId,
+			units.map((u) => u.id),
+		);
+	} catch (err) {
+		console.error(`[Worker] Failed in ensureSourceVersion: ${err}`);
+		return c.json({ error: String(err) }, 500);
+	}
+
+	return c.json({ ok: true });
+});
+
+// ──────────────────────────────────────────────────────────────
 app.post("/api/callback/unitStart", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
@@ -321,6 +283,9 @@ app.post("/api/callback/unitStart", async (c) => {
 		totalNodes: number;
 	}>();
 
+	console.log(
+		`[Worker] Unit ${unitId} start callback received. jobId=${params.jobId}, totalNodes=${totalNodes}`,
+	);
 	await markUnitRunning(c.env.DB, params.jobId, unitId, totalNodes);
 	console.log(
 		`Unit ${unitId} started for job ${params.jobId}: ${totalNodes} nodes`,
@@ -336,6 +301,12 @@ app.post("/api/callback/insertNodeBatch", async (c) => {
 		nodes: NodePayload[];
 	}>();
 
+	console.log(
+		`[Worker] insertNodeBatch callback received. unitId=${unitId}, count=${nodes.length}`,
+	);
+	if (nodes.length > 0) {
+		console.log(`[Worker] Sample node ID: ${nodes[0].meta.id}`);
+	}
 	const newBlobs: Array<{ hashHex: string; content: number[] }> = [];
 	const nodeInserts: IngestNode[] = [];
 
@@ -359,7 +330,8 @@ app.post("/api/callback/insertNodeBatch", async (c) => {
 
 		nodeInserts.push({
 			...node.meta,
-			source_version_id: params.sourceVersionId,
+			source_version_id:
+				node.meta.source_version_id || params.sourceVersionId || "",
 			blob_hash: blobHash,
 		});
 	}

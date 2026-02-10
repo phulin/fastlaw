@@ -258,7 +258,7 @@ fn sets_chapter_identifiers_correctly() {
         .iter()
         .find(|l| l.level_type == "chapter" && l.num == "1")
         .expect("Chapter 1 not found");
-    assert_eq!(chapter1.identifier, "1-ch1");
+    assert_eq!(chapter1.identifier, "1-title/chapter-1");
     assert_eq!(chapter1.title_num, "1");
 }
 
@@ -394,4 +394,66 @@ fn handles_nested_sections_and_dashes_and_newlines() {
         .find(|s| s.section_num == "1437f-1")
         .unwrap();
     assert_eq!(s2.path, "/statutes/usc/section/99/1437f-1");
+}
+
+#[test]
+fn test_url_collision_overlapping_parts() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t10">
+            <main>
+                <title identifier="/us/usc/t10">
+                    <subtitle identifier="/us/usc/t10/stA">
+                        <num value="A">SUBTITLE A</num>
+                        <part identifier="/us/usc/t10/stA/ptI">
+                            <num value="I">PART I</num>
+                            <section identifier="/us/usc/t10/stA/ptI/s101">
+                                <num value="101">§ 101.</num>
+                                <heading>Section in Subtitle A Part I</heading>
+                             </section>
+                        </part>
+                    </subtitle>
+                    <subtitle identifier="/us/usc/t10/stB">
+                        <num value="B">SUBTITLE B</num>
+                        <part identifier="/us/usc/t10/stB/ptI">
+                            <num value="I">PART I</num>
+                            <section identifier="/us/usc/t10/stB/ptI/s101">
+                                <num value="101">§ 101.</num>
+                                <heading>Section in Subtitle B Part I</heading>
+                             </section>
+                        </part>
+                    </subtitle>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = usc_ingest::sources::usc::parser::parse_usc_xml(xml, "10", "");
+
+    let parts: Vec<_> = result
+        .levels
+        .iter()
+        .filter(|l| l.level_type == "part")
+        .collect();
+    assert_eq!(parts.len(), 2, "Should have 2 parts");
+
+    // Check identifiers
+    assert_ne!(
+        parts[0].identifier, parts[1].identifier,
+        "Part identifiers should be unique"
+    );
+    assert_eq!(parts[0].identifier, "10-title/subtitle-A/part-I");
+    assert_eq!(parts[1].identifier, "10-title/subtitle-B/part-I");
+
+    // Check paths
+    assert_ne!(parts[0].path, parts[1].path, "Part paths should be unique");
+    assert_eq!(parts[0].path, "/statutes/usc/10/subtitle-A/part-I");
+    assert_eq!(parts[1].path, "/statutes/usc/10/subtitle-B/part-I");
+
+    // Check sections
+    assert_eq!(result.sections.len(), 2);
+    assert_ne!(
+        result.sections[0].path, result.sections[1].path,
+        "Section paths should be unique"
+    );
+    assert_eq!(result.sections[0].path, "/statutes/usc/section/10/101");
+    assert_eq!(result.sections[1].path, "/statutes/usc/section/10/101-2");
 }

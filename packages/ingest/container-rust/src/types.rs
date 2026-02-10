@@ -28,15 +28,31 @@ pub struct NodePayload {
     pub content: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UscUnitRoot {
+    pub id: String,
+    pub title_num: String,
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiscoveryResult {
+    pub version_id: String,
+    pub root_node: NodeMeta,
+    pub unit_roots: Vec<UscUnitRoot>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IngestConfig {
     pub source: SourceKind,
-    pub units: Vec<UnitEntry>,
+    pub source_id: String,
+    pub selectors: Option<Vec<String>>,
+    pub units: Option<Vec<UnitEntry>>,
     pub callback_base: String,
     pub callback_token: String,
-    pub source_version_id: String,
-    pub root_node_id: String,
+    pub source_version_id: Option<String>,
+    pub root_node_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

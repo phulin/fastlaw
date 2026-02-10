@@ -106,3 +106,35 @@ pub async fn post_unit_progress(
     )
     .await;
 }
+
+pub async fn post_ensure_source_version(
+    client: &Client,
+    callback_base: &str,
+    callback_token: &str,
+    source_id: &str,
+    source_version_id: &str,
+    root_node: &crate::types::NodeMeta,
+    units: &[crate::types::UscUnitRoot],
+) -> Result<(), String> {
+    let res = callback_fetch(
+        client,
+        callback_base,
+        callback_token,
+        "/api/callback/ensureSourceVersion",
+        reqwest::Method::POST,
+        Some(serde_json::json!({
+            "sourceId": source_id,
+            "sourceVersionId": source_version_id,
+            "rootNode": root_node,
+            "units": units,
+        })),
+    )
+    .await?;
+
+    if !res.status().is_success() {
+        let text = res.text().await.unwrap_or_default();
+        return Err(format!("Ensure source version callback failed: {text}"));
+    }
+
+    Ok(())
+}

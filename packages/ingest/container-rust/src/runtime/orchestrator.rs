@@ -1,11 +1,13 @@
 use crate::runtime::cache::{ensure_cached_xml, read_cached_xml};
-use crate::runtime::callbacks::{post_node_batch, post_unit_progress, post_unit_start};
-use crate::runtime::types::{BuildContext, IngestContext, NodeStore, BlobStore, UnitStatus};
+use crate::runtime::callbacks::{
+    post_ensure_source_version, post_node_batch, post_unit_progress, post_unit_start,
+};
+use crate::runtime::types::{BlobStore, BuildContext, IngestContext, NodeStore, UnitStatus};
 use crate::sources::adapter_for;
-use crate::types::{IngestConfig, NodePayload};
+use crate::types::{IngestConfig, NodePayload, UnitEntry};
+use async_trait::async_trait;
 use reqwest::Client;
 use std::sync::Mutex;
-use async_trait::async_trait;
 
 const BATCH_SIZE: usize = 200;
 
@@ -81,14 +83,88 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     let client = Client::new();
     let adapter = adapter_for(config.source);
 
-    tracing::info!(
-        "[Container] Starting ingest for {} units",
-        config.units.len()
-    );
+    // Determines the units to process and the version context
+    let (units, source_version_id, root_node_id) = if let Some(units) = &config.units {
+        // Pre-configured mode (legacy or direct unit targeting)
+        let svid = config
+            .source_version_id
+            .clone()
+            .ok_or("Missing source_version_id in config with units")?;
+        let rnid = config
+            .root_node_id
+            .clone()
+            .ok_or("Missing root_node_id in config with units")?;
+        (units.clone(), svid, rnid)
+    } else {
+        // Discovery mode
+        tracing::info!("[Container] Exploring source...");
+        let discovery = adapter
+            .discover(&client, "https://uscode.house.gov/download/download.shtml")
+            .await?;
 
-    for entry in &config.units {
+        let source_version_id = format!("{}-{}", config.source_id, discovery.version_id);
+        let root_node_id = discovery.root_node.id.clone();
+
+        tracing::info!(
+            "[Container] Discovered version: {}, root: {}",
+            source_version_id,
+            root_node_id
+        );
+
+        // Filter units based on selectors
+        let filtered_roots: Vec<crate::types::UscUnitRoot> =
+            if let Some(selectors) = &config.selectors {
+                if selectors.is_empty() {
+                    discovery.unit_roots
+                } else {
+                    discovery
+                        .unit_roots
+                        .into_iter()
+                        .filter(|u| selectors.contains(&u.title_num))
+                        .collect()
+                }
+            } else {
+                discovery.unit_roots
+            };
+
+        // Ensure source version exists in backend
+        post_ensure_source_version(
+            &client,
+            &config.callback_base,
+            &config.callback_token,
+            &config.source_id,
+            &source_version_id,
+            &discovery.root_node,
+            &filtered_roots,
+        )
+        .await?;
+
+        // Convert to UnitEntry
+        let mut units = Vec::new();
+        for (i, root) in filtered_roots.into_iter().enumerate() {
+            units.push(UnitEntry {
+                unit_id: root.id,
+                url: root.url,
+                sort_order: i as i32,
+                payload: serde_json::json!({ "titleNum": root.title_num }),
+            });
+        }
+        (units, source_version_id, root_node_id)
+    };
+
+    tracing::info!("[Container] Starting ingest for {} units", units.len());
+
+    for entry in &units {
         let unit_label = adapter.unit_label(entry);
-        let result = ingest_unit(&client, &config, entry, adapter).await;
+        let result = ingest_unit(
+            &client,
+            &config,
+            entry,
+            adapter,
+            &source_version_id,
+            &root_node_id,
+        )
+        .await;
 
         match result {
             Ok(status) => {
@@ -126,6 +202,8 @@ async fn ingest_unit(
     config: &IngestConfig,
     entry: &crate::types::UnitEntry,
     adapter: &'static (dyn crate::sources::SourceAdapter + Send + Sync),
+    source_version_id: &str,
+    root_node_id: &str,
 ) -> Result<UnitStatus, String> {
     let accessed_at = chrono::Utc::now().to_rfc3339();
     let unit_label = adapter.unit_label(entry);
@@ -156,8 +234,8 @@ async fn ingest_unit(
     .await?;
 
     let build_context = BuildContext {
-        source_version_id: &config.source_version_id,
-        root_node_id: &config.root_node_id,
+        source_version_id,
+        root_node_id,
         accessed_at: &accessed_at,
         unit_sort_order: entry.sort_order,
     };
