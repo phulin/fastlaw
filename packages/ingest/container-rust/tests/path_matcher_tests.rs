@@ -230,3 +230,80 @@ fn test_sequence_of_optionals() {
     filter.handle_event(&mut ctx, &mock_event_end("root"));
     assert_eq!(ctx.events.len(), 2, "Failed case 4: Skip Both");
 }
+
+#[test]
+fn test_attribute_binding() {
+    let mut filter = XmlPathFilter::<MockContext>::new();
+    filter.in_("root").bind_attr("id").in_("child");
+
+    let mut ctx = MockContext::default();
+    // Handler that checks if 'id' was captured in 'root' (index 0)
+    filter.set_handler(|_, _| {});
+
+    // <root id="123"><child>Match</child></root>
+    let mut start = BytesStart::new("root");
+    start.push_attribute(("id", "123"));
+    filter.handle_event(&mut ctx, &Event::Start(start.into_owned()));
+
+    // Check extraction immediately after start of root
+    let root_matcher = &filter.matchers[0];
+    let key: Box<[u8]> = b"id".as_slice().into();
+    let val: Box<[u8]> = b"123".as_slice().into();
+    assert_eq!(root_matcher.bound_attrs.get(&key), Some(&val));
+
+    let child = BytesStart::new("child");
+    filter.handle_event(&mut ctx, &Event::Start(child.into_owned()));
+    filter.handle_event(&mut ctx, &mock_event_end("child"));
+    filter.handle_event(&mut ctx, &mock_event_end("root"));
+
+    // Check cleanup
+    let root_matcher_after = &filter.matchers[0];
+    assert!(
+        root_matcher_after.bound_attrs.is_empty(),
+        "Attributes should be cleared after scope end"
+    );
+}
+
+#[test]
+fn test_helpers() {
+    let mut filter = XmlPathFilter::<MockContext>::new();
+    filter
+        .in_("root")
+        .bind_attr("id")
+        .maybe_in("opt")
+        .in_("child");
+
+    let mut ctx = MockContext::default();
+    filter.set_handler(|_, _| {});
+
+    // <root id="1"><opt><child/></opt></root>
+    let mut start = BytesStart::new("root");
+    start.push_attribute(("id", "1"));
+    filter.handle_event(&mut ctx, &Event::Start(start.into_owned()));
+
+    assert!(filter.is_active("root"));
+    assert_eq!(filter.get_attribute("root", "id").as_deref(), Some("1"));
+    assert!(!filter.is_active("opt"));
+
+    filter.handle_event(&mut ctx, &mock_event_start("opt"));
+    assert!(filter.is_active("opt"));
+
+    filter.handle_event(&mut ctx, &mock_event_start("child"));
+    assert!(filter.is_active("child"));
+
+    // Check active_matchers iterator
+    let active_names: Vec<String> = filter
+        .active_matchers()
+        .map(|m| String::from_utf8_lossy(m.tag_name()).into_owned())
+        .collect();
+    assert_eq!(active_names, vec!["root", "opt", "child"]);
+
+    filter.handle_event(&mut ctx, &mock_event_end("child"));
+    assert!(!filter.is_active("child"));
+
+    filter.handle_event(&mut ctx, &mock_event_end("opt"));
+    assert!(!filter.is_active("opt"));
+
+    filter.handle_event(&mut ctx, &mock_event_end("root"));
+    assert!(!filter.is_active("root"));
+}

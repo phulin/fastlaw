@@ -9,7 +9,7 @@ pub enum ConstraintKind {
 
 type Bytes = Box<[u8]>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TrackingMatcher {
     pub kind: ConstraintKind,
     pub attrs: Vec<Bytes>,
@@ -38,15 +38,54 @@ impl TrackingMatcher {
             ConstraintKind::MaybeIn(tag) => tag.as_ref() == current_tag,
         }
     }
+
+    pub fn is_active(&self) -> bool {
+        self.depth > 0
+    }
+
+    pub fn tag_name(&self) -> &[u8] {
+        match &self.kind {
+            ConstraintKind::In(tag) => tag,
+            ConstraintKind::MaybeIn(tag) => tag,
+        }
+    }
+
+    pub fn tag_name_str(&self) -> &str {
+        std::str::from_utf8(self.tag_name()).unwrap_or("")
+    }
+
+    pub fn get_attribute(&self, name: &[u8]) -> Option<&[u8]> {
+        self.bound_attrs.get(name).map(|v| v.as_ref())
+    }
 }
 
 pub type Handler<T> = fn(&mut T, &Event);
 
 pub struct XmlPathFilter<T> {
-    matchers: Vec<TrackingMatcher>,
+    pub matchers: Vec<TrackingMatcher>,
     /// Index of the *deepest* currently active matcher.
     current_matcher: Option<usize>,
     handler: Option<Handler<T>>,
+}
+
+impl<T> Clone for XmlPathFilter<T> {
+    fn clone(&self) -> Self {
+        Self {
+            matchers: self.matchers.clone(),
+            current_matcher: self.current_matcher,
+            handler: self.handler,
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for XmlPathFilter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("XmlPathFilter")
+            .field("matchers", &self.matchers)
+            .field("current_matcher", &self.current_matcher)
+            .field("handler", &self.handler.map(|_| "fn(...)"))
+            .finish()
+    }
 }
 
 impl<T> Default for XmlPathFilter<T> {
@@ -135,6 +174,21 @@ impl<T> XmlPathFilter<T> {
                 if let Some(idx) = matched_idx {
                     self.matchers[idx].depth += 1;
                     self.current_matcher = Some(idx);
+
+                    // Capture attributes
+                    if !self.matchers[idx].attrs.is_empty() {
+                        for attr in e.attributes() {
+                            if let Ok(a) = attr {
+                                let key = a.key.into_inner();
+                                if self.matchers[idx].attrs.iter().any(|k| k.as_ref() == key) {
+                                    let val = a.value.into_owned();
+                                    self.matchers[idx]
+                                        .bound_attrs
+                                        .insert(key.into(), val.into());
+                                }
+                            }
+                        }
+                    }
                 } else {
                     if let Some(curr) = self.current_matcher {
                         if self.matchers[curr].matches(name) {
@@ -157,6 +211,8 @@ impl<T> XmlPathFilter<T> {
                         }
 
                         if self.matchers[curr].depth == 0 {
+                            // Clear captured attributes when unwinding
+                            self.matchers[curr].bound_attrs.clear();
                             self.current_matcher = self.find_previous_active(curr);
                         }
                     }
@@ -173,6 +229,30 @@ impl<T> XmlPathFilter<T> {
                 }
             }
         }
+    }
+
+    pub fn active_matchers(&self) -> impl Iterator<Item = &TrackingMatcher> {
+        self.matchers.iter().filter(|m| m.is_active())
+    }
+
+    pub fn get_matcher(&self, tag: &str) -> Option<&TrackingMatcher> {
+        self.matchers
+            .iter()
+            .find(|m| m.tag_name() == tag.as_bytes())
+    }
+
+    pub fn is_active(&self, tag: &str) -> bool {
+        self.get_matcher(tag).map_or(false, |m| m.is_active())
+    }
+
+    pub fn get_depth(&self, tag: &str) -> usize {
+        self.get_matcher(tag).map_or(0, |m| m.depth)
+    }
+
+    pub fn get_attribute(&self, tag: &str, attr: &str) -> Option<String> {
+        self.get_matcher(tag)
+            .and_then(|m| m.get_attribute(attr.as_bytes()))
+            .map(|v| String::from_utf8_lossy(v).into_owned())
     }
 
     fn find_previous_active(&self, current_idx: usize) -> Option<usize> {

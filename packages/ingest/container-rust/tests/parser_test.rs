@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
-use usc_ingest::sources::usc::parser::{parse_usc_xml, usc_level_index};
+use usc_ingest::sources::usc::parser::usc_level_index;
+use usc_ingest::sources::usc::parser::{parse_usc_xml, USCParentRef};
 
 fn fixtures_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
@@ -8,7 +9,8 @@ fn fixtures_dir() -> &'static str {
 
 fn load_fixture(filename: &str) -> String {
     let path = Path::new(fixtures_dir()).join(filename);
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read fixture {}: {}", path.display(), e))
+    fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to read fixture {}: {}", path.display(), e))
 }
 
 #[test]
@@ -22,7 +24,7 @@ fn extracts_correct_title_number() {
 fn extracts_title_name() {
     let xml = load_fixture("usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
-    assert_eq!(result.title_name, "Title 1");
+    assert_eq!(result.title_name, "GENERAL PROVISIONS");
 }
 
 #[test]
@@ -132,7 +134,11 @@ fn extracts_sections() {
 fn extracts_section_numbers_correctly() {
     let xml = load_fixture("usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
-    let section_nums: Vec<&str> = result.sections.iter().map(|s| s.section_num.as_str()).collect();
+    let section_nums: Vec<&str> = result
+        .sections
+        .iter()
+        .map(|s| s.section_num.as_str())
+        .collect();
     assert!(section_nums.contains(&"1"));
     assert!(section_nums.contains(&"2"));
     assert!(section_nums.contains(&"3"));
@@ -165,10 +171,10 @@ fn extracts_section_1_with_correct_structure() {
 
     // Parent linkage (sections in chapter 1 should have chapter parent)
     match &section1.parent_ref {
-        usc_ingest::sources::usc::parser::USCParentRef::Level { level_type, .. } => {
+        USCParentRef::Level { level_type, .. } => {
             assert_eq!(level_type, "chapter");
         }
-        usc_ingest::sources::usc::parser::USCParentRef::Title { .. } => {
+        USCParentRef::Title { .. } => {
             panic!("Expected level parent, got title parent");
         }
     }
@@ -188,9 +194,18 @@ fn extracts_section_201_heading() {
         "Publication and distribution of Code of Laws of United States and Supplements and District of Columbia Code and Supplements"
     );
     assert!(
-        section201.body.contains("**Publishing in slip or pamphlet form or in Statutes at Large.\u{2014}**"),
+        section201
+            .body
+            .contains("**Publishing in slip or pamphlet form or in Statutes at Large.\u{2014}**"),
         "Section 201 body should contain formatted heading. Body: {}",
         &section201.body[..200.min(section201.body.len())]
+    );
+    // Spec says exclude section heading itself.
+    assert!(
+        !section201
+            .body
+            .contains("Publication and distribution of Code of Laws"),
+        "Section 201 body should NOT contain the section heading itself"
     );
 }
 
@@ -201,12 +216,37 @@ fn extracts_source_credit_as_history_short() {
     let sections_with_history: Vec<_> = result
         .sections
         .iter()
-        .filter(|s| !s.history_short.is_empty())
+        .filter(|s| !s.source_credit.is_empty())
         .collect();
     assert!(
         !sections_with_history.is_empty(),
         "At least some sections should have source credits"
     );
+}
+
+#[test]
+fn extracts_amendments_and_notes() {
+    let xml = load_fixture("usc_title_1.xml");
+    let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
+    let section201 = result
+        .sections
+        .iter()
+        .find(|s| s.section_num == "201")
+        .expect("201 found");
+
+    // Check amendments (from topic="amendments")
+    assert!(
+        !section201.amendments.is_empty(),
+        "Section 201 should have amendment notes"
+    );
+    assert!(section201.amendments.contains("1984\u{2014}Subsec. (a)"));
+
+    // Check notes (other notes)
+    assert!(
+        !section201.note.is_empty(),
+        "Section 201 should have general notes"
+    );
+    assert!(section201.note.contains("Change of Name"));
 }
 
 #[test]
@@ -285,4 +325,73 @@ fn drops_trailing_bracket_on_repealed_section_heading() {
         normalized,
         "Repealed. Pub. L. 117\u{2013}328, div. P, title I, \u{a7} 102(a), Dec. 29, 2022, 136 Stat. 5233"
     );
+}
+#[test]
+fn handles_nested_sections_and_dashes_and_newlines() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t99">
+            <main>
+                <title identifier="/us/usc/t99">
+                    <section identifier="/us/usc/t99/s1437f">
+                        <num value="1437f">§ 1437f.</num>
+                        <heading>Main Heading</heading>
+                        <content>
+                            <p>Para 1:</p>
+                        </content>
+                        <subsection>
+                            <num>(a)</num>
+                            <content>Subpara text</content>
+                        </subsection>
+                        <notes>
+                            <note>
+                                <heading>Note Heading</heading>
+                                <p>Note text with nested section:</p>
+                                <quotedContent>
+                                    <section identifier="/us/usc/t42/s511">
+                                        <num value="511">SEC. 511.</num>
+                                        <heading>NESTED HEADING</heading>
+                                        <content><p>Nested body</p></content>
+                                    </section>
+                                </quotedContent>
+                            </note>
+                        </notes>
+                    </section>
+                    <section identifier="/us/usc/t99/s1437f–1">
+                        <num value="1437f–1">§ 1437f–1.</num>
+                        <heading>Repealed</heading>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "99", "");
+
+    // 1. Verify isolation: Parent section should keep its heading
+    let s1 = result
+        .sections
+        .iter()
+        .find(|s| s.section_num == "1437f")
+        .unwrap();
+    assert_eq!(s1.heading, "Main Heading");
+
+    // 2. Verify newlines: (a) and "Subpara text" should be in the same block (no extra \n\n)
+    // Actually, the current logic for `subsection` with `num` and `content` tags:
+    // `handle_start` for `subsection`: pushes nothing if no text.
+    // `num` in body: pushes `**`.
+    // text in `num` (a): pushes `(a)`.
+    // `num` end: pushes `**`.
+    // `content` start: pushes nothing (removed from SECTION_BODY_TAGS).
+    // text in `content`: pushes `Subpara text`.
+    // `subsection` end: trims and pushes to `body_parts`.
+    // 2. Verify newlines: (a) and "Subpara text" should be in the same block (no extra \n\n)
+    assert!(s1.body.contains("**(a)** Subpara text"));
+    assert!(!s1.body.contains("**(a)**\n\nSubpara text"));
+
+    // 3. Verify dash normalization
+    let s2 = result
+        .sections
+        .iter()
+        .find(|s| s.section_num == "1437f-1")
+        .unwrap();
+    assert_eq!(s2.path, "/statutes/usc/section/99/1437f-1");
 }
