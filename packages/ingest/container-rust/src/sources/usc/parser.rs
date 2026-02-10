@@ -1,98 +1,44 @@
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use std::borrow::Cow;
 use std::collections::HashMap;
 
-/// Canonical organizational level hierarchy for USC.
-pub const USC_LEVEL_HIERARCHY: &[&str] = &[
-    "title",
-    "subtitle",
-    "part",
-    "subpart",
-    "chapter",
-    "subchapter",
-    "division",
-    "subdivision",
-];
-
-/// Map from level type to its canonical level_index.
-pub fn usc_level_index(level_type: &str) -> Option<usize> {
-    USC_LEVEL_HIERARCHY.iter().position(|&l| l == level_type)
-}
-
-/// Number of levels (used for section level_index).
-pub fn section_level_index() -> usize {
-    USC_LEVEL_HIERARCHY.len()
-}
-
-pub fn title_sort_key(title_num: &str) -> (i32, String) {
-    let re = regex::Regex::new(r"^(\d+)([a-zA-Z]?)$").unwrap();
-    if let Some(caps) = re.captures(title_num) {
-        let n: i32 = caps[1].parse().unwrap_or(0);
-        let suffix = caps[2].to_lowercase();
-        (n, suffix)
-    } else {
-        (0, title_num.to_string())
-    }
-}
-
-fn is_usc_level(tag: &str) -> bool {
-    USC_LEVEL_HIERARCHY.contains(&tag) && tag != "title"
-}
-
-// Prefixes for constructing IDs if missing
-const LEVEL_ID_PREFIXES: &[(&str, &str)] = &[
-    ("title", "t"),
-    ("subtitle", "st"),
-    ("chapter", "ch"),
-    ("subchapter", "sch"),
-    ("part", "pt"),
-    ("subpart", "spt"),
-    ("division", "d"),
-    ("subdivision", "sd"),
-];
-
-fn level_id_prefix(level_type: &str) -> &'static str {
-    for &(lt, prefix) in LEVEL_ID_PREFIXES {
-        if lt == level_type {
-            return prefix;
-        }
-    }
-    ""
-}
-
-const SECTION_BODY_TAGS: &[&str] = &[
-    "chapeau",
-    "p",
-    "subsection",
-    "paragraph",
-    "subparagraph",
-    "clause",
-    "subclause",
-    "item",
-    "subitem",
-];
-
-fn is_section_body_tag(tag: &str) -> bool {
-    SECTION_BODY_TAGS.contains(&tag)
+#[derive(Debug, Clone)]
+pub struct USCParseResult {
+    pub title_num: String,
+    pub title_name: String,
+    pub levels: Vec<USCLevel>,
+    pub sections: Vec<USCSection>,
 }
 
 #[derive(Debug, Clone)]
 pub struct USCLevel {
+    pub title_num: String,
     pub level_type: String,
     pub level_index: usize,
     pub identifier: String,
+    pub parent_identifier: Option<String>,
     pub num: String,
     pub heading: String,
-    pub title_num: String,
-    pub parent_identifier: Option<String>,
     pub path: String,
 }
 
 #[derive(Debug, Clone)]
+pub enum USCParentRef {
+    Title {
+        title_num: String,
+    },
+    Level {
+        identifier: String,
+        level_type: String,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub struct USCSection {
-    pub section_key: String,
     pub title_num: String,
     pub section_num: String,
+    pub section_key: String,
     pub heading: String,
     pub body: String,
     pub source_credit: String,
@@ -103,962 +49,927 @@ pub struct USCSection {
 }
 
 #[derive(Debug, Clone)]
-pub enum USCParentRef {
-    Title {
-        title_num: String,
-    },
-    Level {
-        level_type: String,
-        identifier: String,
-        path: String,
-    },
-}
-
-#[derive(Debug, Clone)]
 pub enum USCStreamEvent {
+    Title(String),
     Level(USCLevel),
     Section(USCSection),
-    Title(String),
 }
 
-pub struct ParseResult {
-    pub sections: Vec<USCSection>,
-    pub levels: Vec<USCLevel>,
-    pub title_num: String,
-    pub title_name: String,
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tag {
+    Meta = 0,
+    Main = 1,
+    Title = 2,
+    Subtitle = 3,
+    Chapter = 4,
+    Subchapter = 5,
+    Division = 6,
+    Subdivision = 7,
+    Part = 8,
+    Subpart = 9,
+    Section = 10,
+    Num = 11,
+    Heading = 12,
+    Content = 13,
+    Paragraph = 14,
+    Subsection = 15,
+    Subparagraph = 16,
+    Clause = 17,
+    Subclause = 18,
+    Chapeau = 19,
+    Item = 20,
+    Subitem = 21,
+    Continuation = 22,
+    SourceCredit = 23,
+    Notes = 24,
+    Note = 25,
+    QuotedContent = 26,
+    P = 27,
 }
 
-// Data structures for the state machine
+#[inline(always)]
+const fn bit(tag: Tag) -> u64 {
+    1u64 << (tag as u64)
+}
+
+fn classify(name: &[u8]) -> Option<Tag> {
+    match name {
+        b"meta" => Some(Tag::Meta),
+        b"main" => Some(Tag::Main),
+        b"title" => Some(Tag::Title),
+        b"subtitle" => Some(Tag::Subtitle),
+        b"chapter" => Some(Tag::Chapter),
+        b"subchapter" => Some(Tag::Subchapter),
+        b"division" => Some(Tag::Division),
+        b"subdivision" => Some(Tag::Subdivision),
+        b"part" => Some(Tag::Part),
+        b"subpart" => Some(Tag::Subpart),
+        b"section" => Some(Tag::Section),
+        b"num" => Some(Tag::Num),
+        b"heading" => Some(Tag::Heading),
+        b"content" => Some(Tag::Content),
+        b"paragraph" => Some(Tag::Paragraph),
+        b"subsection" => Some(Tag::Subsection),
+        b"subparagraph" => Some(Tag::Subparagraph),
+        b"clause" => Some(Tag::Clause),
+        b"subclause" => Some(Tag::Subclause),
+        b"chapeau" => Some(Tag::Chapeau),
+        b"item" => Some(Tag::Item),
+        b"subitem" => Some(Tag::Subitem),
+        b"continuation" => Some(Tag::Continuation),
+        b"sourceCredit" => Some(Tag::SourceCredit),
+        b"notes" => Some(Tag::Notes),
+        b"note" => Some(Tag::Note),
+        b"quotedContent" => Some(Tag::QuotedContent),
+        b"p" => Some(Tag::P),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
-struct LevelFrame {
+struct NumHeadingCapture {
+    num: String,
+    heading: String,
+}
+
+impl NumHeadingCapture {
+    fn with_num(num: String) -> Self {
+        Self {
+            num,
+            heading: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct OpenLevelRef {
+    depth: usize,
     level_type: String,
-    identifier: Option<String>, // Can be inferred later
-    num: Option<String>,
-    heading: Option<String>,
+    identifier: String,
     parent_identifier: Option<String>,
-    parent_path: Option<String>,
-    path: Option<String>,
-    emitted: bool,
-    bracketed_num: bool,
+    raw_identifier: Option<String>,
+    capture: NumHeadingCapture,
+}
+
+#[derive(Debug, Clone)]
+struct BodyFrame {
+    depth: usize,
+    text: String,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveNote {
+    depth: usize,
+    topic: Option<String>,
+    heading: String,
+    text: String,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveSection {
+    depth: usize,
+    capture: NumHeadingCapture,
+    identifier: Option<String>,
+    parent_ref: USCParentRef,
+    body_frames: Vec<BodyFrame>,
+    body_parts: Vec<String>,
+    free_text: String,
+    source_credit: String,
+    amendments: Vec<String>,
+    notes: Vec<String>,
+    active_notes: Vec<ActiveNote>,
+}
+
+impl ActiveSection {
+    fn target_text_mut(&mut self) -> &mut String {
+        if let Some(frame) = self.body_frames.last_mut() {
+            &mut frame.text
+        } else {
+            &mut self.free_text
+        }
+    }
 }
 
 struct ParserState {
-    // Current hierarchy of levels
-    level_stack: Vec<LevelFrame>,
-
-    // Global doc info
     title_num: String,
-    title_name: String,
+    title_name_main: Option<String>,
+    title_name_meta: Option<String>,
+    title_emitted: bool,
 
-    // Buffers and Flags
-    current_text_buffer: String,
+    tag_stack: Vec<Tag>,
+    mask_stack: Vec<u64>,
 
-    // Capture targets
-    binding_heading_level_idx: Option<usize>, // If we are capturing a heading for a level
-    binding_num_level_idx: Option<usize>,     // If we are capturing a num for a level
+    open_level_refs: Vec<OpenLevelRef>,
+    active_section: Option<ActiveSection>,
 
-    // Section State
-    current_section: Option<SectionBuilder>,
-
-    // Meta / Title State
-    in_meta: bool,
-    capturing_meta_title: bool,
-
-    // Main Title Heading State
-    in_main_title: bool,
-    capturing_main_title_heading: bool,
-
-    // Logic for skipping content (e.g. notes within sections that shouldn't be body)
-    skip_body_depth: usize,
-
-    // Note State
-    current_note: Option<NoteBuilder>,
-
-    // Inline Heading State
-    in_inline_heading: bool,
-    inline_heading_buffer: String,
-
-    // Title Tracking
-    main_title_found: bool,
-}
-
-struct SectionBuilder {
-    section_num: Option<String>,
-    heading: String,
-    body_parts: Vec<String>,
-    source_credit: String,
-    amendments_parts: Vec<String>,
-    note_parts: Vec<CitationEntry>,
-    bracketed_num: bool,
-    parent_ref: USCParentRef,
-}
-
-struct NoteBuilder {
-    topic: String,
-    role: String,
-    heading: String,
-    paragraphs: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-struct CitationEntry {
-    heading: String,
-    body: String,
+    section_path_counts: HashMap<String, usize>,
+    section_key_counts: HashMap<String, usize>,
 }
 
 impl ParserState {
-    fn new(file_title: &str) -> Self {
+    fn new(title_num: &str) -> Self {
         Self {
-            level_stack: Vec::new(),
-            title_num: file_title.to_string(),
-            title_name: String::new(),
-            current_text_buffer: String::new(),
-            binding_heading_level_idx: None,
-            binding_num_level_idx: None,
-            current_section: None,
-            in_meta: false,
-            capturing_meta_title: false,
-            in_main_title: false,
-            capturing_main_title_heading: false,
-            skip_body_depth: 0,
-            current_note: None,
-            in_inline_heading: false,
-            inline_heading_buffer: String::new(),
-            main_title_found: false,
+            title_num: title_num.to_string(),
+            title_name_main: None,
+            title_name_meta: None,
+            title_emitted: false,
+            tag_stack: Vec::new(),
+            mask_stack: Vec::new(),
+            open_level_refs: Vec::new(),
+            active_section: None,
+            section_path_counts: HashMap::new(),
+            section_key_counts: HashMap::new(),
         }
     }
 
-    fn push_level(&mut self, level_type: String, attrs: &HashMap<String, String>) {
-        if !self.level_stack.is_empty() {
-            let last_idx = self.level_stack.len() - 1;
-            self.ensure_level_identifier(last_idx);
-        }
-
-        let mut parent_identifier = Some(format!("{}-title", self.title_num));
-        let mut parent_path = Some(format!("/statutes/usc/{}", self.title_num));
-
-        // Find the closest parent that has an identifier/path
-        for frame in self.level_stack.iter().rev() {
-            if frame.identifier.is_some() {
-                parent_identifier = frame.identifier.clone();
-                parent_path = frame.path.clone();
-                break;
-            }
-        }
-
-        let identifier_attr = attrs.get("identifier").cloned();
-
-        let num_from_id = if let Some(ref id) = identifier_attr {
-            parse_level_num_from_identifier(id, &level_type)
-        } else {
-            None
-        };
-
-        self.level_stack.push(LevelFrame {
-            level_type,
-            identifier: None,
-            num: num_from_id,
-            heading: None,
-            parent_identifier,
-            parent_path,
-            path: None,
-            emitted: false,
-            bracketed_num: false,
-        });
+    fn current_mask(&self) -> u64 {
+        self.mask_stack.last().copied().unwrap_or(0)
     }
 
-    fn ensure_level_identifier(&mut self, idx: usize) {
-        let frame = &mut self.level_stack[idx];
-        if frame.identifier.is_none() {
-            if let Some(ref num) = frame.num {
-                let suffix = format!("{}-{}", frame.level_type, num);
-                frame.identifier = if let Some(ref parent_id) = frame.parent_identifier {
-                    Some(format!("{}/{}", parent_id, suffix))
-                } else {
-                    Some(format!("{}-{}", self.title_num, suffix))
-                };
-
-                let path_suffix = format!("{}-{}", frame.level_type, num);
-                frame.path = if let Some(ref parent_p) = frame.parent_path {
-                    Some(format!("{}/{}", parent_p, path_suffix))
-                } else {
-                    Some(format!("/statutes/usc/{}/{}", self.title_num, path_suffix))
-                };
-            }
-        }
+    fn title_name(&self) -> String {
+        self.title_name_main
+            .as_ref()
+            .or(self.title_name_meta.as_ref())
+            .cloned()
+            .unwrap_or_else(|| format!("Title {}", self.title_num))
     }
 }
 
-// ------------------------------------------------------------------------------------------------
-// Logic
-// ------------------------------------------------------------------------------------------------
+pub fn parse_usc_xml(xml: &str, title_num: &str, _source_url: &str) -> USCParseResult {
+    let mut result = USCParseResult {
+        title_num: title_num.to_string(),
+        title_name: format!("Title {}", title_num),
+        levels: Vec::new(),
+        sections: Vec::new(),
+    };
 
-pub fn parse_usc_xml_stream<F>(xml: &str, file_title: &str, mut on_event: F) -> (String, String)
+    parse_usc_xml_stream(xml, title_num, |event| match event {
+        USCStreamEvent::Title(name) => result.title_name = name,
+        USCStreamEvent::Level(level) => result.levels.push(level),
+        USCStreamEvent::Section(section) => result.sections.push(section),
+    });
+
+    result
+}
+
+pub fn parse_usc_xml_stream<F>(xml: &str, title_num: &str, mut emit: F)
 where
     F: FnMut(USCStreamEvent),
 {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(false);
 
-    let mut state = ParserState::new(file_title);
+    let mut state = ParserState::new(title_num);
     let mut buf = Vec::new();
-    let mut tag_stack: Vec<String> = Vec::new();
-    let mut section_counts: HashMap<String, usize> = HashMap::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => {
-                let qname = e.name();
-                let raw_name = String::from_utf8_lossy(qname.as_ref());
-                let tag_name = normalize_tag_name(&raw_name).to_string();
-                let attrs = extract_attrs(e);
-
-                let parent_tag_owned = tag_stack.last().cloned();
-                let parent_tag = parent_tag_owned.as_deref();
-
-                handle_start(&mut state, &tag_name, parent_tag, &attrs, &tag_stack);
-                tag_stack.push(tag_name);
+            Ok(Event::Start(e)) => handle_start(&mut state, &e),
+            Ok(Event::Empty(e)) => {
+                handle_start(&mut state, &e);
+                handle_end(&mut state, e.local_name().as_ref(), &mut emit);
             }
-            Ok(Event::Empty(ref e)) => {
-                let qname = e.name();
-                let raw_name = String::from_utf8_lossy(qname.as_ref());
-                let tag_name = normalize_tag_name(&raw_name).to_string();
-                let attrs = extract_attrs(e);
-
-                let parent_tag_owned = tag_stack.last().cloned();
-                let parent_tag = parent_tag_owned.as_deref();
-
-                handle_start(&mut state, &tag_name, parent_tag, &attrs, &tag_stack);
-                // For logic consistency (parent linkage), we push then pop
-                tag_stack.push(tag_name.clone());
-
-                // End logic
-                let parent_tag_for_end = tag_stack
-                    .len()
-                    .checked_sub(2)
-                    .and_then(|i| tag_stack.get(i))
-                    .map(|s| s.as_str());
-                handle_end(
-                    &mut state,
-                    &tag_name,
-                    parent_tag_for_end,
-                    &mut on_event,
-                    &mut section_counts,
-                );
-                tag_stack.pop();
+            Ok(Event::Text(t)) => {
+                let decoded = String::from_utf8_lossy(t.as_ref());
+                let text = unescape_to_owned(&decoded);
+                handle_text(&mut state, &text, &mut emit);
             }
-            Ok(Event::End(ref e)) => {
-                let qname = e.name();
-                let raw_name = String::from_utf8_lossy(qname.as_ref());
-                let tag_name = normalize_tag_name(&raw_name).to_string();
-
-                tag_stack.pop();
-                let parent_tag_owned = tag_stack.last().cloned();
-                let parent_tag = parent_tag_owned.as_deref();
-
-                handle_end(
-                    &mut state,
-                    &tag_name,
-                    parent_tag,
-                    &mut on_event,
-                    &mut section_counts,
-                );
+            Ok(Event::CData(t)) => {
+                let decoded = String::from_utf8_lossy(t.as_ref());
+                handle_text(&mut state, &decoded, &mut emit);
             }
-            Ok(Event::Text(ref e)) => {
-                if let Ok(text) = e.unescape() {
-                    handle_text(&mut state, &text);
-                }
-            }
-            Ok(Event::CData(ref e)) => {
-                let text = String::from_utf8_lossy(e.as_ref());
-                handle_text(&mut state, &text);
-            }
+            Ok(Event::End(e)) => handle_end(&mut state, e.local_name().as_ref(), &mut emit),
             Ok(Event::Eof) => break,
+            Err(_) => break,
             _ => {}
         }
         buf.clear();
     }
 
-    // Attempt to determine title if still missing
-    let final_title_name = if state.title_name.is_empty() {
-        format!("Title {}", state.title_num)
-    } else {
-        state.title_name
-    };
-
-    on_event(USCStreamEvent::Title(final_title_name.clone()));
-
-    (state.title_num, final_title_name)
+    if !state.title_emitted {
+        emit(USCStreamEvent::Title(state.title_name()));
+    }
 }
 
-fn handle_start(
-    state: &mut ParserState,
-    tag_name: &str,
-    parent_tag: Option<&str>,
-    attrs: &HashMap<String, String>,
-    tag_stack: &[String],
-) {
-    // 1. Meta / Title logic
-    if tag_name == "meta" {
-        state.in_meta = true;
-    }
-    if tag_name == "title" && state.in_meta {
-        state.capturing_meta_title = true;
-        state.current_text_buffer.clear();
+fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
+    let name = e.local_name();
+    let name_ref = name.as_ref();
+    let current_tag = classify(name_ref);
+
+    let parent_mask = state.current_mask();
+    if let Some(tag) = current_tag {
+        state.tag_stack.push(tag);
+        state.mask_stack.push(parent_mask | bit(tag));
     }
 
-    // 2. Main Title logic
-    if tag_name == "title" && parent_tag == Some("main") {
-        state.in_main_title = true;
-    }
-    if tag_name == "heading"
-        && parent_tag == Some("title")
-        && state.in_main_title
-        && !state.main_title_found
-    {
-        state.capturing_main_title_heading = true;
-        state.current_text_buffer.clear();
-    }
+    let mask = state.current_mask();
 
-    // 3. Level Logic
-    if is_usc_level(tag_name) {
-        if !state.level_stack.is_empty() {
-            let last_idx = state.level_stack.len() - 1;
-            state.ensure_level_identifier(last_idx);
-        }
-        state.push_level(tag_name.to_string(), attrs);
-    }
-
-    if tag_name == "heading"
-        && !state.level_stack.is_empty()
-        && state.current_section.is_none()
-        && state.current_note.is_none()
-        && is_parent_level(parent_tag)
-    {
-        state.binding_heading_level_idx = Some(state.level_stack.len() - 1);
-        state.current_text_buffer.clear();
-    }
-
-    if tag_name == "num"
-        && !state.level_stack.is_empty()
-        && state.current_section.is_none()
-        && state.current_note.is_none()
-        && is_parent_level(parent_tag)
-    {
-        state.binding_num_level_idx = Some(state.level_stack.len() - 1);
-        state.current_text_buffer.clear();
-    }
-
-    // 4. Section Logic
-    if tag_name == "section" {
-        if state.current_note.is_some() || inside_quoted_content(tag_stack) {
-            // Ignore nested section
-        } else {
-            if !state.level_stack.is_empty() {
-                let last_idx = state.level_stack.len() - 1;
-                state.ensure_level_identifier(last_idx);
-            }
-            let identifier = attrs.get("identifier").cloned();
-            let section_num = if let Some(ref id) = identifier {
-                parse_section_from_identifier(id)
-            } else {
-                None
-            };
-
-            let parent_ref = if let Some(frame) = state.level_stack.last() {
-                if let Some(ref id) = frame.identifier {
-                    USCParentRef::Level {
-                        level_type: frame.level_type.clone(),
-                        identifier: id.clone(),
-                        path: frame.path.clone().unwrap(),
-                    }
-                } else {
-                    USCParentRef::Title {
-                        title_num: state.title_num.clone(),
-                    }
-                }
-            } else {
-                USCParentRef::Title {
-                    title_num: state.title_num.clone(),
-                }
-            };
-
-            state.current_section = Some(SectionBuilder {
-                section_num,
-                heading: String::new(),
-                body_parts: Vec::new(),
-                source_credit: String::new(),
-                amendments_parts: Vec::new(),
-                note_parts: Vec::new(),
-                bracketed_num: false,
-                parent_ref,
+    if current_tag.is_some_and(is_level_tag) {
+        let level_type = std::str::from_utf8(name_ref)
+            .unwrap_or_default()
+            .to_string();
+        let raw_identifier = get_attr(e, b"identifier");
+        let parent_identifier = state
+            .open_level_refs
+            .last()
+            .map(|level| level.identifier.clone())
+            .or_else(|| Some(format!("{}-title", state.title_num)));
+        let open_identifier = raw_identifier
+            .as_deref()
+            .and_then(|value| level_identifier_from_path(value, &state.title_num))
+            .unwrap_or_else(|| {
+                let parent = parent_identifier
+                    .clone()
+                    .unwrap_or_else(|| format!("{}-title", state.title_num));
+                format!("{parent}/{}-unknown", level_type)
             });
-            state.skip_body_depth = 0; // Fix for leaks from previous sections
-        }
-    }
-
-    if let Some(_) = state.current_section {
-        if tag_name == "num" && parent_tag == Some("section") && state.skip_body_depth == 0 {
-            state.current_text_buffer.clear();
-        }
-        if tag_name == "heading" && parent_tag == Some("section") && state.skip_body_depth == 0 {
-            state.current_text_buffer.clear();
-        }
-        if tag_name == "sourceCredit" {
-            state.current_text_buffer.clear();
-            state.skip_body_depth += 1;
-        }
-
-        if tag_name == "note" {
-            let topic = attrs
-                .get("topic")
-                .map(|s| s.as_str())
-                .unwrap_or("")
-                .to_string();
-            let role = attrs
-                .get("role")
-                .map(|s| s.as_str())
-                .unwrap_or("")
-                .to_string();
-            state.current_note = Some(NoteBuilder {
-                topic,
-                role,
+        state.open_level_refs.push(OpenLevelRef {
+            depth: state.tag_stack.len(),
+            level_type,
+            identifier: open_identifier,
+            parent_identifier,
+            raw_identifier,
+            capture: NumHeadingCapture {
+                num: String::new(),
                 heading: String::new(),
-                paragraphs: Vec::new(),
+            },
+        });
+    }
+
+    if current_tag == Some(Tag::Section) && !in_note_or_quoted(mask) {
+        let identifier = get_attr(e, b"identifier");
+        let section_num = identifier
+            .as_deref()
+            .and_then(section_num_from_identifier)
+            .or_else(|| get_attr(e, b"value"))
+            .unwrap_or_default();
+
+        let parent_ref = state
+            .open_level_refs
+            .last()
+            .map(|level| USCParentRef::Level {
+                identifier: level.identifier.clone(),
+                level_type: level.level_type.clone(),
+            })
+            .unwrap_or_else(|| USCParentRef::Title {
+                title_num: state.title_num.clone(),
             });
-            state.skip_body_depth += 1;
+
+        state.active_section = Some(ActiveSection {
+            depth: state.tag_stack.len(),
+            capture: NumHeadingCapture::with_num(normalize_section_num(&section_num)),
+            identifier,
+            parent_ref,
+            body_frames: Vec::new(),
+            body_parts: Vec::new(),
+            free_text: String::new(),
+            source_credit: String::new(),
+            amendments: Vec::new(),
+            notes: Vec::new(),
+            active_notes: Vec::new(),
+        });
+    }
+
+    if let Some(section) = &mut state.active_section {
+        if section.depth < state.tag_stack.len()
+            && current_tag.is_some_and(is_body_block_tag)
+            && !in_body_excluded_context(mask)
+            && !(current_tag.is_some_and(is_heading_tag)
+                && section.depth + 1 == state.tag_stack.len())
+        {
+            section.body_frames.push(BodyFrame {
+                depth: state.tag_stack.len(),
+                text: String::new(),
+            });
         }
 
-        if tag_name == "quotedContent" {
-            state.skip_body_depth += 1;
-        }
-
-        if is_section_body_tag(tag_name) && state.skip_body_depth == 0 {
-            // Block splitting logic:
-            // If we start a new body tag, we finish the previous block if any.
-            // We push whatever is in buffer.
-            let text = state.current_text_buffer.trim().to_string();
-            if !text.is_empty() {
-                if let Some(ref mut section) = state.current_section {
-                    section.body_parts.push(text);
-                }
-                state.current_text_buffer.clear();
+        if current_tag.is_some_and(is_inline_separator_tag) {
+            let target = section.target_text_mut();
+            if !target.is_empty() && !target.ends_with(' ') && !target.ends_with('\n') {
+                target.push(' ');
             }
         }
 
-        // Inline num in body -> Bold start
-        if tag_name == "num" && state.skip_body_depth == 0 && parent_tag != Some("section") {
-            state.current_text_buffer.push_str("**");
+        if current_tag == Some(Tag::Note) && mask & bit(Tag::QuotedContent) == 0 {
+            section.active_notes.push(ActiveNote {
+                depth: state.tag_stack.len(),
+                topic: get_attr(e, b"topic"),
+                heading: String::new(),
+                text: String::new(),
+            });
         }
 
-        // Inline heading in body -> Bold start (track state)
-        if tag_name == "heading" && state.skip_body_depth == 0 && parent_tag != Some("section") {
-            state.in_inline_heading = true;
-            state.inline_heading_buffer.clear();
+        if current_tag.is_some_and(is_body_decorated_tag)
+            && !in_body_excluded_context(mask)
+            && !(current_tag.is_some_and(is_heading_tag)
+                && section.depth + 1 == state.tag_stack.len())
+        {
+            section.target_text_mut().push_str("**");
         }
-    }
 
-    // Note internals
-    if let Some(_) = state.current_note {
-        if tag_name == "heading" {
-            state.current_text_buffer.clear();
-        }
-        if tag_name == "p" {
-            state.current_text_buffer.clear();
-        }
-    }
-}
-
-fn handle_end<F>(
-    state: &mut ParserState,
-    tag_name: &str,
-    parent_tag: Option<&str>,
-    on_event: &mut F,
-    section_counts: &mut HashMap<String, usize>,
-) where
-    F: FnMut(USCStreamEvent),
-{
-    // 1. Meta Title End
-    if tag_name == "title" && state.in_meta && state.capturing_meta_title {
-        let title = state.current_text_buffer.trim().to_string();
-        if !title.is_empty() && !state.main_title_found {
-            state.title_name = title.clone();
-            on_event(USCStreamEvent::Title(title));
-        }
-        state.capturing_meta_title = false;
-    }
-    if tag_name == "meta" {
-        state.in_meta = false;
-    }
-
-    // 2. Main Title Heading End
-    if tag_name == "heading" && state.capturing_main_title_heading {
-        let title = normalized_whitespace(&state.current_text_buffer);
-        if !title.is_empty() {
-            state.title_name = title.clone();
-            state.main_title_found = true;
-            on_event(USCStreamEvent::Title(title));
-        }
-        state.capturing_main_title_heading = false;
-    }
-    if tag_name == "title" && state.in_main_title {
-        state.in_main_title = false;
-    }
-
-    // 3. Level Logic
-    if let Some(idx) = state.binding_heading_level_idx {
-        if tag_name == "heading" {
-            let text = normalized_whitespace(&state.current_text_buffer);
-            let frame = &mut state.level_stack[idx];
-            let cleaned = if frame.bracketed_num && text.ends_with(']') {
-                text[..text.len() - 1].trim().to_string()
-            } else {
-                text
-            };
-            frame.heading = Some(cleaned);
-            state.binding_heading_level_idx = None;
-            try_emit_level(state, idx, on_event);
-        }
-    }
-    if let Some(idx) = state.binding_num_level_idx {
-        if tag_name == "num" {
-            let text = state.current_text_buffer.trim().to_string();
-            let frame = &mut state.level_stack[idx];
-            if text.starts_with('[') {
-                frame.bracketed_num = true;
-            }
-            if frame.num.is_none() {
-                frame.num = Some(strip_leading_zeros(&text));
-            }
-            state.binding_num_level_idx = None;
-        }
-    }
-
-    if is_usc_level(tag_name) {
-        if let Some(frame) = state.level_stack.pop() {
-            if !frame.emitted {
-                if let Some(valid_level) = build_level_from_frame(&frame, &state.title_num) {
-                    on_event(USCStreamEvent::Level(valid_level));
+        if current_tag.is_some_and(is_num_tag) {
+            if let Some(value) = get_attr(e, b"value") {
+                if section.capture.num.is_empty() {
+                    section.capture.num = normalize_section_num(&value);
                 }
             }
         }
     }
 
-    // 4. Section Logic
-    if let Some(ref mut section) = state.current_section {
-        if tag_name == "num" && parent_tag == Some("section") && state.skip_body_depth == 0 {
-            let text = state.current_text_buffer.trim().to_string();
-            if text.starts_with('[') {
-                section.bracketed_num = true;
+    if current_tag.is_some_and(is_num_tag) {
+        if let Some(level) = state.open_level_refs.last_mut() {
+            if is_level_num(&state.tag_stack, level.depth) && level.capture.num.is_empty() {
+                if let Some(value) = get_attr(e, b"value") {
+                    level.capture.num = normalize_section_num(&value);
+                }
             }
-            if section.section_num.is_none() && !text.is_empty() {
-                section.section_num = Some(strip_leading_zeros(&text));
-            }
-            state.current_text_buffer.clear();
-        }
-        if tag_name == "heading" && parent_tag == Some("section") && state.skip_body_depth == 0 {
-            let text = normalized_whitespace(&state.current_text_buffer);
-            let cleaned = if section.bracketed_num && text.ends_with(']') {
-                text[..text.len() - 1].trim().to_string()
-            } else {
-                text
-            };
-            section.heading = cleaned;
-            state.current_text_buffer.clear();
-        }
-        if tag_name == "sourceCredit" {
-            section.source_credit = normalized_whitespace(&state.current_text_buffer);
-            state.skip_body_depth -= 1;
-        }
-
-        if is_section_body_tag(tag_name) && state.skip_body_depth == 0 {
-            // Block splitting logic: End of body tag -> push block
-            let text = state.current_text_buffer.trim().to_string();
-            if !text.is_empty() {
-                section.body_parts.push(text);
-                state.current_text_buffer.clear();
-            }
-        }
-
-        // Inline num in body -> Bold end
-        if tag_name == "num" && state.skip_body_depth == 0 && parent_tag != Some("section") {
-            state.current_text_buffer.push_str("**"); // Removed space to match tests
-        }
-
-        // Inline heading in body -> Bold end
-        if tag_name == "heading" && state.skip_body_depth == 0 && parent_tag != Some("section") {
-            let text = normalized_whitespace(&state.inline_heading_buffer);
-            state.in_inline_heading = false;
-            // Add space if buffer not empty
-            if !state.current_text_buffer.is_empty() && !state.current_text_buffer.ends_with(' ') {
-                state.current_text_buffer.push(' ');
-            }
-            state.current_text_buffer.push_str("**");
-            state.current_text_buffer.push_str(&text);
-            state.current_text_buffer.push_str("** ");
-        }
-
-        if tag_name == "quotedContent" {
-            state.skip_body_depth -= 1;
-        }
-    }
-
-    // Note Logic
-    if let Some(ref mut note) = state.current_note {
-        if tag_name == "heading" {
-            note.heading = normalized_whitespace(&state.current_text_buffer);
-        }
-        if tag_name == "p" {
-            let text = normalized_whitespace(&state.current_text_buffer);
-            if !text.is_empty() {
-                note.paragraphs.push(text);
-            }
-        }
-    }
-
-    if tag_name == "note" {
-        if let Some(note) = state.current_note.take() {
-            state.skip_body_depth -= 1;
-            if let Some(ref mut section) = state.current_section {
-                add_note_to_section(section, note);
-            }
-        }
-    }
-
-    if tag_name == "section" {
-        if let Some(section_builder) = state.current_section.take() {
-            emit_section(section_builder, state, section_counts, on_event);
         }
     }
 }
 
-fn handle_text(state: &mut ParserState, text: &str) {
-    let normalized = text.replace('\n', " ").replace('\r', " ");
-    if state.in_inline_heading {
-        state.inline_heading_buffer.push_str(&normalized);
-    } else {
-        state.current_text_buffer.push_str(&normalized);
-    }
-}
-
-// ------------------------------------------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------------------------------------------
-
-fn try_emit_level<F>(state: &mut ParserState, idx: usize, on_event: &mut F)
+fn handle_text<F>(state: &mut ParserState, raw_text: &str, emit: &mut F)
 where
     F: FnMut(USCStreamEvent),
 {
-    state.ensure_level_identifier(idx);
-    let frame = &mut state.level_stack[idx];
+    let text = normalize_text(raw_text);
+    if text.is_empty() {
+        return;
+    }
 
-    if !frame.emitted && frame.identifier.is_some() && frame.num.is_some() && frame.path.is_some() {
-        let level = USCLevel {
-            level_type: frame.level_type.clone(),
-            level_index: usc_level_index(&frame.level_type).unwrap_or(0),
-            identifier: frame.identifier.clone().unwrap(),
-            num: frame.num.clone().unwrap(),
-            heading: frame.heading.clone().unwrap_or_default(),
-            title_num: state.title_num.clone(),
-            parent_identifier: frame.parent_identifier.clone(),
-            path: frame.path.clone().unwrap(),
-        };
-        on_event(USCStreamEvent::Level(level));
-        frame.emitted = true;
+    let mask = state.current_mask();
+
+    if !state.title_emitted && is_main_title_heading(&state.tag_stack) {
+        state.title_name_main = Some(text.clone());
+        emit(USCStreamEvent::Title(state.title_name()));
+        state.title_emitted = true;
+    }
+
+    if state.title_name_meta.is_none() && is_meta_title(&state.tag_stack) {
+        state.title_name_meta = Some(text.clone());
+    }
+
+    if let Some(level) = state.open_level_refs.last_mut() {
+        if is_level_num(&state.tag_stack, level.depth) {
+            if level.capture.num.is_empty() {
+                level.capture.num = text.clone();
+            }
+        } else if is_level_heading(&state.tag_stack, level.depth) {
+            append_text(&mut level.capture.heading, &text);
+        }
+    }
+
+    if let Some(section) = &mut state.active_section {
+        if is_section_heading(&state.tag_stack, section.depth) {
+            append_text(&mut section.capture.heading, &text);
+            return;
+        }
+
+        if is_source_credit(&state.tag_stack, section.depth) {
+            append_text(&mut section.source_credit, &text);
+            return;
+        }
+
+        if let Some(note) = section.active_notes.last_mut() {
+            if is_note_heading(&state.tag_stack, note.depth) {
+                append_text(&mut note.heading, &text);
+            } else {
+                append_text(&mut note.text, &text);
+            }
+            return;
+        }
+
+        if !in_body_excluded_context(mask) {
+            let target = section.target_text_mut();
+            append_text(target, &text);
+        }
     }
 }
 
-fn build_level_from_frame(frame: &LevelFrame, title_num: &str) -> Option<USCLevel> {
-    if let (Some(id), Some(num), Some(path)) = (&frame.identifier, &frame.num, &frame.path) {
-        return Some(USCLevel {
-            level_type: frame.level_type.clone(),
-            level_index: usc_level_index(&frame.level_type).unwrap_or(0),
-            identifier: id.clone(),
-            num: num.clone(),
-            heading: frame.heading.clone().unwrap_or_default(),
-            title_num: title_num.to_string(),
-            parent_identifier: frame.parent_identifier.clone(),
-            path: path.clone(),
-        });
-    }
-
-    // Attempt recovery if possible
-    if let Some(num) = &frame.num {
-        let suffix = format!("{}-{}", frame.level_type, num);
-        let id = if let Some(ref parent_id) = frame.parent_identifier {
-            format!("{}/{}", parent_id, suffix)
-        } else {
-            format!("{}-{}", title_num, suffix)
-        };
-
-        let path = if let Some(ref parent_p) = frame.parent_path {
-            format!("{}/{}", parent_p, suffix)
-        } else {
-            format!("/statutes/usc/{}/{}", title_num, suffix)
-        };
-
-        return Some(USCLevel {
-            level_type: frame.level_type.clone(),
-            level_index: usc_level_index(&frame.level_type).unwrap_or(0),
-            identifier: id,
-            num: num.clone(),
-            heading: frame.heading.clone().unwrap_or_default(),
-            title_num: title_num.to_string(),
-            parent_identifier: frame.parent_identifier.clone(),
-            path,
-        });
-    }
-    None
-}
-
-fn emit_section<F>(
-    mut builder: SectionBuilder,
-    state: &mut ParserState,
-    counts: &mut HashMap<String, usize>,
-    on_event: &mut F,
-) where
+fn handle_end<F>(state: &mut ParserState, local_name: &[u8], emit: &mut F)
+where
     F: FnMut(USCStreamEvent),
 {
-    let section_num = match builder.section_num {
-        Some(s) => s,
-        None => return,
-    };
+    let current_tag = classify(local_name);
+    let mask = state.current_mask();
 
-    let count = counts
-        .entry(section_num.clone())
-        .and_modify(|c| *c += 1)
-        .or_insert(1);
-    let final_section_num = if *count == 1 {
-        section_num
-    } else {
-        format!("{}-{}", section_num, count)
-    };
-
-    let path = format!(
-        "/statutes/usc/section/{}/{}",
-        state.title_num, final_section_num
-    );
-
-    // Flush remaining buffer
-    let last_text = state.current_text_buffer.trim().to_string();
-    if !last_text.is_empty() {
-        builder.body_parts.push(last_text);
-        state.current_text_buffer.clear();
-    }
-
-    let body_text = builder.body_parts.join("\n\n");
-    let body = normalized_whitespace(&body_text);
-
-    let note = builder
-        .note_parts
-        .iter()
-        .map(|c| {
-            if c.heading.is_empty() {
-                c.body.clone()
-            } else {
-                format!("**{}**\n{}", c.heading, c.body)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    on_event(USCStreamEvent::Section(USCSection {
-        section_key: format!("{}:{}", state.title_num, final_section_num),
-        title_num: state.title_num.clone(),
-        section_num: final_section_num,
-        heading: builder.heading,
-        body,
-        source_credit: builder.source_credit,
-        amendments: builder.amendments_parts.join("\n\n"),
-        note,
-        path,
-        parent_ref: builder.parent_ref,
-    }));
-}
-
-fn add_note_to_section(section: &mut SectionBuilder, note: NoteBuilder) {
-    let body = normalized_whitespace(&note.paragraphs.join("\n\n"));
-    let final_body = if body.is_empty() {
-        note.heading.clone()
-    } else {
-        if note.heading.is_empty() {
-            body
-        } else {
-            format!("**{}**\n{}", note.heading, body)
-        }
-    };
-    let heading_lower = note.heading.to_lowercase();
-
-    if !final_body.is_empty() || !note.topic.is_empty() {
-        if note.topic == "amendments" || heading_lower.contains("amendments") {
-            if !final_body.is_empty() {
-                section.amendments_parts.push(final_body);
-            }
-        } else if note.role.contains("crossHeading")
-            || note.heading.contains("Editorial")
-            || note.heading.contains("Statutory")
+    if let Some(section) = &mut state.active_section {
+        if current_tag.is_some_and(is_body_decorated_tag)
+            && !in_body_excluded_context(mask)
+            && !(current_tag.is_some_and(is_heading_tag)
+                && section.depth + 1 == state.tag_stack.len())
         {
-            // Ignore
-        } else if !final_body.is_empty() {
-            section.note_parts.push(CitationEntry {
-                heading: String::new(), // Already formatted into final_body if needed
-                body: final_body,
-            });
+            section.target_text_mut().push_str("**");
         }
-    }
-}
 
-fn is_parent_level(parent: Option<&str>) -> bool {
-    parent.map(|p| is_usc_level(p)).unwrap_or(false)
-}
+        if current_tag == Some(Tag::Note) {
+            if let Some(note) = section.active_notes.last() {
+                if note.depth == state.tag_stack.len() {
+                    let note = section.active_notes.pop().unwrap();
+                    let heading = normalize_heading(&note.heading);
+                    let mut merged = String::new();
+                    if !heading.is_empty() {
+                        append_text(&mut merged, &heading);
+                    }
+                    if !note.text.is_empty() {
+                        if !merged.is_empty() {
+                            merged.push(' ');
+                        }
+                        append_text(&mut merged, &note.text);
+                    }
+                    let is_amendments = note
+                        .topic
+                        .as_deref()
+                        .map(|topic| topic.eq_ignore_ascii_case("amendments"))
+                        .unwrap_or(false)
+                        || heading.to_ascii_lowercase().contains("amendments");
 
-fn inside_quoted_content(stack: &[String]) -> bool {
-    stack.iter().any(|s| s == "quotedContent")
-}
-
-// ------------------------------------------------------------------------------------------------
-// String Utils
-// ------------------------------------------------------------------------------------------------
-
-fn normalize_tag_name(tag_name: &str) -> &str {
-    match tag_name.find(':') {
-        Some(idx) => &tag_name[idx + 1..],
-        None => tag_name,
-    }
-}
-
-pub fn strip_leading_zeros(value: &str) -> String {
-    let mut chars = value.chars().peekable();
-    let mut digits = String::new();
-    let mut suffix = String::new();
-
-    let mut saw_nonzero = false;
-    let mut all_zeros = true;
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            if c != '0' {
-                saw_nonzero = true;
-                all_zeros = false;
+                    if !merged.is_empty() {
+                        if is_amendments {
+                            section.amendments.push(merged);
+                        } else {
+                            section.notes.push(merged);
+                        }
+                    }
+                }
             }
-            if saw_nonzero || c != '0' {
-                digits.push(c);
+        }
+
+        if current_tag.is_some_and(is_body_block_tag) {
+            if let Some(frame) = section.body_frames.last() {
+                if frame.depth == state.tag_stack.len() {
+                    let frame = section.body_frames.pop().unwrap();
+                    let cleaned = clean_body_fragment(&frame.text);
+                    if !cleaned.is_empty() {
+                        if let Some(parent) = section.body_frames.last_mut() {
+                            if !parent.text.is_empty() {
+                                parent.text.push_str("\n\n");
+                            }
+                            parent.text.push_str(&cleaned);
+                        } else {
+                            section.body_parts.push(cleaned);
+                        }
+                    }
+                }
             }
-            chars.next();
-        } else {
-            break;
         }
     }
 
-    if digits.is_empty() && all_zeros && value.chars().any(|c| c.is_ascii_digit()) {
-        digits.push('0');
-    }
-    if digits.is_empty() {
-        return value.replace('\u{2013}', "-").replace('\u{2014}', "-");
-    }
+    if current_tag == Some(Tag::Section) {
+        if let Some(section) = &state.active_section {
+            if section.depth == state.tag_stack.len() {
+                let section = state.active_section.take().unwrap();
+                let base_num = if section.capture.num.is_empty() {
+                    section
+                        .identifier
+                        .as_deref()
+                        .and_then(section_num_from_identifier)
+                        .map(|value| normalize_section_num(&value))
+                        .unwrap_or_else(|| "unknown".to_string())
+                } else {
+                    section.capture.num.clone()
+                };
 
-    for c in chars {
-        if c.is_ascii_alphabetic() {
-            suffix.push(c.to_ascii_lowercase());
-        } else {
-            return value.replace('\u{2013}', "-").replace('\u{2014}', "-");
+                let base_path = format!("/statutes/usc/section/{}/{}", state.title_num, base_num);
+                let path = uniquify(&mut state.section_path_counts, &base_path);
+
+                let base_key = format!("{}:{}", state.title_num, base_num);
+                let section_key = uniquify(&mut state.section_key_counts, &base_key);
+
+                let mut body_parts = section.body_parts;
+                let trailing = clean_body_fragment(&section.free_text);
+                if !trailing.is_empty() {
+                    body_parts.push(trailing);
+                }
+                let body = body_parts.join("\n\n");
+
+                emit(USCStreamEvent::Section(USCSection {
+                    title_num: state.title_num.clone(),
+                    section_num: base_num,
+                    section_key,
+                    heading: normalize_heading(&section.capture.heading),
+                    body,
+                    source_credit: clean_body_fragment(&section.source_credit),
+                    amendments: section.amendments.join("\n\n"),
+                    note: section.notes.join("\n\n"),
+                    path,
+                    parent_ref: section.parent_ref,
+                }));
+            }
         }
     }
 
-    format!("{digits}{suffix}")
-        .replace('\u{2013}', "-")
-        .replace('\u{2014}', "-")
+    if current_tag.is_some_and(is_level_tag) {
+        if let Some(level) = state.open_level_refs.last() {
+            if level.depth == state.tag_stack.len() {
+                let level = state.open_level_refs.pop().unwrap();
+                let fallback_num = if level.capture.num.is_empty() {
+                    level
+                        .raw_identifier
+                        .as_deref()
+                        .and_then(level_num_from_identifier)
+                        .unwrap_or_default()
+                } else {
+                    level.capture.num.clone()
+                };
+                let num = normalize_section_num(&fallback_num);
+                let mut identifier = level.identifier.clone();
+                if !num.is_empty() && level.identifier.ends_with("-unknown") {
+                    let parent = level
+                        .parent_identifier
+                        .clone()
+                        .unwrap_or_else(|| format!("{}-title", state.title_num));
+                    identifier = format!("{parent}/{}-{}", level.level_type, slug_part(&num));
+                }
+
+                let path = format!(
+                    "/statutes/usc/{}/{}",
+                    state.title_num,
+                    identifier
+                        .strip_prefix(&format!("{}-title/", state.title_num))
+                        .unwrap_or(&identifier)
+                );
+
+                let usc_level = USCLevel {
+                    title_num: state.title_num.clone(),
+                    level_type: level.level_type.clone(),
+                    level_index: usc_level_index(&level.level_type).unwrap_or(0),
+                    identifier: identifier.clone(),
+                    parent_identifier: level.parent_identifier.clone(),
+                    num,
+                    heading: normalize_heading(&level.capture.heading),
+                    path,
+                };
+                emit(USCStreamEvent::Level(usc_level.clone()));
+            }
+        }
+    }
+
+    if let Some(tag) = current_tag {
+        if state.tag_stack.last().copied() == Some(tag) {
+            state.tag_stack.pop();
+            state.mask_stack.pop();
+        }
+    }
 }
 
-pub fn normalized_whitespace(s: &str) -> String {
-    if s.is_empty() {
+const LEVEL_TAG_MASK: u64 = bit(Tag::Subtitle)
+    | bit(Tag::Part)
+    | bit(Tag::Subpart)
+    | bit(Tag::Chapter)
+    | bit(Tag::Subchapter)
+    | bit(Tag::Division)
+    | bit(Tag::Subdivision);
+const BODY_BLOCK_TAG_MASK: u64 = bit(Tag::Subsection)
+    | bit(Tag::Paragraph)
+    | bit(Tag::Subparagraph)
+    | bit(Tag::Clause)
+    | bit(Tag::Subclause)
+    | bit(Tag::Item)
+    | bit(Tag::Subitem)
+    | bit(Tag::Chapeau)
+    | bit(Tag::Continuation)
+    | bit(Tag::P);
+const BODY_DECORATED_TAG_MASK: u64 = bit(Tag::Num) | bit(Tag::Heading);
+const LEVEL_ANCESTOR_TAG_MASK: u64 = bit(Tag::Title) | LEVEL_TAG_MASK;
+const NUM_TAG_MASK: u64 = bit(Tag::Num);
+const HEADING_TAG_MASK: u64 = bit(Tag::Heading);
+const INLINE_SEPARATOR_TAG_MASK: u64 =
+    bit(Tag::Content) | bit(Tag::Chapeau) | bit(Tag::Continuation);
+
+#[inline(always)]
+fn is_level_tag(tag: Tag) -> bool {
+    bit(tag) & LEVEL_TAG_MASK != 0
+}
+
+#[inline(always)]
+fn is_body_block_tag(tag: Tag) -> bool {
+    bit(tag) & BODY_BLOCK_TAG_MASK != 0
+}
+
+#[inline(always)]
+fn is_body_decorated_tag(tag: Tag) -> bool {
+    bit(tag) & BODY_DECORATED_TAG_MASK != 0
+}
+
+#[inline(always)]
+fn is_num_tag(tag: Tag) -> bool {
+    bit(tag) & NUM_TAG_MASK != 0
+}
+
+#[inline(always)]
+fn is_heading_tag(tag: Tag) -> bool {
+    bit(tag) & HEADING_TAG_MASK != 0
+}
+
+#[inline(always)]
+fn is_inline_separator_tag(tag: Tag) -> bool {
+    bit(tag) & INLINE_SEPARATOR_TAG_MASK != 0
+}
+
+fn is_main_title_heading(stack: &[Tag]) -> bool {
+    stack.ends_with(&[Tag::Main, Tag::Title, Tag::Heading])
+}
+
+fn is_meta_title(stack: &[Tag]) -> bool {
+    stack.ends_with(&[Tag::Meta, Tag::Title])
+}
+
+fn is_level_num(stack: &[Tag], level_depth: usize) -> bool {
+    stack.len() == level_depth + 1
+        && stack.ends_with(&[Tag::Num])
+        && is_level_ancestor(stack, level_depth)
+}
+
+fn is_level_heading(stack: &[Tag], level_depth: usize) -> bool {
+    stack.len() == level_depth + 1
+        && stack.ends_with(&[Tag::Heading])
+        && is_level_ancestor(stack, level_depth)
+}
+
+fn is_level_ancestor(stack: &[Tag], level_depth: usize) -> bool {
+    if level_depth == 0 || stack.len() < level_depth {
+        return false;
+    }
+    bit(stack[level_depth - 1]) & LEVEL_ANCESTOR_TAG_MASK != 0
+}
+
+fn is_section_heading(stack: &[Tag], section_depth: usize) -> bool {
+    stack.len() == section_depth + 1 && stack.ends_with(&[Tag::Section, Tag::Heading])
+}
+
+fn is_source_credit(stack: &[Tag], section_depth: usize) -> bool {
+    stack.len() >= section_depth + 1 && stack.ends_with(&[Tag::Section, Tag::SourceCredit])
+}
+
+fn is_note_heading(stack: &[Tag], note_depth: usize) -> bool {
+    stack.len() >= note_depth + 1 && stack.ends_with(&[Tag::Note, Tag::Heading])
+}
+
+#[inline(always)]
+fn in_note_or_quoted(mask: u64) -> bool {
+    mask & (bit(Tag::Note) | bit(Tag::QuotedContent)) != 0
+}
+
+#[inline(always)]
+fn in_body_excluded_context(mask: u64) -> bool {
+    mask & (bit(Tag::Note) | bit(Tag::SourceCredit) | bit(Tag::QuotedContent)) != 0
+}
+
+fn normalize_text(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return String::new();
     }
-    s.lines()
-        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
-        .trim()
-        .to_string()
-}
 
-fn parse_section_from_identifier(ident: &str) -> Option<String> {
-    let rest = ident.replace("/us/usc/", "");
-    let rest = rest.trim_matches('/');
-    for part in rest.split('/').rev() {
-        if part.starts_with('s') && part.as_bytes().get(1).map_or(false, |b| b.is_ascii_digit()) {
-            return Some(strip_leading_zeros(&part[1..]));
-        }
-    }
-    None
-}
-
-fn parse_level_num_from_identifier(ident: &str, level_type: &str) -> Option<String> {
-    let rest = ident.replace("/us/usc/", "");
-    let rest = rest.trim_matches('/');
-    let parts: Vec<&str> = rest.split('/').collect();
-    let prefix = level_id_prefix(level_type);
-
-    for part in &parts {
-        if !part.starts_with(prefix) {
-            continue;
-        }
-        let num_part = &part[prefix.len()..];
-        if num_part.is_empty() {
-            continue;
-        }
-        if !num_part
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphanumeric())
-        {
-            continue;
-        }
-
-        let mut is_longer_prefix = false;
-        for &(other_level, other_prefix) in LEVEL_ID_PREFIXES {
-            if other_level != level_type
-                && other_prefix.starts_with(prefix)
-                && other_prefix.len() > prefix.len()
-                && part.starts_with(other_prefix)
-            {
-                is_longer_prefix = true;
-                break;
+    let mut out = String::with_capacity(trimmed.len());
+    let mut prev_space = false;
+    for ch in trimmed.chars() {
+        let is_space = ch.is_whitespace();
+        if is_space {
+            if !prev_space {
+                out.push(' ');
             }
+        } else {
+            out.push(ch);
         }
+        prev_space = is_space;
+    }
+    out.trim().to_string()
+}
 
-        if !is_longer_prefix {
-            return Some(strip_leading_zeros(num_part));
+fn append_text(target: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if target.is_empty() {
+        target.push_str(text);
+        return;
+    }
+
+    let first = text.chars().next().unwrap();
+    let needs_space = !target.ends_with(' ')
+        && !target.ends_with('\n')
+        && !target.ends_with("**")
+        && !matches!(first, ',' | '.' | ';' | ':' | ')' | ']' | '?' | '!');
+
+    if needs_space {
+        target.push(' ');
+    }
+    target.push_str(text);
+}
+
+fn clean_body_fragment(text: &str) -> String {
+    let mut out = text.replace("\u{a0}", " ");
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out.trim().to_string()
+}
+
+fn normalize_heading(heading: &str) -> String {
+    let mut out = clean_body_fragment(heading);
+    if out.ends_with(']') {
+        out.pop();
+        out = out.trim_end().to_string();
+    }
+    if out.starts_with('[') && out.ends_with(']') {
+        out = out[1..out.len() - 1].trim().to_string();
+    }
+    out
+}
+
+fn normalize_section_num(value: &str) -> String {
+    value
+        .trim()
+        .replace('\u{2013}', "-")
+        .replace('\u{2014}', "-")
+        .replace('\u{2012}', "-")
+        .replace('\u{2011}', "-")
+        .replace('\u{2212}', "-")
+        .replace('\u{2010}', "-")
+}
+
+fn slug_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '\u{2013}' | '\u{2014}' | '\u{2012}' | '\u{2011}' | '\u{2212}' | '\u{2010}' => '-',
+            _ => ch,
+        })
+        .collect::<String>()
+}
+
+fn section_num_from_identifier(identifier: &str) -> Option<String> {
+    identifier
+        .rsplit('/')
+        .next()
+        .and_then(|part| part.strip_prefix('s'))
+        .map(ToString::to_string)
+}
+
+fn level_num_from_identifier(identifier: &str) -> Option<String> {
+    let segment = identifier.rsplit('/').next()?;
+    let (_, num) = segment.split_once(|c| c == 'h' || c == 't' || c == 'p' || c == 'd')?;
+    Some(num.to_string())
+}
+
+fn level_identifier_from_path(identifier: &str, title_num: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    for raw in identifier.split('/') {
+        if raw.is_empty() || raw == "us" || raw == "usc" {
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix('t') {
+            if num == title_num {
+                parts.push(format!("{}-title", title_num));
+            }
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix("st") {
+            parts.push(format!("subtitle-{}", num));
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix("sch") {
+            parts.push(format!("subchapter-{}", num));
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix("ch") {
+            parts.push(format!("chapter-{}", num));
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix("spt") {
+            parts.push(format!("subpart-{}", num));
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix("pt") {
+            parts.push(format!("part-{}", num));
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix("sd") {
+            parts.push(format!("subdivision-{}", num));
+            continue;
+        }
+        if let Some(num) = raw.strip_prefix('d') {
+            parts.push(format!("division-{}", num));
+            continue;
         }
     }
 
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+fn uniquify(counts: &mut HashMap<String, usize>, base: &str) -> String {
+    let entry = counts.entry(base.to_string()).or_insert(0);
+    *entry += 1;
+    if *entry == 1 {
+        base.to_string()
+    } else {
+        format!("{base}-{}", *entry)
+    }
+}
+
+fn get_attr(e: &BytesStart<'_>, attr_name: &[u8]) -> Option<String> {
+    for attr in e.attributes().flatten() {
+        if attr.key.as_ref() == attr_name {
+            return Some(String::from_utf8_lossy(attr.value.as_ref()).to_string());
+        }
+    }
     None
 }
 
-fn extract_attrs(e: &BytesStart) -> HashMap<String, String> {
-    let mut attrs = HashMap::new();
-    for attr in e.attributes().flatten() {
-        let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
-        let val = String::from_utf8_lossy(&attr.value).to_string();
-        attrs.insert(key, val);
+fn unescape_to_owned(input: &Cow<'_, str>) -> String {
+    match quick_xml::escape::unescape(input) {
+        Ok(unescaped) => unescaped.into_owned(),
+        Err(_) => input.to_string(),
     }
-    attrs
 }
 
-pub fn parse_usc_xml(xml: &str, file_title: &str, _source_url: &str) -> ParseResult {
-    let mut sections = Vec::new();
-    let mut levels = Vec::new();
-
-    let (title_num, title_name) = parse_usc_xml_stream(xml, file_title, |event| match event {
-        USCStreamEvent::Section(s) => sections.push(s),
-        USCStreamEvent::Level(l) => levels.push(l),
-        USCStreamEvent::Title(_) => {}
-    });
-
-    ParseResult {
-        sections,
-        levels,
-        title_num,
-        title_name,
+pub fn usc_level_index(level_type: &str) -> Option<usize> {
+    match level_type {
+        "title" => Some(0),
+        "subtitle" => Some(1),
+        "division" => Some(2),
+        "subdivision" => Some(3),
+        "chapter" => Some(4),
+        "subchapter" => Some(5),
+        "part" => Some(6),
+        "subpart" => Some(7),
+        _ => None,
     }
+}
+
+pub fn section_level_index() -> usize {
+    8
+}
+
+pub fn title_sort_key(title_num: &str) -> f64 {
+    if let Ok(v) = title_num.parse::<f64>() {
+        return v;
+    }
+
+    let mut chars = title_num.chars();
+    let numeric_part: String = chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
+    let suffix: String = chars.collect();
+
+    if numeric_part.is_empty() {
+        return f64::INFINITY;
+    }
+
+    let base = numeric_part.parse::<f64>().unwrap_or(f64::INFINITY);
+    if suffix.is_empty() {
+        return base;
+    }
+
+    let letter = suffix.chars().next().unwrap().to_ascii_lowercase();
+    let offset = if letter.is_ascii_lowercase() {
+        ((letter as u8) - b'a' + 1) as f64 / 100.0
+    } else {
+        0.99
+    };
+    base + offset
 }

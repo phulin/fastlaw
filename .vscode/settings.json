@@ -1,8 +1,6 @@
 {
 	"editor.tabSize": 2,
-	"rust-analyzer.linkedProjects": [
-		"packages/ingest/container-rust/Cargo.toml"
-	],
+	"rust-analyzer.linkedProjects": ["packages/ingest/container-rust/Cargo.toml"],
 	"[rust]": {
 		"editor.defaultFormatter": "rust-lang.rust-analyzer",
 		"editor.formatOnSave": true,
