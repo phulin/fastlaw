@@ -26,6 +26,20 @@ usc_ingest::xmlspec! {
             num: first_text(child("num")),
             kind: attr("kind"),
         }
+
+        record SectionBody
+        from tag("section")
+        where true
+        {
+            body: text(desc("p"), except(desc("note"))),
+        }
+
+        record SectionNumAttr
+        from tag("section")
+        where true
+        {
+            num: attr(child("num"), "value"),
+        }
     }
 }
 
@@ -63,12 +77,47 @@ mod deep_guard_schema {
     }
 }
 
+mod note_partition_schema {
+    usc_ingest::xmlspec! {
+        schema NotePartitionSchema {
+            record AmendmentNote
+            from tag("note")
+            where attr("topic") == "amendments" or first_text(child("heading")) ~= "amendments"
+            {
+                heading: first_text(child("heading")),
+                text: text(desc("p")),
+            }
+
+            record GeneralNote
+            from tag("note")
+            where not(attr("topic") == "amendments" or first_text(child("heading")) ~= "amendments")
+            {
+                heading: first_text(child("heading")),
+                text: text(desc("p")),
+            }
+        }
+    }
+}
+
+mod multi_root_schema {
+    usc_ingest::xmlspec! {
+        schema MultiRootSchema {
+            record Levelish
+            from tag("subtitle", "part")
+            {
+                root: root_tag_name(),
+                heading: first_text(child("heading")),
+            }
+        }
+    }
+}
+
 #[test]
 fn macro_schema_extracts_multiple_record_types() {
     let xml = r#"
         <doc>
             <section kind="public">
-                <num>7</num>
+                <num value="7">7</num>
                 <heading>Main heading</heading>
                 <note role="amendments"><p>Amendment text</p></note>
             </section>
@@ -81,7 +130,7 @@ fn macro_schema_extracts_multiple_record_types() {
         .parse_str(xml, |record| out.push(record))
         .expect("xml should parse");
 
-    assert_eq!(out.len(), 3);
+    assert_eq!(out.len(), 5);
     let note = out.iter().find_map(|record| match record {
         DemoSchemaOutput::NoteData(note) => Some(note),
         _ => None,
@@ -92,6 +141,14 @@ fn macro_schema_extracts_multiple_record_types() {
     });
     let summary = out.iter().find_map(|record| match record {
         DemoSchemaOutput::SectionSummary(summary) => Some(summary),
+        _ => None,
+    });
+    let body = out.iter().find_map(|record| match record {
+        DemoSchemaOutput::SectionBody(body) => Some(body),
+        _ => None,
+    });
+    let num_attr = out.iter().find_map(|record| match record {
+        DemoSchemaOutput::SectionNumAttr(data) => Some(data),
         _ => None,
     });
 
@@ -116,6 +173,13 @@ fn macro_schema_extracts_multiple_record_types() {
         Some(&SectionSummary {
             num: Some("7".to_string()),
             kind: Some("public".to_string()),
+        })
+    );
+    assert_eq!(body, Some(&SectionBody { body: None }));
+    assert_eq!(
+        num_attr,
+        Some(&SectionNumAttr {
+            num: Some("7".to_string()),
         })
     );
 }
@@ -186,6 +250,75 @@ fn child_selector_ignores_nested_match_but_desc_captures_nested_note_text() {
             kind: Some("public".to_string()),
         })
     );
+}
+
+#[test]
+fn text_extractor_applies_except_selectors() {
+    let xml = r#"
+        <doc>
+            <section>
+                <p>Keep this</p>
+                <note><p>Drop this</p></note>
+                <p>Keep that</p>
+            </section>
+        </doc>
+    "#;
+
+    let mut engine = Engine::<DemoSchema>::new();
+    let mut out = Vec::new();
+    engine
+        .parse_str(xml, |record| out.push(record))
+        .expect("xml should parse");
+
+    let body = out.iter().find_map(|record| match record {
+        DemoSchemaOutput::SectionBody(body) => Some(body),
+        _ => None,
+    });
+    assert_eq!(
+        body,
+        Some(&SectionBody {
+            body: Some("Keep this\n\nKeep that".to_string()),
+        })
+    );
+}
+
+#[test]
+fn where_can_partition_records_by_attr_or_first_text_predicate() {
+    let xml = r#"
+        <doc>
+            <note topic="amendments"><heading>History</heading><p>A</p></note>
+            <note><heading>Amendments and Repeals</heading><p>B</p></note>
+            <note><heading>Editorial Notes</heading><p>C</p></note>
+        </doc>
+    "#;
+
+    let mut engine = Engine::<note_partition_schema::NotePartitionSchema>::new();
+    let mut out = Vec::new();
+    engine
+        .parse_str(xml, |record| out.push(record))
+        .expect("xml should parse");
+
+    let amendments = out
+        .iter()
+        .filter_map(|record| match record {
+            note_partition_schema::NotePartitionSchemaOutput::AmendmentNote(note) => {
+                Some(note.text.as_deref().unwrap_or_default().to_string())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let general = out
+        .iter()
+        .filter_map(|record| match record {
+            note_partition_schema::NotePartitionSchemaOutput::GeneralNote(note) => {
+                Some(note.text.as_deref().unwrap_or_default().to_string())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(amendments, vec!["A".to_string(), "B".to_string()]);
+    assert_eq!(general, vec!["C".to_string()]);
 }
 
 #[test]
@@ -356,4 +489,32 @@ fn parent_guard_does_not_skip_unknown_wrappers() {
         _ => None,
     });
     assert_eq!(section.and_then(|s| s.num.clone()), None);
+}
+
+#[test]
+fn record_can_match_multiple_root_tags_and_extract_root_tag_name() {
+    let xml = r#"
+        <doc>
+            <subtitle><heading>Subtitle heading</heading></subtitle>
+            <part><heading>Part heading</heading></part>
+        </doc>
+    "#;
+
+    let mut engine = Engine::<multi_root_schema::MultiRootSchema>::new();
+    let mut out = Vec::new();
+    engine
+        .parse_str(xml, |record| out.push(record))
+        .expect("xml should parse");
+
+    let levels = out
+        .iter()
+        .filter_map(|record| match record {
+            multi_root_schema::MultiRootSchemaOutput::Levelish(level) => Some(level),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(levels.len(), 2);
+    assert_eq!(levels[0].root.as_deref(), Some("subtitle"));
+    assert_eq!(levels[0].heading.as_deref(), Some("Subtitle heading"));
+    assert_eq!(levels[1].root.as_deref(), Some("part"));
+    assert_eq!(levels[1].heading.as_deref(), Some("Part heading"));
 }

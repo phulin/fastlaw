@@ -1,0 +1,5 @@
+error: expected except(...) as second argument to text(...)
+ --> tests/ui/xmlspec/fail/invalid_text_except.rs:8:40
+  |
+8 |             value: text(desc("value"), bad(desc("note"))),
+  |                                        ^^^

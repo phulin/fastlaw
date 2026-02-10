@@ -1,0 +1,5 @@
+error: where clauses cannot mix ancestor/parent predicates with attr(...)==... or first_text(...)~=... predicates
+ --> tests/ui/xmlspec/fail/mixed_static_dynamic_guard.rs:5:16
+  |
+5 |         record Item
+  |                ^^^^

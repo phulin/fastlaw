@@ -47,3 +47,20 @@ These nodes represent the actual statutes/sections of the code.
 | `source_credit` | `./sourceCredit` | The concise legislative history credit usually found at the end of a section. |
 | `amendments` | `./note` | Detailed amendment notes. **Filter**: Must have `topic="amendments"` OR contain "amendments" in the heading (case-insensitive). |
 | `note` | `./note` | Extracted from `note` tags that are **not** amendments. |
+
+---
+
+## 4. Implementation Shape (Parser Simplicity)
+
+The parser is intentionally structured as three sequential stages:
+
+1. `xmlspec` collection:
+   - Collect title, level, and section raw fields.
+   - Includes raw section text fields via `text(..., except(...))`.
+2. Hierarchy resolution:
+   - Resolve level parent/child relationships and canonical IDs/paths.
+3. Section post-processing:
+   - Apply body formatting and note partitioning (`amendments` vs general notes).
+   - Emit final section records with stable deduplicated section URLs.
+
+This separation keeps extraction declarative and keeps formatting logic procedural but localized.

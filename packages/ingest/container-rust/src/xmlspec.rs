@@ -354,6 +354,10 @@ where
     pub fn take(self) -> Option<String> {
         self.value
     }
+
+    pub fn peek(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -406,6 +410,74 @@ where
 
     pub fn take(self) -> Vec<String> {
         self.values
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TextReducer<Tag> {
+    selector: Selector<Tag>,
+    except: Vec<Selector<Tag>>,
+    root_depth: u32,
+    active_depths: Vec<u32>,
+    excluded_depths: Vec<u32>,
+    buffer: Vec<u8>,
+    value: Option<String>,
+}
+
+impl<Tag> TextReducer<Tag>
+where
+    Tag: Copy + Eq,
+{
+    pub fn new(selector: Selector<Tag>, except: Vec<Selector<Tag>>, root_depth: u32) -> Self {
+        Self {
+            selector,
+            except,
+            root_depth,
+            active_depths: Vec::new(),
+            excluded_depths: Vec::new(),
+            buffer: Vec::new(),
+            value: None,
+        }
+    }
+
+    pub fn on_start(&mut self, tag: Tag, depth: u32) {
+        if selector_matches(self.selector, self.root_depth, depth, tag) {
+            self.active_depths.push(depth);
+        }
+        for selector in &self.except {
+            if selector_matches(*selector, self.root_depth, depth, tag) {
+                self.excluded_depths.push(depth);
+            }
+        }
+    }
+
+    pub fn on_text(&mut self, text: &[u8]) {
+        if !self.active_depths.is_empty() && self.excluded_depths.is_empty() {
+            self.buffer.extend_from_slice(text);
+        }
+    }
+
+    pub fn on_end(&mut self, depth: u32) {
+        if self.excluded_depths.last().copied() == Some(depth) {
+            self.excluded_depths.pop();
+        }
+        if self.active_depths.last().copied() == Some(depth) {
+            self.active_depths.pop();
+            if self.active_depths.is_empty() {
+                let normalized = normalize_text(&self.buffer);
+                self.buffer.clear();
+                if !normalized.is_empty() {
+                    self.value = Some(match self.value.take() {
+                        Some(existing) => format!("{existing}\n\n{normalized}"),
+                        None => normalized,
+                    });
+                }
+            }
+        }
+    }
+
+    pub fn take(self) -> Option<String> {
+        self.value
     }
 }
 

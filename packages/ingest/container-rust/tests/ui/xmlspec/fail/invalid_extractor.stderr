@@ -1,5 +1,5 @@
-error: expected first_text(...), all_text(...), or attr("...")
+error: expected first_text(...), all_text(...), text(...), or attr("...")
  --> tests/ui/xmlspec/fail/invalid_extractor.rs:8:20
   |
-8 |             value: text(desc("value")),
-  |                    ^^^^
+8 |             value: unknown(desc("value")),
+  |                    ^^^^^^^

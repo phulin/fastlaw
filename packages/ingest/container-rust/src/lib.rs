@@ -1,3 +1,5 @@
+extern crate self as usc_ingest;
+
 pub mod ingest;
 pub mod runtime;
 pub mod sources;

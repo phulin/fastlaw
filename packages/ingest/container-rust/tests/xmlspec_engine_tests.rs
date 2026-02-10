@@ -1,6 +1,6 @@
 use usc_ingest::xmlspec::{
     AllTextReducer, AttrReducer, EndEvent, Engine, EngineView, FirstTextReducer, Guard, RootSpec,
-    Schema, Selector, StartEvent,
+    Schema, Selector, StartEvent, TextReducer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +18,7 @@ struct SectionRecord {
     heading: Option<String>,
     num: Option<String>,
     notes: Vec<String>,
+    body: Option<String>,
     kind: Option<String>,
 }
 
@@ -26,6 +27,7 @@ struct SectionScope {
     heading: FirstTextReducer<TestTag>,
     num: FirstTextReducer<TestTag>,
     notes: AllTextReducer<TestTag>,
+    body: TextReducer<TestTag>,
     kind: AttrReducer,
 }
 
@@ -85,6 +87,11 @@ impl Schema for TestSchema {
             heading: FirstTextReducer::new(Selector::Desc(TestTag::Heading), root_depth),
             num: FirstTextReducer::new(Selector::Child(TestTag::Num), root_depth),
             notes: AllTextReducer::new(Selector::Desc(TestTag::Note), root_depth),
+            body: TextReducer::new(
+                Selector::Desc(TestTag::P),
+                vec![Selector::Desc(TestTag::Note)],
+                root_depth,
+            ),
             kind,
         }
     }
@@ -97,12 +104,14 @@ impl Schema for TestSchema {
         scope.heading.on_start(event.tag, event.depth);
         scope.num.on_start(event.tag, event.depth);
         scope.notes.on_start(event.tag, event.depth);
+        scope.body.on_start(event.tag, event.depth);
     }
 
     fn on_text(scope: &mut Self::Scope, text: &[u8]) {
         scope.heading.on_text(text);
         scope.num.on_text(text);
         scope.notes.on_text(text);
+        scope.body.on_text(text);
     }
 
     fn on_end(
@@ -113,6 +122,7 @@ impl Schema for TestSchema {
         scope.heading.on_end(event.depth);
         scope.num.on_end(event.depth);
         scope.notes.on_end(event.depth);
+        scope.body.on_end(event.depth);
     }
 
     fn close_scope(scope: Self::Scope) -> Option<Self::Output> {
@@ -120,6 +130,7 @@ impl Schema for TestSchema {
             heading: scope.heading.take(),
             num: scope.num.take(),
             notes: scope.notes.take(),
+            body: scope.body.take(),
             kind: scope.kind.take(),
         })
     }
@@ -152,6 +163,7 @@ fn extracts_first_all_and_attr_reducers() {
             heading: Some("General Provisions".to_string()),
             num: Some("1".to_string()),
             notes: vec!["Note A".to_string(), "Note B".to_string()],
+            body: Some("999".to_string()),
             kind: Some("public".to_string()),
         }
     );
@@ -182,5 +194,25 @@ fn guard_blocks_sections_nested_in_notes() {
 
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].num.as_deref(), Some("4"));
+    assert_eq!(out[0].body.as_deref(), None);
     assert_eq!(out[0].kind.as_deref(), Some("live"));
+}
+
+#[test]
+fn text_reducer_excludes_nested_selector_text() {
+    let mut reducer = TextReducer::new(
+        Selector::Desc(TestTag::P),
+        vec![Selector::Desc(TestTag::Note)],
+        1,
+    );
+
+    reducer.on_start(TestTag::P, 2);
+    reducer.on_text(b"alpha ");
+    reducer.on_start(TestTag::Note, 3);
+    reducer.on_text(b"skip");
+    reducer.on_end(3);
+    reducer.on_text(b" beta");
+    reducer.on_end(2);
+
+    assert_eq!(reducer.take().as_deref(), Some("alpha beta"));
 }

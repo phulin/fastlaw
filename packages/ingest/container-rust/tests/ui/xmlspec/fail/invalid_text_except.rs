@@ -1,11 +1,11 @@
 use usc_ingest::xmlspec;
 
 xmlspec! {
-    schema BadExtractor {
+    schema BadTextExcept {
         record Item
         from tag("item")
         {
-            value: unknown(desc("value")),
+            value: text(desc("value"), bad(desc("note"))),
         }
     }
 }

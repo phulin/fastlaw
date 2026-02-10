@@ -68,7 +68,7 @@ xmlspec! {
 
 ```rust
 record <RecordName>
-from tag("<root-tag>")
+from tag("<root-tag>", ...)
 where <guard-expr>   // optional, defaults to true
 {
     <field-name>: <extractor>,
@@ -80,11 +80,13 @@ where <guard-expr>   // optional, defaults to true
 
 - `first_text(<selector>)` -> `Option<String>`
 - `all_text(<selector>)` -> `Vec<String>`
+- `root_tag_name()` -> `Option<String>`
 - `attr("<attr-name>")` -> `Option<String>`
+- `attr(<selector>, "<attr-name>")` -> `Option<String>`
+- `text(<selector>, except(<selector>, ...))` -> `Option<String>`
 
 Notes:
 
-- `attr(...)` currently captures the attribute from the **record root element** only.
 - Text includes both XML text nodes and CDATA.
 
 ## Selectors
@@ -97,10 +99,16 @@ Notes:
 - `true`
 - `ancestor("tag")`
 - `parent("tag")`
+- `attr("name") == "value"`
+- `first_text(<selector>) ~= "substring"` (case-insensitive contains)
 - `not(<expr>)`
 - `<expr> and <expr>`
 - `<expr> or <expr>`
 - Parentheses are supported.
+
+Guard limitation:
+
+- A single `where` expression cannot mix `ancestor(...)`/`parent(...)` with `attr(...) == ...` or `first_text(...) ~= ...`.
 
 ## Guard Semantics
 
@@ -180,7 +188,7 @@ cargo test
 
 ## Common Errors
 
-## `expected first_text(...), all_text(...), or attr("...")`
+## `expected first_text(...), all_text(...), text(...), or attr("...")`
 
 Cause: unsupported extractor name.
 
@@ -188,6 +196,7 @@ Fix: use exactly one of:
 
 - `first_text(...)`
 - `all_text(...)`
+- `text(...)`
 - `attr("...")`
 
 ## `only true is allowed in guard expressions`
@@ -210,7 +219,8 @@ Current implementation is aligned with the design’s core goals:
 Current practical constraints:
 
 - Input source is currently `parse_str` (string-based)
-- `attr(...)` is root-attribute-only
+- `attr(...)` supports both root-attribute and selector-based forms
+- `text(..., except(...))` is available for exclusion-based text capture
 - guard primitives are limited to documented set
 - selector set is `desc` and `child` only
 
