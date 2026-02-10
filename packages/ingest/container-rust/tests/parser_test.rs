@@ -258,7 +258,7 @@ fn sets_chapter_identifiers_correctly() {
         .iter()
         .find(|l| l.level_type == "chapter" && l.num == "1")
         .expect("Chapter 1 not found");
-    assert_eq!(chapter1.identifier, "1-title/chapter-1");
+    assert_eq!(chapter1.identifier, "title-1/chapter-1");
     assert_eq!(chapter1.title_num, "1");
 }
 
@@ -270,8 +270,8 @@ fn links_chapters_to_title_as_parent() {
         if level.level_type == "chapter" {
             assert_eq!(
                 level.parent_identifier.as_deref(),
-                Some("1-title"),
-                "Chapter {} should have parent 1-title",
+                Some("title-1"),
+                "Chapter {} should have parent title-1",
                 level.num
             );
         }
@@ -440,8 +440,8 @@ fn test_url_collision_overlapping_parts() {
         parts[0].identifier, parts[1].identifier,
         "Part identifiers should be unique"
     );
-    assert_eq!(parts[0].identifier, "10-title/subtitle-A/part-I");
-    assert_eq!(parts[1].identifier, "10-title/subtitle-B/part-I");
+    assert_eq!(parts[0].identifier, "title-10/subtitle-A/part-I");
+    assert_eq!(parts[1].identifier, "title-10/subtitle-B/part-I");
 
     // Check paths
     assert_ne!(parts[0].path, parts[1].path, "Part paths should be unique");

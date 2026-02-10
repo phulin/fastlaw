@@ -314,14 +314,14 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
             .open_level_refs
             .last()
             .map(|level| level.identifier.clone())
-            .or_else(|| Some(format!("{}-title", state.title_num)));
+            .or_else(|| Some(format!("title-{}", state.title_num)));
         let open_identifier = raw_identifier
             .as_deref()
             .and_then(|value| level_identifier_from_path(value, &state.title_num))
             .unwrap_or_else(|| {
                 let parent = parent_identifier
                     .clone()
-                    .unwrap_or_else(|| format!("{}-title", state.title_num));
+                    .unwrap_or_else(|| format!("title-{}", state.title_num));
                 format!("{parent}/{}-unknown", level_type)
             });
         state.open_level_refs.push(OpenLevelRef {
@@ -618,7 +618,7 @@ where
                     let parent = level
                         .parent_identifier
                         .clone()
-                        .unwrap_or_else(|| format!("{}-title", state.title_num));
+                        .unwrap_or_else(|| format!("title-{}", state.title_num));
                     identifier = format!("{parent}/{}-{}", level.level_type, slug_part(&num));
                 }
 
@@ -626,7 +626,7 @@ where
                     "/statutes/usc/{}/{}",
                     state.title_num,
                     identifier
-                        .strip_prefix(&format!("{}-title/", state.title_num))
+                        .strip_prefix(&format!("title-{}/", state.title_num))
                         .unwrap_or(&identifier)
                 );
 
@@ -862,7 +862,7 @@ fn level_identifier_from_path(identifier: &str, title_num: &str) -> Option<Strin
         }
         if let Some(num) = raw.strip_prefix('t') {
             if num == title_num {
-                parts.push(format!("{}-title", title_num));
+                parts.push(format!("title-{}", title_num));
             }
             continue;
         }
