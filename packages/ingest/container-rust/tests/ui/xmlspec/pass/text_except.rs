@@ -5,7 +5,7 @@ usc_ingest::xmlspec! {
         record Item
         from tag("item")
         {
-            body: text(desc("p"), except(desc("note"))),
+            body: all_text() where tag("p"),
         }
     }
 }

@@ -4,9 +4,8 @@ usc_ingest::xmlspec! {
     schema FirstSchema {
         record One
         from tag("item")
-        where true
         {
-            value: first_text(child("value")),
+            value: first_text() where and(tag("value"), parent(tag("item"))),
         }
     }
 }
@@ -15,9 +14,8 @@ usc_ingest::xmlspec! {
     schema SecondSchema {
         record Two
         from tag("item")
-        where true
         {
-            kind: attr("kind"),
+            kind: attr("kind") where tag("item"),
         }
     }
 }

@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeSet;
 use syn::parse::{Parse, ParseStream};
 use syn::{
-    braced, parenthesized, parse_macro_input, Error, Ident, LitBool, LitByteStr, LitStr, Result,
-    Token,
+    braced, parenthesized, parse_macro_input, Error, Ident, LitByteStr, LitStr, Result, Token,
 };
 
 #[proc_macro]
@@ -20,43 +20,40 @@ struct XmlSpecInput {
 struct RecordSpec {
     name: Ident,
     root_tags: Vec<LitStr>,
-    guard: GuardExpr,
+    where_selector: SelectorExpr,
     fields: Vec<FieldSpec>,
 }
 
 struct FieldSpec {
     name: Ident,
-    extractor: ExtractorSpec,
+    reducer: ReducerSpec,
+    selector: SelectorExpr,
+    inline_rules: Vec<InlineRule>,
 }
 
-enum ExtractorSpec {
-    FirstText(SelectorSpec),
-    AllText(SelectorSpec),
-    Text {
-        selector: SelectorSpec,
-        except: Vec<SelectorSpec>,
-    },
-    RootTagName,
-    AttrRoot(LitStr),
-    AttrAt(SelectorSpec, LitStr),
+enum ReducerSpec {
+    FirstText,
+    AllText,
+    Attr(LitStr),
+    AllFragments,
 }
 
-#[derive(Clone)]
-enum SelectorSpec {
-    Desc(LitStr),
-    Child(LitStr),
+struct InlineRule {
+    selector: SelectorExpr,
+    variant: Ident,
 }
 
 #[derive(Clone)]
-enum GuardExpr {
+enum SelectorExpr {
+    Tag(Vec<LitStr>),
+    Ancestor(Box<SelectorExpr>),
+    Parent(Box<SelectorExpr>),
+    HasAttr(LitStr),
+    AttrIs(LitStr, LitStr),
+    And(Vec<SelectorExpr>),
+    Or(Vec<SelectorExpr>),
+    Not(Box<SelectorExpr>),
     True,
-    Ancestor(LitStr),
-    Parent(LitStr),
-    AttrEq(LitStr, LitStr),
-    FirstTextContains(SelectorSpec, LitStr),
-    Not(Box<GuardExpr>),
-    And(Box<GuardExpr>, Box<GuardExpr>),
-    Or(Box<GuardExpr>, Box<GuardExpr>),
 }
 
 impl Parse for XmlSpecInput {
@@ -70,7 +67,6 @@ impl Parse for XmlSpecInput {
         while !content.is_empty() {
             records.push(content.parse()?);
         }
-
         if records.is_empty() {
             return Err(Error::new(
                 schema_name.span(),
@@ -90,7 +86,6 @@ impl Parse for RecordSpec {
         expect_ident(input, "record")?;
         let name: Ident = input.parse()?;
         expect_ident(input, "from")?;
-
         let root_tags = parse_tag_call(input)?;
         if root_tags.is_empty() {
             return Err(Error::new(
@@ -99,12 +94,13 @@ impl Parse for RecordSpec {
             ));
         }
 
-        let guard = if input.peek(Token![where]) {
+        let where_selector = if input.peek(Token![where]) {
             input.parse::<Token![where]>()?;
-            parse_guard_expr(input)?
+            parse_selector_expr(input)?
         } else {
-            GuardExpr::True
+            SelectorExpr::True
         };
+        validate_selector_expr(&where_selector)?;
 
         let content;
         braced!(content in input);
@@ -112,7 +108,6 @@ impl Parse for RecordSpec {
         while !content.is_empty() {
             fields.push(content.parse()?);
         }
-
         if fields.is_empty() {
             return Err(Error::new(name.span(), "record must define at least one field"));
         }
@@ -120,7 +115,7 @@ impl Parse for RecordSpec {
         Ok(Self {
             name,
             root_tags,
-            guard,
+            where_selector,
             fields,
         })
     }
@@ -130,270 +125,258 @@ impl Parse for FieldSpec {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let name: Ident = input.parse()?;
         input.parse::<Token![:]>()?;
-        let extractor = parse_extractor(input)?;
+        let reducer = parse_reducer(input)?;
+
+        if !input.peek(Token![where]) {
+            return Err(Error::new(
+                input.span(),
+                "field reducers must include `where <selector>`",
+            ));
+        }
+        input.parse::<Token![where]>()?;
+        let selector = parse_selector_expr(input)?;
+        validate_selector_expr(&selector)?;
+
+        let inline_rules = if peek_ident(input, "inline") {
+            if !matches!(reducer, ReducerSpec::AllFragments) {
+                return Err(Error::new(
+                    name.span(),
+                    "inline { ... } is only valid for all_fragments() reducers",
+                ));
+            }
+            expect_ident(input, "inline")?;
+            parse_inline_rules(input)?
+        } else {
+            Vec::new()
+        };
+
+        if matches!(reducer, ReducerSpec::AllFragments) {
+            for rule in &inline_rules {
+                if !is_tag_reducible(&rule.selector) {
+                    return Err(Error::new(
+                        name.span(),
+                        "inline rule selectors must be reducible to tag(...) checks",
+                    ));
+                }
+            }
+        }
+
         input.parse::<Token![,]>()?;
-        Ok(Self { name, extractor })
+
+        Ok(Self {
+            name,
+            reducer,
+            selector,
+            inline_rules,
+        })
     }
 }
 
-fn parse_tag_call(input: ParseStream<'_>) -> Result<Vec<LitStr>> {
-    let fn_name: Ident = input.parse()?;
-    if fn_name != "tag" {
-        return Err(Error::new(fn_name.span(), "expected tag(\"...\", ...)"));
-    }
+fn parse_reducer(input: ParseStream<'_>) -> Result<ReducerSpec> {
+    let name: Ident = input.parse()?;
     let inner;
     parenthesized!(inner in input);
-    let mut tags = Vec::new();
-    while !inner.is_empty() {
-        tags.push(inner.parse()?);
-        if inner.peek(Token![,]) {
-            inner.parse::<Token![,]>()?;
+    match name.to_string().as_str() {
+        "first_text" => {
+            if !inner.is_empty() {
+                return Err(Error::new(
+                    inner.span(),
+                    "first_text() does not take arguments",
+                ));
+            }
+            Ok(ReducerSpec::FirstText)
+        }
+        "all_text" => {
+            if !inner.is_empty() {
+                return Err(Error::new(
+                    inner.span(),
+                    "all_text() does not take arguments",
+                ));
+            }
+            Ok(ReducerSpec::AllText)
+        }
+        "attr" => Ok(ReducerSpec::Attr(inner.parse()?)),
+        "all_fragments" => {
+            if !inner.is_empty() {
+                return Err(Error::new(
+                    inner.span(),
+                    "all_fragments() does not take arguments",
+                ));
+            }
+            Ok(ReducerSpec::AllFragments)
+        }
+        _ => Err(Error::new(
+            name.span(),
+            "expected first_text(), all_text(), attr(\"...\"), or all_fragments()",
+        )),
+    }
+}
+
+fn parse_inline_rules(input: ParseStream<'_>) -> Result<Vec<InlineRule>> {
+    let content;
+    braced!(content in input);
+    let mut rules = Vec::new();
+    while !content.is_empty() {
+        let selector = parse_selector_expr(&content)?;
+        content.parse::<Token![=>]>()?;
+        let variant: Ident = content.parse()?;
+        if content.peek(Token![,]) {
+            content.parse::<Token![,]>()?;
+        }
+        rules.push(InlineRule { selector, variant });
+    }
+    Ok(rules)
+}
+
+fn parse_tag_call(input: ParseStream<'_>) -> Result<Vec<LitStr>> {
+    let selector = parse_selector_expr(input)?;
+    match selector {
+        SelectorExpr::Tag(tags) => Ok(tags),
+        _ => Err(Error::new(input.span(), "from expects tag(\"...\", ...)")),
+    }
+}
+
+fn parse_selector_expr(input: ParseStream<'_>) -> Result<SelectorExpr> {
+    if input.peek(syn::token::Paren) {
+        let inner;
+        parenthesized!(inner in input);
+        return parse_selector_expr(&inner);
+    }
+    let ident: Ident = input.parse()?;
+
+    let args;
+    parenthesized!(args in input);
+    match ident.to_string().as_str() {
+        "tag" => {
+            let mut tags = Vec::new();
+            while !args.is_empty() {
+                tags.push(args.parse()?);
+                if args.peek(Token![,]) {
+                    args.parse::<Token![,]>()?;
+                } else {
+                    break;
+                }
+            }
+            if tags.is_empty() {
+                return Err(Error::new(ident.span(), "tag(...) requires at least one string"));
+            }
+            Ok(SelectorExpr::Tag(tags))
+        }
+        "ancestor" => Ok(SelectorExpr::Ancestor(Box::new(parse_selector_expr(&args)?))),
+        "parent" => Ok(SelectorExpr::Parent(Box::new(parse_selector_expr(&args)?))),
+        "has_attr" => Ok(SelectorExpr::HasAttr(args.parse()?)),
+        "attr_is" => {
+            let name: LitStr = args.parse()?;
+            args.parse::<Token![,]>()?;
+            let value: LitStr = args.parse()?;
+            Ok(SelectorExpr::AttrIs(name, value))
+        }
+        "and" => {
+            let items = parse_selector_list(&args)?;
+            if items.len() < 2 {
+                return Err(Error::new(ident.span(), "and(...) requires at least two selectors"));
+            }
+            Ok(SelectorExpr::And(items))
+        }
+        "or" => {
+            let items = parse_selector_list(&args)?;
+            if items.len() < 2 {
+                return Err(Error::new(ident.span(), "or(...) requires at least two selectors"));
+            }
+            Ok(SelectorExpr::Or(items))
+        }
+        "not" => Ok(SelectorExpr::Not(Box::new(parse_selector_expr(&args)?))),
+        "true" => {
+            if !args.is_empty() {
+                return Err(Error::new(ident.span(), "true() does not take arguments"));
+            }
+            Ok(SelectorExpr::True)
+        }
+        _ => Err(Error::new(
+            ident.span(),
+            "expected tag(...), ancestor(...), parent(...), has_attr(...), attr_is(...), and(...), or(...), not(...), or true()",
+        )),
+    }
+}
+
+fn parse_selector_list(input: ParseStream<'_>) -> Result<Vec<SelectorExpr>> {
+    let mut out = Vec::new();
+    while !input.is_empty() {
+        out.push(parse_selector_expr(input)?);
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
         } else {
             break;
         }
     }
-    Ok(tags)
+    Ok(out)
 }
 
-fn parse_extractor(input: ParseStream<'_>) -> Result<ExtractorSpec> {
-    let name: Ident = input.parse()?;
-    let inner;
-    parenthesized!(inner in input);
-    match name.to_string().as_str() {
-        "first_text" => Ok(ExtractorSpec::FirstText(parse_selector(&inner)?)),
-        "all_text" => Ok(ExtractorSpec::AllText(parse_selector(&inner)?)),
-        "text" => parse_text_extractor(&inner),
-        "attr" => parse_attr_extractor(&inner),
-        "root_tag_name" => parse_root_tag_name_extractor(&inner),
-        _ => Err(Error::new(
-            name.span(),
-            "expected first_text(...), all_text(...), text(...), root_tag_name(), or attr(\"...\")",
-        )),
-    }
-}
-
-fn parse_root_tag_name_extractor(input: ParseStream<'_>) -> Result<ExtractorSpec> {
-    if !input.is_empty() {
-        return Err(Error::new(
-            input.span(),
-            "root_tag_name() does not take any arguments",
-        ));
-    }
-    Ok(ExtractorSpec::RootTagName)
-}
-
-fn parse_attr_extractor(input: ParseStream<'_>) -> Result<ExtractorSpec> {
-    if input.peek(LitStr) {
-        return Ok(ExtractorSpec::AttrRoot(input.parse()?));
-    }
-
-    let selector = parse_selector(input)?;
-    input.parse::<Token![,]>()?;
-    let attr = input.parse::<LitStr>()?;
-
-    if !input.is_empty() {
-        return Err(Error::new(
-            input.span(),
-            "unexpected tokens in attr(...); expected attr(\"...\") or attr(selector(\"...\"), \"...\")",
-        ));
-    }
-
-    Ok(ExtractorSpec::AttrAt(selector, attr))
-}
-
-fn parse_text_extractor(input: ParseStream<'_>) -> Result<ExtractorSpec> {
-    let selector = parse_selector(input)?;
-    let mut except = Vec::new();
-
-    if input.peek(Token![,]) {
-        input.parse::<Token![,]>()?;
-        let except_ident: Ident = input.parse()?;
-        if except_ident != "except" {
-            return Err(Error::new(
-                except_ident.span(),
-                "expected except(...) as second argument to text(...)",
-            ));
+fn validate_selector_expr(selector: &SelectorExpr) -> Result<()> {
+    match selector {
+        SelectorExpr::Ancestor(inner) | SelectorExpr::Parent(inner) => {
+            if !is_tag_reducible(inner) {
+                return Err(Error::new(
+                    proc_macro2::Span::call_site(),
+                    "ancestor(...) and parent(...) arguments must be reducible to tag(...) checks",
+                ));
+            }
+            validate_selector_expr(inner)?;
         }
-        let except_inner;
-        parenthesized!(except_inner in input);
-        while !except_inner.is_empty() {
-            except.push(parse_selector(&except_inner)?);
-            if except_inner.peek(Token![,]) {
-                except_inner.parse::<Token![,]>()?;
-            } else {
-                break;
+        SelectorExpr::And(items) | SelectorExpr::Or(items) => {
+            for item in items {
+                validate_selector_expr(item)?;
             }
         }
+        SelectorExpr::Not(inner) => validate_selector_expr(inner)?,
+        SelectorExpr::Tag(_)
+        | SelectorExpr::HasAttr(_)
+        | SelectorExpr::AttrIs(_, _)
+        | SelectorExpr::True => {}
     }
-
-    if !input.is_empty() {
-        return Err(Error::new(
-            input.span(),
-            "unexpected tokens in text(...) extractor",
-        ));
-    }
-
-    Ok(ExtractorSpec::Text { selector, except })
+    Ok(())
 }
 
-fn parse_selector(input: ParseStream<'_>) -> Result<SelectorSpec> {
-    let name: Ident = input.parse()?;
-    let inner;
-    parenthesized!(inner in input);
-    match name.to_string().as_str() {
-        "desc" => Ok(SelectorSpec::Desc(inner.parse()?)),
-        "child" => Ok(SelectorSpec::Child(inner.parse()?)),
-        _ => Err(Error::new(name.span(), "expected desc(\"...\") or child(\"...\")")),
+fn is_tag_reducible(selector: &SelectorExpr) -> bool {
+    match selector {
+        SelectorExpr::Tag(_) => true,
+        SelectorExpr::Or(items) => items.iter().all(is_tag_reducible),
+        _ => false,
     }
 }
 
-fn parse_guard_expr(input: ParseStream<'_>) -> Result<GuardExpr> {
-    parse_guard_or(input)
-}
-
-fn parse_guard_or(input: ParseStream<'_>) -> Result<GuardExpr> {
-    let mut expr = parse_guard_and(input)?;
-    while peek_ident(input, "or") {
-        expect_ident(input, "or")?;
-        let rhs = parse_guard_and(input)?;
-        expr = GuardExpr::Or(Box::new(expr), Box::new(rhs));
-    }
-    Ok(expr)
-}
-
-fn parse_guard_and(input: ParseStream<'_>) -> Result<GuardExpr> {
-    let mut expr = parse_guard_unary(input)?;
-    while peek_ident(input, "and") {
-        expect_ident(input, "and")?;
-        let rhs = parse_guard_unary(input)?;
-        expr = GuardExpr::And(Box::new(expr), Box::new(rhs));
-    }
-    Ok(expr)
-}
-
-fn parse_guard_unary(input: ParseStream<'_>) -> Result<GuardExpr> {
-    if peek_ident(input, "not") {
-        expect_ident(input, "not")?;
-        let inner;
-        parenthesized!(inner in input);
-        return Ok(GuardExpr::Not(Box::new(parse_guard_expr(&inner)?)));
-    }
-
-    if input.peek(syn::token::Paren) {
-        let inner;
-        parenthesized!(inner in input);
-        return parse_guard_expr(&inner);
-    }
-
-    parse_guard_primary(input)
-}
-
-fn parse_guard_primary(input: ParseStream<'_>) -> Result<GuardExpr> {
-    if input.peek(LitBool) {
-        let lit = input.parse::<LitBool>()?;
-        if lit.value {
-            return Ok(GuardExpr::True);
+fn collect_reducible_tags(selector: &SelectorExpr, out: &mut BTreeSet<String>) {
+    match selector {
+        SelectorExpr::Tag(tags) => {
+            for tag in tags {
+                out.insert(tag.value());
+            }
         }
-        return Err(Error::new(lit.span(), "only `true` is allowed in guard expressions"));
-    }
-
-    let ident: Ident = input.parse()?;
-    match ident.to_string().as_str() {
-        "ancestor" => {
-            let inner;
-            parenthesized!(inner in input);
-            Ok(GuardExpr::Ancestor(inner.parse()?))
+        SelectorExpr::Or(items) => {
+            for item in items {
+                collect_reducible_tags(item, out);
+            }
         }
-        "parent" => {
-            let inner;
-            parenthesized!(inner in input);
-            Ok(GuardExpr::Parent(inner.parse()?))
-        }
-        "attr" => {
-            let inner;
-            parenthesized!(inner in input);
-            let attr_name: LitStr = inner.parse()?;
-            input.parse::<Token![==]>()?;
-            let value: LitStr = input.parse()?;
-            Ok(GuardExpr::AttrEq(attr_name, value))
-        }
-        "first_text" => {
-            let inner;
-            parenthesized!(inner in input);
-            let selector = parse_selector(&inner)?;
-            input.parse::<Token![~]>()?;
-            input.parse::<Token![=]>()?;
-            let pattern: LitStr = input.parse()?;
-            Ok(GuardExpr::FirstTextContains(selector, pattern))
-        }
-        _ => Err(Error::new(
-            ident.span(),
-            "expected true, ancestor(\"...\"), parent(\"...\"), attr(\"...\")==\"...\", first_text(selector) ~= \"...\", not(...), and/or",
-        )),
+        _ => {}
     }
 }
 
-enum DynamicGuardField {
-    AttrEq {
-        ident: Ident,
-        attr_name: LitStr,
-        expected: LitStr,
-    },
-    FirstTextContains {
-        ident: Ident,
-        selector: SelectorSpec,
-    },
-}
-
-fn guard_has_static_predicates(guard: &GuardExpr) -> bool {
-    match guard {
-        GuardExpr::True => false,
-        GuardExpr::Ancestor(_) | GuardExpr::Parent(_) => true,
-        GuardExpr::AttrEq(_, _) | GuardExpr::FirstTextContains(_, _) => false,
-        GuardExpr::Not(inner) => guard_has_static_predicates(inner),
-        GuardExpr::And(left, right) | GuardExpr::Or(left, right) => {
-            guard_has_static_predicates(left) || guard_has_static_predicates(right)
+fn collect_selector_tags(selector: &SelectorExpr, tags: &mut Vec<String>) {
+    match selector {
+        SelectorExpr::Tag(values) => {
+            for value in values {
+                push_tag(tags, &value.value());
+            }
         }
-    }
-}
-
-fn guard_has_dynamic_predicates(guard: &GuardExpr) -> bool {
-    match guard {
-        GuardExpr::True | GuardExpr::Ancestor(_) | GuardExpr::Parent(_) => false,
-        GuardExpr::AttrEq(_, _) | GuardExpr::FirstTextContains(_, _) => true,
-        GuardExpr::Not(inner) => guard_has_dynamic_predicates(inner),
-        GuardExpr::And(left, right) | GuardExpr::Or(left, right) => {
-            guard_has_dynamic_predicates(left) || guard_has_dynamic_predicates(right)
+        SelectorExpr::Ancestor(inner)
+        | SelectorExpr::Parent(inner)
+        | SelectorExpr::Not(inner) => collect_selector_tags(inner, tags),
+        SelectorExpr::And(items) | SelectorExpr::Or(items) => {
+            for item in items {
+                collect_selector_tags(item, tags);
+            }
         }
-    }
-}
-
-fn collect_dynamic_guard_fields(
-    guard: &GuardExpr,
-    fields: &mut Vec<DynamicGuardField>,
-) {
-    match guard {
-        GuardExpr::True | GuardExpr::Ancestor(_) | GuardExpr::Parent(_) => {}
-        GuardExpr::AttrEq(attr_name, expected) => {
-            let ident = format_ident!("__guard_attr_eq_{}", fields.len());
-            fields.push(DynamicGuardField::AttrEq {
-                ident,
-                attr_name: attr_name.clone(),
-                expected: expected.clone(),
-            });
-        }
-        GuardExpr::FirstTextContains(selector, _) => {
-            let ident = format_ident!("__guard_first_text_{}", fields.len());
-            fields.push(DynamicGuardField::FirstTextContains {
-                ident,
-                selector: selector.clone(),
-            });
-        }
-        GuardExpr::Not(inner) => collect_dynamic_guard_fields(inner, fields),
-        GuardExpr::And(left, right) | GuardExpr::Or(left, right) => {
-            collect_dynamic_guard_fields(left, fields);
-            collect_dynamic_guard_fields(right, fields);
-        }
+        SelectorExpr::HasAttr(_) | SelectorExpr::AttrIs(_, _) | SelectorExpr::True => {}
     }
 }
 
@@ -402,67 +385,32 @@ fn expand_xmlspec(spec: XmlSpecInput) -> Result<proc_macro2::TokenStream> {
     let tag_enum_name = format_ident!("{}Tag", schema_name);
     let scope_enum_name = format_ident!("{}Scope", schema_name);
     let output_enum_name = format_ident!("{}Output", schema_name);
-    let mut record_dynamic_fields = Vec::<Vec<DynamicGuardField>>::new();
 
     let mut all_tags = Vec::<String>::new();
     for record in &spec.records {
-        if guard_has_static_predicates(&record.guard) && guard_has_dynamic_predicates(&record.guard)
-        {
-            return Err(Error::new(
-                record.name.span(),
-                "where clauses cannot mix ancestor/parent predicates with attr(...)==... or first_text(...)~=... predicates",
-            ));
-        }
-        let mut dynamic_fields = Vec::new();
-        collect_dynamic_guard_fields(&record.guard, &mut dynamic_fields);
-        record_dynamic_fields.push(dynamic_fields);
-
         for root_tag in &record.root_tags {
             push_tag(&mut all_tags, &root_tag.value());
         }
-        collect_guard_tags(&mut all_tags, &record.guard);
+        collect_selector_tags(&record.where_selector, &mut all_tags);
         for field in &record.fields {
-            match &field.extractor {
-                ExtractorSpec::FirstText(selector) | ExtractorSpec::AllText(selector) => {
-                    let tag = match selector {
-                        SelectorSpec::Desc(tag) | SelectorSpec::Child(tag) => tag.value(),
-                    };
-                    push_tag(&mut all_tags, &tag);
-                }
-                ExtractorSpec::Text { selector, except } => {
-                    let tag = match selector {
-                        SelectorSpec::Desc(tag) | SelectorSpec::Child(tag) => tag.value(),
-                    };
-                    push_tag(&mut all_tags, &tag);
-                    for selector in except {
-                        let except_tag = match selector {
-                            SelectorSpec::Desc(tag) | SelectorSpec::Child(tag) => tag.value(),
-                        };
-                        push_tag(&mut all_tags, &except_tag);
-                    }
-                }
-                ExtractorSpec::RootTagName => {}
-                ExtractorSpec::AttrRoot(_) => {}
-                ExtractorSpec::AttrAt(selector, _) => {
-                    let tag = match selector {
-                        SelectorSpec::Desc(tag) | SelectorSpec::Child(tag) => tag.value(),
-                    };
-                    push_tag(&mut all_tags, &tag);
-                }
+            collect_selector_tags(&field.selector, &mut all_tags);
+            for rule in &field.inline_rules {
+                collect_selector_tags(&rule.selector, &mut all_tags);
             }
         }
     }
 
-    let mut variants = Vec::new();
-    for tag in &all_tags {
-        variants.push(format_ident!("{}", tag_to_variant(tag)));
-    }
-
-    let tag_match_arms = all_tags.iter().zip(variants.iter()).map(|(tag, variant)| {
-        let tag_bytes = LitByteStr::new(tag.as_bytes(), proc_macro2::Span::call_site());
-        quote! { #tag_bytes => Some(#tag_enum_name::#variant), }
-    });
+    let variants = all_tags
+        .iter()
+        .map(|tag| format_ident!("{}", tag_to_variant(tag)))
+        .collect::<Vec<_>>();
     let tag_count = variants.len();
+
+    let mut tag_match_arms = Vec::new();
+    for (tag, variant) in all_tags.iter().zip(variants.iter()) {
+        let tag_bytes = LitByteStr::new(tag.as_bytes(), proc_macro2::Span::call_site());
+        tag_match_arms.push(quote! { #tag_bytes => Some(#tag_enum_name::#variant), });
+    }
 
     let mut roots = Vec::new();
     for (idx, record) in spec.records.iter().enumerate() {
@@ -470,10 +418,10 @@ fn expand_xmlspec(spec: XmlSpecInput) -> Result<proc_macro2::TokenStream> {
             .try_into()
             .expect("xmlspec supports at most u16::MAX records");
         for root_tag in &record.root_tags {
-            let root_variant = variant_for_tag(&all_tags, &variants, &root_tag.value());
+            let variant = variant_for_tag(&all_tags, &variants, &root_tag.value());
             roots.push(quote! {
                 ::usc_ingest::xmlspec::RootSpec {
-                    tag: #tag_enum_name::#root_variant,
+                    tag: #tag_enum_name::#variant,
                     guard: ::usc_ingest::xmlspec::Guard::True,
                     scope_kind: #scope_kind,
                 }
@@ -481,266 +429,218 @@ fn expand_xmlspec(spec: XmlSpecInput) -> Result<proc_macro2::TokenStream> {
         }
     }
 
-    let root_tag_name_arms = all_tags.iter().zip(variants.iter()).map(|(tag, variant)| {
-        quote! { #tag_enum_name::#variant => #tag, }
-    });
+    let mut scope_variants = Vec::new();
+    let mut fragment_enum_defs = Vec::new();
+    let mut state_structs = Vec::new();
+    let mut open_scope_arms = Vec::new();
+
+    for (idx, record) in spec.records.iter().enumerate() {
+        let scope_kind: u16 = idx
+            .try_into()
+            .expect("xmlspec supports at most u16::MAX records");
+        let state_name = format_ident!("{}State", record.name);
+        scope_variants.push(quote! { #state_name(#state_name) });
+
+        let mut state_fields = Vec::new();
+        let mut field_inits = Vec::new();
+        for field in &record.fields {
+            let field_name = &field.name;
+            let ty =
+                reducer_type_tokens(record, field, &tag_enum_name, &mut fragment_enum_defs);
+            state_fields.push(quote! { #field_name: #ty });
+            let init = reducer_init_tokens(field, &all_tags, &variants, &tag_enum_name);
+            field_inits.push(quote! { #field_name: #init });
+        }
+
+        state_structs.push(quote! {
+            pub struct #state_name {
+                #(#state_fields,)*
+            }
+        });
+
+        open_scope_arms.push(quote! {
+            #scope_kind => #scope_enum_name::#state_name(#state_name {
+                #(#field_inits,)*
+            }),
+        });
+    }
 
     let matches_root_arms = spec.records.iter().enumerate().map(|(idx, record)| {
         let scope_kind: u16 = idx
             .try_into()
             .expect("xmlspec supports at most u16::MAX records");
-        let guard_check = if guard_has_dynamic_predicates(&record.guard) {
-            quote! { true }
-        } else {
-            start_guard_check_tokens(&record.guard, &all_tags, &variants, &tag_enum_name)
-        };
-        quote! {
-            #scope_kind => #guard_check,
-        }
-    });
+        let selector_tokens = selector_eval_tokens(
+            &record.where_selector,
+            quote! { root.tag },
+            quote! { start },
+            quote! { view },
+            quote! { __depth },
+            &all_tags,
+            &variants,
+            &tag_enum_name,
+        )?;
+        Ok::<_, Error>(quote! {
+            #scope_kind => #selector_tokens,
+        })
+    }).collect::<Result<Vec<_>>>()?;
 
-    let scope_variants = spec.records.iter().map(|record| {
+    let on_start_arms = spec.records.iter().map(|record| {
         let state_name = format_ident!("{}State", record.name);
-        quote! { #state_name(#state_name) }
-    });
-
-    let state_structs = spec
-        .records
-        .iter()
-        .zip(record_dynamic_fields.iter())
-        .map(|(record, dynamic_fields)| {
-        let state_name = format_ident!("{}State", record.name);
-        let reducers = record.fields.iter().map(|field| {
+        let field_calls = record.fields.iter().map(|field| {
             let field_name = &field.name;
-            let ty = reducer_type_tokens(&field.extractor, &tag_enum_name);
-            quote! { #field_name: #ty }
-        });
-        let guard_fields = dynamic_fields.iter().map(|field| match field {
-            DynamicGuardField::AttrEq { ident, .. } => quote! { #ident: bool },
-            DynamicGuardField::FirstTextContains { ident, .. } => {
-                quote! { #ident: ::usc_ingest::xmlspec::FirstTextReducer<#tag_enum_name> }
-            }
-        });
-        quote! {
-            pub struct #state_name {
-                #(#reducers,)*
-                #(#guard_fields,)*
-                __root_depth: u32,
-            }
-        }
-    });
+            let selector_tokens = selector_eval_tokens(
+                &field.selector,
+                quote! { event.tag },
+                quote! { event.attrs },
+                quote! { _view },
+                quote! { event.depth },
+                &all_tags,
+                &variants,
+                &tag_enum_name,
+            )?;
 
-    let open_scope_arms = spec
-        .records
-        .iter()
-        .zip(record_dynamic_fields.iter())
-        .enumerate()
-        .map(|(idx, (record, dynamic_fields))| {
-        let state_name = format_ident!("{}State", record.name);
-        let scope_kind: u16 = idx
-            .try_into()
-            .expect("xmlspec supports at most u16::MAX records");
-        let field_inits = record.fields.iter().map(|field| {
-            let field_name = &field.name;
-            let init = reducer_init_tokens(&field.extractor, &all_tags, &variants, &tag_enum_name);
-            quote! { #field_name: #init }
-        });
-        let guard_inits = dynamic_fields.iter().map(|field| match field {
-            DynamicGuardField::AttrEq {
-                ident,
-                attr_name,
-                expected,
-            } => {
-                let attr_bytes = LitByteStr::new(attr_name.value().as_bytes(), attr_name.span());
-                let expected_value = expected.value();
-                quote! {
-                    #ident: start
-                        .attributes()
-                        .flatten()
-                        .find(|attr| attr.key.as_ref() == #attr_bytes)
-                        .map(|attr| ::std::string::String::from_utf8_lossy(attr.value.as_ref()).as_ref() == #expected_value)
-                        .unwrap_or(false)
+            let call = match &field.reducer {
+                ReducerSpec::FirstText => {
+                    quote! { state.#field_name.on_start(__matches, event.depth); }
                 }
-            }
-            DynamicGuardField::FirstTextContains {
-                ident, selector, ..
-            } => {
-                let selector_tokens =
-                    selector_tokens(selector, &all_tags, &variants, &tag_enum_name);
-                quote! {
-                    #ident: ::usc_ingest::xmlspec::FirstTextReducer::new(#selector_tokens, root_depth)
+                ReducerSpec::AllText => {
+                    quote! { state.#field_name.on_start(__matches, event.depth); }
                 }
-            }
-        });
-        quote! {
-            #scope_kind => #scope_enum_name::#state_name(#state_name {
-                #(#field_inits,)*
-                #(#guard_inits,)*
-                __root_depth: root_depth,
-            }),
-        }
-    });
-
-    let on_start_arms = spec
-        .records
-        .iter()
-        .zip(record_dynamic_fields.iter())
-        .map(|(record, dynamic_fields)| {
-        let state_name = format_ident!("{}State", record.name);
-        let reducer_calls = record.fields.iter().map(|field| {
-            let field_name = &field.name;
-            match &field.extractor {
-                ExtractorSpec::AttrRoot(_) => quote! {},
-                ExtractorSpec::RootTagName => quote! {},
-                ExtractorSpec::AttrAt(selector, _) => {
-                    let selector_tokens =
-                        selector_tokens(selector, &all_tags, &variants, &tag_enum_name);
+                ReducerSpec::Attr(_) => {
                     quote! {
-                        if ::usc_ingest::xmlspec::selector_matches(
-                            #selector_tokens,
-                            state.__root_depth,
-                            event.depth,
-                            event.tag,
-                        ) {
+                        if __matches {
                             state.#field_name.capture(event.attrs);
                         }
                     }
                 }
-                _ => quote! { state.#field_name.on_start(event.tag, event.depth); },
-            }
-        });
-        let guard_calls = dynamic_fields.iter().map(|field| match field {
-            DynamicGuardField::AttrEq { .. } => quote! {},
-            DynamicGuardField::FirstTextContains { ident, .. } => {
-                quote! { state.#ident.on_start(event.tag, event.depth); }
-            }
-        });
-        quote! {
-            #scope_enum_name::#state_name(state) => {
-                #(#reducer_calls)*
-                #(#guard_calls)*
-            }
-        }
-    });
+                ReducerSpec::AllFragments => {
+                    quote! {
+                        let __inline_kind = state.#field_name.inline_kind_for_tag(event.tag);
+                        state.#field_name.on_start(__matches, event.depth, __inline_kind);
+                    }
+                }
+            };
 
-    let on_text_arms = spec
-        .records
-        .iter()
-        .zip(record_dynamic_fields.iter())
-        .map(|(record, dynamic_fields)| {
+            Ok::<_, Error>(quote! {
+                {
+                    let __matches = #selector_tokens;
+                    #call
+                }
+            })
+        }).collect::<Result<Vec<_>>>()?;
+
+        Ok::<_, Error>(quote! {
+            #scope_enum_name::#state_name(state) => {
+                #(#field_calls)*
+            }
+        })
+    }).collect::<Result<Vec<_>>>()?;
+
+    let on_text_arms = spec.records.iter().map(|record| {
         let state_name = format_ident!("{}State", record.name);
-        let reducer_calls = record.fields.iter().map(|field| {
+        let calls = record.fields.iter().map(|field| {
             let field_name = &field.name;
-            if matches!(
-                &field.extractor,
-                ExtractorSpec::AttrRoot(_) | ExtractorSpec::AttrAt(_, _) | ExtractorSpec::RootTagName
-            ) {
-                quote! {}
-            } else {
-                quote! { state.#field_name.on_text(text); }
-            }
-        });
-        let guard_calls = dynamic_fields.iter().map(|field| match field {
-            DynamicGuardField::AttrEq { .. } => quote! {},
-            DynamicGuardField::FirstTextContains { ident, .. } => {
-                quote! { state.#ident.on_text(text); }
+            match field.reducer {
+                ReducerSpec::FirstText | ReducerSpec::AllText | ReducerSpec::AllFragments => {
+                    quote! { state.#field_name.on_text(text); }
+                }
+                ReducerSpec::Attr(_) => quote! {},
             }
         });
         quote! {
             #scope_enum_name::#state_name(state) => {
-                #(#reducer_calls)*
-                #(#guard_calls)*
+                #(#calls)*
             }
         }
     });
 
-    let on_end_arms = spec
-        .records
-        .iter()
-        .zip(record_dynamic_fields.iter())
-        .map(|(record, dynamic_fields)| {
+    let on_end_arms = spec.records.iter().map(|record| {
         let state_name = format_ident!("{}State", record.name);
-        let reducer_calls = record.fields.iter().map(|field| {
+        let calls = record.fields.iter().map(|field| {
             let field_name = &field.name;
-            if matches!(
-                &field.extractor,
-                ExtractorSpec::AttrRoot(_) | ExtractorSpec::AttrAt(_, _) | ExtractorSpec::RootTagName
-            ) {
-                quote! {}
-            } else {
-                quote! { state.#field_name.on_end(event.depth); }
-            }
-        });
-        let guard_calls = dynamic_fields.iter().map(|field| match field {
-            DynamicGuardField::AttrEq { .. } => quote! {},
-            DynamicGuardField::FirstTextContains { ident, .. } => {
-                quote! { state.#ident.on_end(event.depth); }
+            match field.reducer {
+                ReducerSpec::FirstText | ReducerSpec::AllText | ReducerSpec::AllFragments => {
+                    quote! { state.#field_name.on_end(event.depth); }
+                }
+                ReducerSpec::Attr(_) => quote! {},
             }
         });
         quote! {
             #scope_enum_name::#state_name(state) => {
-                #(#reducer_calls)*
-                #(#guard_calls)*
+                #(#calls)*
             }
         }
     });
 
-    let output_enum_variants = spec.records.iter().map(|record| {
+    let mut output_enum_variants = Vec::new();
+    let mut output_structs = Vec::new();
+    let mut close_scope_arms = Vec::new();
+    for record in &spec.records {
         let record_name = &record.name;
-        quote! { #record_name(#record_name) }
-    });
+        output_enum_variants.push(quote! { #record_name(#record_name) });
 
-    let output_structs = spec.records.iter().map(|record| {
-        let record_name = &record.name;
-        let fields = record.fields.iter().map(|field| {
+        let mut output_fields = Vec::new();
+        for field in &record.fields {
             let field_name = &field.name;
-            let ty = output_field_type_tokens(&field.extractor);
-            quote! { pub #field_name: #ty }
-        });
-        quote! {
+            let ty = output_field_type_tokens(record, field);
+            output_fields.push(quote! { pub #field_name: #ty });
+        }
+        output_structs.push(quote! {
             #[derive(Debug, Clone, PartialEq, Eq)]
             pub struct #record_name {
-                #(#fields,)*
-            }
-        }
-    });
-
-    let close_scope_arms = spec
-        .records
-        .iter()
-        .zip(record_dynamic_fields.iter())
-        .map(|(record, dynamic_fields)| {
-        let record_name = &record.name;
-        let state_name = format_ident!("{}State", record.name);
-        let guard_check = if guard_has_dynamic_predicates(&record.guard) {
-            let mut next_guard_index = 0usize;
-            close_guard_check_tokens(&record.guard, dynamic_fields, &mut next_guard_index)
-        } else {
-            quote! { true }
-        };
-        let fields = record.fields.iter().map(|field| {
-            let field_name = &field.name;
-            match &field.extractor {
-                ExtractorSpec::RootTagName => quote! { #field_name: state.#field_name },
-                _ => quote! { #field_name: state.#field_name.take() },
+                #(#output_fields,)*
             }
         });
-        quote! {
-            #scope_enum_name::#state_name(state) => {
-                if !(#guard_check) {
-                    None
-                } else {
-                    Some(#output_enum_name::#record_name(#record_name {
-                        #(#fields,)*
-                    }))
-                }
-            },
-        }
-    });
 
-    let tag_indices = variants.iter().enumerate().map(|(idx, variant)| {
-        quote! { #tag_enum_name::#variant => #idx, }
-    });
+        let state_name = format_ident!("{}State", record.name);
+        let fields = record.fields.iter().map(|field| {
+            let field_name = &field.name;
+            match &field.reducer {
+                ReducerSpec::FirstText | ReducerSpec::AllText | ReducerSpec::Attr(_) => {
+                    quote! { #field_name: state.#field_name.take() }
+                }
+                ReducerSpec::AllFragments => {
+                    let fragment_enum_name = fragment_enum_name(&record.name, &field.name);
+                    let variant_names = field
+                        .inline_rules
+                        .iter()
+                        .map(|rule| &rule.variant)
+                        .collect::<Vec<_>>();
+                    let variant_arms = variant_names.iter().enumerate().map(|(idx, variant)| {
+                        let kind = idx as u16;
+                        quote! { #kind => #fragment_enum_name::#variant(text), }
+                    });
+                    quote! {
+                        #field_name: state
+                            .#field_name
+                            .take()
+                            .into_iter()
+                            .map(|fragment| match fragment {
+                                ::usc_ingest::xmlspec::FragmentChunk::Text(text) => #fragment_enum_name::Text(text),
+                                ::usc_ingest::xmlspec::FragmentChunk::Styled(kind, text) => match kind {
+                                    #(#variant_arms)*
+                                    _ => panic!("unknown inline fragment kind"),
+                                },
+                            })
+                            .collect()
+                    }
+                }
+            }
+        });
+        close_scope_arms.push(quote! {
+            #scope_enum_name::#state_name(state) => {
+                Some(#output_enum_name::#record_name(#record_name {
+                    #(#fields,)*
+                }))
+            },
+        });
+    }
+
+    let tag_indices = variants
+        .iter()
+        .enumerate()
+        .map(|(idx, variant)| quote! { #tag_enum_name::#variant => #idx, })
+        .collect::<Vec<_>>();
 
     Ok(quote! {
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -748,6 +648,7 @@ fn expand_xmlspec(spec: XmlSpecInput) -> Result<proc_macro2::TokenStream> {
             #(#variants,)*
         }
 
+        #(#fragment_enum_defs)*
         #(#output_structs)*
 
         #[derive(Debug, Clone, PartialEq, Eq)]
@@ -791,8 +692,10 @@ fn expand_xmlspec(spec: XmlSpecInput) -> Result<proc_macro2::TokenStream> {
 
             fn matches_root(
                 root: &::usc_ingest::xmlspec::RootSpec<Self::Tag>,
+                start: &quick_xml::events::BytesStart<'_>,
                 view: &::usc_ingest::xmlspec::EngineView<'_, Self::Tag>,
             ) -> bool {
+                let __depth = view.depth() + 1;
                 match root.scope_kind {
                     #(#matches_root_arms)*
                     _ => false,
@@ -801,14 +704,10 @@ fn expand_xmlspec(spec: XmlSpecInput) -> Result<proc_macro2::TokenStream> {
 
             fn open_scope(
                 scope_kind: u16,
-                root: Self::Tag,
-                start: &quick_xml::events::BytesStart<'_>,
-                view: &::usc_ingest::xmlspec::EngineView<'_, Self::Tag>,
+                _root: Self::Tag,
+                _start: &quick_xml::events::BytesStart<'_>,
+                _view: &::usc_ingest::xmlspec::EngineView<'_, Self::Tag>,
             ) -> Self::Scope {
-                let root_depth = view.depth() + 1;
-                let root_tag_name = match root {
-                    #(#root_tag_name_arms)*
-                };
                 match scope_kind {
                     #(#open_scope_arms)*
                     _ => panic!("scope kind not declared in roots"),
@@ -850,189 +749,187 @@ fn expand_xmlspec(spec: XmlSpecInput) -> Result<proc_macro2::TokenStream> {
     })
 }
 
-fn reducer_type_tokens(
-    extractor: &ExtractorSpec,
+fn selector_eval_tokens(
+    selector: &SelectorExpr,
+    current_tag: proc_macro2::TokenStream,
+    current_attrs: proc_macro2::TokenStream,
+    view: proc_macro2::TokenStream,
+    depth: proc_macro2::TokenStream,
+    all_tags: &[String],
+    variants: &[Ident],
     tag_enum_name: &Ident,
+) -> Result<proc_macro2::TokenStream> {
+    Ok(match selector {
+        SelectorExpr::Tag(tags) => {
+            let checks = tags.iter().map(|tag| {
+                let variant = variant_for_tag(all_tags, variants, &tag.value());
+                quote! { #current_tag == #tag_enum_name::#variant }
+            });
+            quote! { false #(|| #checks)* }
+        }
+        SelectorExpr::HasAttr(name) => {
+            let bytes = LitByteStr::new(name.value().as_bytes(), name.span());
+            quote! {
+                #current_attrs
+                    .attributes()
+                    .flatten()
+                    .any(|attr| attr.key.as_ref() == #bytes)
+            }
+        }
+        SelectorExpr::AttrIs(name, value) => {
+            let name_bytes = LitByteStr::new(name.value().as_bytes(), name.span());
+            let expected = value.value();
+            quote! {
+                #current_attrs
+                    .attributes()
+                    .flatten()
+                    .any(|attr| {
+                        attr.key.as_ref() == #name_bytes
+                            && ::std::string::String::from_utf8_lossy(attr.value.as_ref()).as_ref() == #expected
+                    })
+            }
+        }
+        SelectorExpr::And(items) => {
+            let parts = items.iter().map(|item| {
+                selector_eval_tokens(
+                    item,
+                    current_tag.clone(),
+                    current_attrs.clone(),
+                    view.clone(),
+                    depth.clone(),
+                    all_tags,
+                    variants,
+                    tag_enum_name,
+                )
+            }).collect::<Result<Vec<_>>>()?;
+            quote! { true #(&& (#parts))* }
+        }
+        SelectorExpr::Or(items) => {
+            let parts = items.iter().map(|item| {
+                selector_eval_tokens(
+                    item,
+                    current_tag.clone(),
+                    current_attrs.clone(),
+                    view.clone(),
+                    depth.clone(),
+                    all_tags,
+                    variants,
+                    tag_enum_name,
+                )
+            }).collect::<Result<Vec<_>>>()?;
+            quote! { false #(|| (#parts))* }
+        }
+        SelectorExpr::Not(inner) => {
+            let tokens = selector_eval_tokens(
+                inner,
+                current_tag,
+                current_attrs,
+                view,
+                depth,
+                all_tags,
+                variants,
+                tag_enum_name,
+            )?;
+            quote! { !(#tokens) }
+        }
+        SelectorExpr::Ancestor(inner) => {
+            let mut tags = BTreeSet::new();
+            collect_reducible_tags(inner, &mut tags);
+            let checks = tags.iter().map(|tag| {
+                let variant = variant_for_tag(all_tags, variants, tag);
+                quote! { #view.ancestor_of_depth(#tag_enum_name::#variant, #depth) }
+            });
+            quote! { false #(|| #checks)* }
+        }
+        SelectorExpr::Parent(inner) => {
+            let mut tags = BTreeSet::new();
+            collect_reducible_tags(inner, &mut tags);
+            let checks = tags.iter().map(|tag| {
+                let variant = variant_for_tag(all_tags, variants, tag);
+                quote! { #view.parent_of_depth(#tag_enum_name::#variant, #depth) }
+            });
+            quote! { false #(|| #checks)* }
+        }
+        SelectorExpr::True => quote! { true },
+    })
+}
+
+fn reducer_type_tokens(
+    record: &RecordSpec,
+    field: &FieldSpec,
+    tag_enum_name: &Ident,
+    fragment_defs: &mut Vec<proc_macro2::TokenStream>,
 ) -> proc_macro2::TokenStream {
-    match extractor {
-        ExtractorSpec::FirstText(_) => quote! { ::usc_ingest::xmlspec::FirstTextReducer<#tag_enum_name> },
-        ExtractorSpec::AllText(_) => quote! { ::usc_ingest::xmlspec::AllTextReducer<#tag_enum_name> },
-        ExtractorSpec::Text { .. } => quote! { ::usc_ingest::xmlspec::TextReducer<#tag_enum_name> },
-        ExtractorSpec::RootTagName => quote! { Option<String> },
-        ExtractorSpec::AttrRoot(_) | ExtractorSpec::AttrAt(_, _) => {
-            quote! { ::usc_ingest::xmlspec::AttrReducer }
+    match field.reducer {
+        ReducerSpec::FirstText => quote! { ::usc_ingest::xmlspec::FirstTextReducer },
+        ReducerSpec::AllText => quote! { ::usc_ingest::xmlspec::AllTextReducer },
+        ReducerSpec::Attr(_) => quote! { ::usc_ingest::xmlspec::AttrReducer },
+        ReducerSpec::AllFragments => {
+            let enum_name = fragment_enum_name(&record.name, &field.name);
+            let variants = field
+                .inline_rules
+                .iter()
+                .map(|rule| &rule.variant)
+                .collect::<Vec<_>>();
+            let def = quote! {
+                #[derive(Debug, Clone, PartialEq, Eq)]
+                pub enum #enum_name {
+                    Text(String),
+                    #(#variants(String),)*
+                }
+            };
+            if !fragment_defs.iter().any(|existing| existing.to_string() == def.to_string()) {
+                fragment_defs.push(def);
+            }
+            quote! { ::usc_ingest::xmlspec::AllFragmentsReducer<#tag_enum_name> }
         }
     }
 }
 
 fn reducer_init_tokens(
-    extractor: &ExtractorSpec,
+    field: &FieldSpec,
     all_tags: &[String],
     variants: &[Ident],
     tag_enum_name: &Ident,
 ) -> proc_macro2::TokenStream {
-    match extractor {
-        ExtractorSpec::FirstText(selector) => {
-            let sel = selector_tokens(selector, all_tags, variants, tag_enum_name);
-            quote! { ::usc_ingest::xmlspec::FirstTextReducer::new(#sel, root_depth) }
+    match &field.reducer {
+        ReducerSpec::FirstText => quote! { ::usc_ingest::xmlspec::FirstTextReducer::new() },
+        ReducerSpec::AllText => quote! { ::usc_ingest::xmlspec::AllTextReducer::new() },
+        ReducerSpec::Attr(name) => {
+            let bytes = LitByteStr::new(name.value().as_bytes(), name.span());
+            quote! { ::usc_ingest::xmlspec::AttrReducer::new(#bytes) }
         }
-        ExtractorSpec::AllText(selector) => {
-            let sel = selector_tokens(selector, all_tags, variants, tag_enum_name);
-            quote! { ::usc_ingest::xmlspec::AllTextReducer::new(#sel, root_depth) }
-        }
-        ExtractorSpec::Text { selector, except } => {
-            let sel = selector_tokens(selector, all_tags, variants, tag_enum_name);
-            let except_tokens = except
-                .iter()
-                .map(|selector| selector_tokens(selector, all_tags, variants, tag_enum_name));
-            quote! {
-                ::usc_ingest::xmlspec::TextReducer::new(#sel, vec![#(#except_tokens),*], root_depth)
-            }
-        }
-        ExtractorSpec::RootTagName => {
-            quote! { Some(root_tag_name.to_string()) }
-        }
-        ExtractorSpec::AttrRoot(attr) => {
-            let attr_value = attr.value();
-            let attr_bytes = LitByteStr::new(attr_value.as_bytes(), attr.span());
-            quote! {{
-                let mut reducer = ::usc_ingest::xmlspec::AttrReducer::new(#attr_bytes);
-                reducer.capture(start);
-                reducer
-            }}
-        }
-        ExtractorSpec::AttrAt(selector, attr) => {
-            let _selector_tokens = selector_tokens(selector, all_tags, variants, tag_enum_name);
-            let attr_value = attr.value();
-            let attr_bytes = LitByteStr::new(attr_value.as_bytes(), attr.span());
-            quote! {{
-                ::usc_ingest::xmlspec::AttrReducer::new(#attr_bytes)
-            }}
-        }
-    }
-}
-
-fn output_field_type_tokens(extractor: &ExtractorSpec) -> proc_macro2::TokenStream {
-    match extractor {
-        ExtractorSpec::FirstText(_)
-        | ExtractorSpec::Text { .. }
-        | ExtractorSpec::RootTagName
-        | ExtractorSpec::AttrRoot(_)
-        | ExtractorSpec::AttrAt(_, _) => {
-            quote! { Option<String> }
-        }
-        ExtractorSpec::AllText(_) => quote! { Vec<String> },
-    }
-}
-
-fn selector_tokens(
-    selector: &SelectorSpec,
-    all_tags: &[String],
-    variants: &[Ident],
-    tag_enum_name: &Ident,
-) -> proc_macro2::TokenStream {
-    match selector {
-        SelectorSpec::Desc(tag) => {
-            let variant = variant_for_tag(all_tags, variants, &tag.value());
-            quote! { ::usc_ingest::xmlspec::Selector::Desc(#tag_enum_name::#variant) }
-        }
-        SelectorSpec::Child(tag) => {
-            let variant = variant_for_tag(all_tags, variants, &tag.value());
-            quote! { ::usc_ingest::xmlspec::Selector::Child(#tag_enum_name::#variant) }
-        }
-    }
-}
-
-fn start_guard_check_tokens(
-    guard: &GuardExpr,
-    all_tags: &[String],
-    variants: &[Ident],
-    tag_enum_name: &Ident,
-) -> proc_macro2::TokenStream {
-    match guard {
-        GuardExpr::True => quote! { true },
-        GuardExpr::Ancestor(tag) => {
-            let variant = variant_for_tag(all_tags, variants, &tag.value());
-            quote! {
-                view.ancestor(#tag_enum_name::#variant)
-            }
-        }
-        GuardExpr::Parent(tag) => {
-            let variant = variant_for_tag(all_tags, variants, &tag.value());
-            quote! {
-                view.parent(#tag_enum_name::#variant)
-            }
-        }
-        GuardExpr::AttrEq(_, _) | GuardExpr::FirstTextContains(_, _) => quote! { true },
-        GuardExpr::Not(inner) => {
-            let inner_tokens = start_guard_check_tokens(inner, all_tags, variants, tag_enum_name);
-            quote! { !(#inner_tokens) }
-        }
-        GuardExpr::And(left, right) => {
-            let left_tokens = start_guard_check_tokens(left, all_tags, variants, tag_enum_name);
-            let right_tokens = start_guard_check_tokens(right, all_tags, variants, tag_enum_name);
-            quote! { (#left_tokens) && (#right_tokens) }
-        }
-        GuardExpr::Or(left, right) => {
-            let left_tokens = start_guard_check_tokens(left, all_tags, variants, tag_enum_name);
-            let right_tokens = start_guard_check_tokens(right, all_tags, variants, tag_enum_name);
-            quote! { (#left_tokens) || (#right_tokens) }
-        }
-    }
-}
-
-fn close_guard_check_tokens(
-    guard: &GuardExpr,
-    dynamic_fields: &[DynamicGuardField],
-    next_guard_index: &mut usize,
-) -> proc_macro2::TokenStream {
-    match guard {
-        GuardExpr::True | GuardExpr::Ancestor(_) | GuardExpr::Parent(_) => quote! { true },
-        GuardExpr::AttrEq(_, _) => {
-            let field = dynamic_fields
-                .get(*next_guard_index)
-                .expect("guard field index is in range");
-            *next_guard_index += 1;
-            match field {
-                DynamicGuardField::AttrEq { ident, .. } => quote! { state.#ident },
-                DynamicGuardField::FirstTextContains { .. } => {
-                    panic!("guard field type mismatch for AttrEq")
+        ReducerSpec::AllFragments => {
+            let mut entries = Vec::new();
+            for (idx, rule) in field.inline_rules.iter().enumerate() {
+                let mut tag_names = BTreeSet::new();
+                collect_reducible_tags(&rule.selector, &mut tag_names);
+                for tag_name in tag_names {
+                    let variant = variant_for_tag(all_tags, variants, &tag_name);
+                    let kind = idx as u16;
+                    entries.push(quote! { (#tag_enum_name::#variant, #kind) });
                 }
             }
-        }
-        GuardExpr::FirstTextContains(_, pattern) => {
-            let field = dynamic_fields
-                .get(*next_guard_index)
-                .expect("guard field index is in range");
-            *next_guard_index += 1;
-            let pattern_lower = pattern.value().to_ascii_lowercase();
-            match field {
-                DynamicGuardField::FirstTextContains { ident, .. } => quote! {
-                    state.#ident
-                        .peek()
-                        .map(|value| value.to_ascii_lowercase().contains(#pattern_lower))
-                        .unwrap_or(false)
-                },
-                DynamicGuardField::AttrEq { .. } => {
-                    panic!("guard field type mismatch for FirstTextContains")
-                }
+            quote! {
+                ::usc_ingest::xmlspec::AllFragmentsReducer::new(vec![#(#entries),*])
             }
         }
-        GuardExpr::Not(inner) => {
-            let inner_tokens = close_guard_check_tokens(inner, dynamic_fields, next_guard_index);
-            quote! { !(#inner_tokens) }
-        }
-        GuardExpr::And(left, right) => {
-            let left_tokens = close_guard_check_tokens(left, dynamic_fields, next_guard_index);
-            let right_tokens = close_guard_check_tokens(right, dynamic_fields, next_guard_index);
-            quote! { (#left_tokens) && (#right_tokens) }
-        }
-        GuardExpr::Or(left, right) => {
-            let left_tokens = close_guard_check_tokens(left, dynamic_fields, next_guard_index);
-            let right_tokens = close_guard_check_tokens(right, dynamic_fields, next_guard_index);
-            quote! { (#left_tokens) || (#right_tokens) }
+    }
+}
+
+fn output_field_type_tokens(record: &RecordSpec, field: &FieldSpec) -> proc_macro2::TokenStream {
+    match field.reducer {
+        ReducerSpec::FirstText | ReducerSpec::Attr(_) => quote! { Option<String> },
+        ReducerSpec::AllText => quote! { Vec<String> },
+        ReducerSpec::AllFragments => {
+            let enum_name = fragment_enum_name(&record.name, &field.name);
+            quote! { Vec<#enum_name> }
         }
     }
+}
+
+fn fragment_enum_name(record_name: &Ident, field_name: &Ident) -> Ident {
+    format_ident!("{}{}Fragment", record_name, field_name)
 }
 
 fn variant_for_tag<'a>(all_tags: &'a [String], variants: &'a [Ident], tag: &str) -> &'a Ident {
@@ -1041,24 +938,6 @@ fn variant_for_tag<'a>(all_tags: &'a [String], variants: &'a [Ident], tag: &str)
         .position(|candidate| candidate == tag)
         .expect("tag must exist in all_tags");
     &variants[idx]
-}
-
-fn collect_guard_tags(all_tags: &mut Vec<String>, guard: &GuardExpr) {
-    match guard {
-        GuardExpr::True | GuardExpr::AttrEq(_, _) => {}
-        GuardExpr::Ancestor(tag) | GuardExpr::Parent(tag) => push_tag(all_tags, &tag.value()),
-        GuardExpr::FirstTextContains(selector, _) => {
-            let tag = match selector {
-                SelectorSpec::Desc(tag) | SelectorSpec::Child(tag) => tag.value(),
-            };
-            push_tag(all_tags, &tag);
-        }
-        GuardExpr::Not(inner) => collect_guard_tags(all_tags, inner),
-        GuardExpr::And(left, right) | GuardExpr::Or(left, right) => {
-            collect_guard_tags(all_tags, left);
-            collect_guard_tags(all_tags, right);
-        }
-    }
 }
 
 fn push_tag(tags: &mut Vec<String>, tag: &str) {

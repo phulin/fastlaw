@@ -1,4 +1,4 @@
-error: only `true` is allowed in guard expressions
+error: expected identifier, found keyword `false`
  --> tests/ui/xmlspec/fail/invalid_guard_false.rs:7:15
   |
 7 |         where false

@@ -1,6 +1,6 @@
 use usc_ingest::xmlspec::{
     AllTextReducer, AttrReducer, EndEvent, Engine, EngineView, FirstTextReducer, Guard, RootSpec,
-    Schema, Selector, StartEvent, TextReducer,
+    Schema, StartEvent,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,7 +10,6 @@ enum TestTag {
     Note,
     Heading,
     Num,
-    P,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,16 +17,14 @@ struct SectionRecord {
     heading: Option<String>,
     num: Option<String>,
     notes: Vec<String>,
-    body: Option<String>,
     kind: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 struct SectionScope {
-    heading: FirstTextReducer<TestTag>,
-    num: FirstTextReducer<TestTag>,
-    notes: AllTextReducer<TestTag>,
-    body: TextReducer<TestTag>,
+    heading: FirstTextReducer,
+    num: FirstTextReducer,
+    notes: AllTextReducer,
     kind: AttrReducer,
 }
 
@@ -39,7 +36,7 @@ impl Schema for TestSchema {
     type Output = SectionRecord;
 
     fn tag_count() -> usize {
-        6
+        5
     }
 
     fn tag_index(tag: Self::Tag) -> usize {
@@ -49,7 +46,6 @@ impl Schema for TestSchema {
             TestTag::Note => 2,
             TestTag::Heading => 3,
             TestTag::Num => 4,
-            TestTag::P => 5,
         }
     }
 
@@ -60,7 +56,6 @@ impl Schema for TestSchema {
             b"note" => Some(TestTag::Note),
             b"heading" => Some(TestTag::Heading),
             b"num" => Some(TestTag::Num),
-            b"p" => Some(TestTag::P),
             _ => None,
         }
     }
@@ -73,25 +68,28 @@ impl Schema for TestSchema {
         }]
     }
 
+    fn matches_root(
+        root: &RootSpec<Self::Tag>,
+        start: &quick_xml::events::BytesStart<'_>,
+        view: &EngineView<'_, Self::Tag>,
+    ) -> bool {
+        let _ = start;
+        usc_ingest::xmlspec::evaluate_guard(&root.guard, view)
+    }
+
     fn open_scope(
         _scope_kind: u16,
         _root: Self::Tag,
         start: &quick_xml::events::BytesStart<'_>,
-        view: &EngineView<'_, Self::Tag>,
+        _view: &EngineView<'_, Self::Tag>,
     ) -> Self::Scope {
-        let root_depth = view.depth() + 1;
         let mut kind = AttrReducer::new(b"kind");
         kind.capture(start);
 
         SectionScope {
-            heading: FirstTextReducer::new(Selector::Desc(TestTag::Heading), root_depth),
-            num: FirstTextReducer::new(Selector::Child(TestTag::Num), root_depth),
-            notes: AllTextReducer::new(Selector::Desc(TestTag::Note), root_depth),
-            body: TextReducer::new(
-                Selector::Desc(TestTag::P),
-                vec![Selector::Desc(TestTag::Note)],
-                root_depth,
-            ),
+            heading: FirstTextReducer::new(),
+            num: FirstTextReducer::new(),
+            notes: AllTextReducer::new(),
             kind,
         }
     }
@@ -99,19 +97,24 @@ impl Schema for TestSchema {
     fn on_start(
         scope: &mut Self::Scope,
         event: StartEvent<'_, Self::Tag>,
-        _view: &EngineView<'_, Self::Tag>,
+        view: &EngineView<'_, Self::Tag>,
     ) {
-        scope.heading.on_start(event.tag, event.depth);
-        scope.num.on_start(event.tag, event.depth);
-        scope.notes.on_start(event.tag, event.depth);
-        scope.body.on_start(event.tag, event.depth);
+        let is_heading_child =
+            event.tag == TestTag::Heading && view.parent_of_depth(TestTag::Section, event.depth);
+        let is_num_child =
+            event.tag == TestTag::Num && view.parent_of_depth(TestTag::Section, event.depth);
+        let is_note_desc =
+            event.tag == TestTag::Note && view.ancestor_of_depth(TestTag::Section, event.depth);
+
+        scope.heading.on_start(is_heading_child, event.depth);
+        scope.num.on_start(is_num_child, event.depth);
+        scope.notes.on_start(is_note_desc, event.depth);
     }
 
     fn on_text(scope: &mut Self::Scope, text: &[u8]) {
         scope.heading.on_text(text);
         scope.num.on_text(text);
         scope.notes.on_text(text);
-        scope.body.on_text(text);
     }
 
     fn on_end(
@@ -122,7 +125,6 @@ impl Schema for TestSchema {
         scope.heading.on_end(event.depth);
         scope.num.on_end(event.depth);
         scope.notes.on_end(event.depth);
-        scope.body.on_end(event.depth);
     }
 
     fn close_scope(scope: Self::Scope) -> Option<Self::Output> {
@@ -130,7 +132,6 @@ impl Schema for TestSchema {
             heading: scope.heading.take(),
             num: scope.num.take(),
             notes: scope.notes.take(),
-            body: scope.body.take(),
             kind: scope.kind.take(),
         })
     }
@@ -143,9 +144,8 @@ fn extracts_first_all_and_attr_reducers() {
             <section kind="public">
                 <num>1</num>
                 <heading>General <![CDATA[Provisions]]></heading>
-                <p><num>999</num></p>
-                <note><p>Note A</p></note>
-                <note><p>Note B</p></note>
+                <note>Note A</note>
+                <note>Note B</note>
             </section>
         </doc>
     "#;
@@ -163,7 +163,6 @@ fn extracts_first_all_and_attr_reducers() {
             heading: Some("General Provisions".to_string()),
             num: Some("1".to_string()),
             notes: vec!["Note A".to_string(), "Note B".to_string()],
-            body: Some("999".to_string()),
             kind: Some("public".to_string()),
         }
     );
@@ -176,12 +175,10 @@ fn guard_blocks_sections_nested_in_notes() {
             <note>
                 <section kind="ignored">
                     <num>3</num>
-                    <heading>Should Not Emit</heading>
                 </section>
             </note>
             <section kind="live">
                 <num>4</num>
-                <heading>Should Emit</heading>
             </section>
         </doc>
     "#;
@@ -194,24 +191,17 @@ fn guard_blocks_sections_nested_in_notes() {
 
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].num.as_deref(), Some("4"));
-    assert_eq!(out[0].body.as_deref(), None);
     assert_eq!(out[0].kind.as_deref(), Some("live"));
 }
 
 #[test]
-fn text_reducer_excludes_nested_selector_text() {
-    let mut reducer = TextReducer::new(
-        Selector::Desc(TestTag::P),
-        vec![Selector::Desc(TestTag::Note)],
-        1,
-    );
-
-    reducer.on_start(TestTag::P, 2);
+fn first_text_waits_for_end_of_selected_element() {
+    let mut reducer = FirstTextReducer::new();
+    reducer.on_start(true, 2);
     reducer.on_text(b"alpha ");
-    reducer.on_start(TestTag::Note, 3);
-    reducer.on_text(b"skip");
+    reducer.on_start(true, 3);
+    reducer.on_text(b"beta");
     reducer.on_end(3);
-    reducer.on_text(b" beta");
     reducer.on_end(2);
 
     assert_eq!(reducer.take().as_deref(), Some("alpha beta"));

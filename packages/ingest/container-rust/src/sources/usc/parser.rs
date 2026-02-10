@@ -91,87 +91,84 @@ crate::xmlspec! {
     schema UscSchema {
         record MainTitle
         from tag("title")
-        where parent("main")
+        where parent(tag("main"))
         {
-            heading: first_text(child("heading")),
+            heading: first_text() where and(tag("heading"), parent(tag("title"))),
         }
 
         record MetaTitle
         from tag("meta")
         {
-            title: first_text(child("title")),
+            title: first_text() where and(tag("title"), parent(tag("meta"))),
         }
 
         record SubtitleLevel
         from tag("subtitle")
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            heading: first_text(child("heading")),
+            identifier: attr("identifier") where tag("subtitle"),
+            num: first_text() where and(tag("num"), parent(tag("subtitle"))),
+            heading: first_text() where and(tag("heading"), parent(tag("subtitle"))),
         }
 
         record PartLevel
         from tag("part")
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            heading: first_text(child("heading")),
+            identifier: attr("identifier") where tag("part"),
+            num: first_text() where and(tag("num"), parent(tag("part"))),
+            heading: first_text() where and(tag("heading"), parent(tag("part"))),
         }
 
         record SubpartLevel
         from tag("subpart")
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            heading: first_text(child("heading")),
+            identifier: attr("identifier") where tag("subpart"),
+            num: first_text() where and(tag("num"), parent(tag("subpart"))),
+            heading: first_text() where and(tag("heading"), parent(tag("subpart"))),
         }
 
         record ChapterLevel
         from tag("chapter")
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            heading: first_text(child("heading")),
+            identifier: attr("identifier") where tag("chapter"),
+            num: first_text() where and(tag("num"), parent(tag("chapter"))),
+            heading: first_text() where and(tag("heading"), parent(tag("chapter"))),
         }
 
         record SubchapterLevel
         from tag("subchapter")
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            heading: first_text(child("heading")),
+            identifier: attr("identifier") where tag("subchapter"),
+            num: first_text() where and(tag("num"), parent(tag("subchapter"))),
+            heading: first_text() where and(tag("heading"), parent(tag("subchapter"))),
         }
 
         record DivisionLevel
         from tag("division")
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            heading: first_text(child("heading")),
+            identifier: attr("identifier") where tag("division"),
+            num: first_text() where and(tag("num"), parent(tag("division"))),
+            heading: first_text() where and(tag("heading"), parent(tag("division"))),
         }
 
         record SubdivisionLevel
         from tag("subdivision")
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            heading: first_text(child("heading")),
+            identifier: attr("identifier") where tag("subdivision"),
+            num: first_text() where and(tag("num"), parent(tag("subdivision"))),
+            heading: first_text() where and(tag("heading"), parent(tag("subdivision"))),
         }
 
         record SectionBase
         from tag("section")
-        where not(ancestor("note")) and not(ancestor("quotedContent"))
+        where and(
+            not(ancestor(tag("note"))),
+            not(ancestor(tag("quotedContent")))
+        )
         {
-            identifier: attr("identifier"),
-            num: first_text(child("num")),
-            num_value: attr(child("num"), "value"),
-            heading: first_text(child("heading")),
-            body_raw: text(
-                desc("p"),
-                except(desc("note"), desc("sourceCredit"), desc("quotedContent"))
-            ),
-            source_credit_raw: text(child("sourceCredit")),
-            notes_raw: text(desc("note"), except(desc("quotedContent"))),
+            identifier: attr("identifier") where tag("section"),
+            num: first_text() where and(tag("num"), parent(tag("section"))),
+            num_value: attr("value") where and(tag("num"), parent(tag("section"))),
+            heading: first_text() where and(tag("heading"), parent(tag("section"))),
         }
     }
 }
@@ -849,9 +846,9 @@ fn collect_raw(
                     raw_identifier: section.identifier,
                     section_num,
                     heading: clean_heading(section.num.as_deref(), section.heading),
-                    body_raw: section.body_raw,
-                    source_credit_raw: section.source_credit_raw,
-                    notes_raw: section.notes_raw,
+                    body_raw: None,
+                    source_credit_raw: None,
+                    notes_raw: None,
                 });
             }
         })
@@ -924,11 +921,14 @@ where
         if source_credit.is_empty() {
             source_credit = raw_section.source_credit_raw.clone().unwrap_or_default();
         }
-        let body = if body.is_empty() {
+        let mut body = if body.is_empty() {
             normalized_whitespace(&raw_section.body_raw.unwrap_or_default())
         } else {
             body
         };
+        if !raw_section.heading.is_empty() && body.contains(&raw_section.heading) {
+            body = normalized_whitespace(&body.replacen(&raw_section.heading, "", 1));
+        }
 
         on_event(USCStreamEvent::Section(USCSection {
             section_key: format!("{title_num}:{final_section_num}"),

@@ -1,12 +1,6 @@
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Selector<Tag> {
-    Desc(Tag),
-    Child(Tag),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Guard<Tag> {
     True,
@@ -54,12 +48,29 @@ where
         self.stack.len() as u32
     }
 
-    pub fn ancestor(&self, tag: Tag) -> bool {
-        self.depths[(self.index_of)(tag)] > 0
+    pub fn parent_of_depth(&self, tag: Tag, depth: u32) -> bool {
+        if depth < 2 {
+            return false;
+        }
+        self.stack.get(depth as usize - 2).and_then(|t| *t) == Some(tag)
+    }
+
+    pub fn ancestor_of_depth(&self, tag: Tag, depth: u32) -> bool {
+        if depth < 2 {
+            return false;
+        }
+        self.stack
+            .iter()
+            .take(depth as usize - 1)
+            .any(|candidate| *candidate == Some(tag))
     }
 
     pub fn parent(&self, tag: Tag) -> bool {
-        self.stack.last().and_then(|t| *t) == Some(tag)
+        self.parent_of_depth(tag, self.depth() + 1)
+    }
+
+    pub fn ancestor(&self, tag: Tag) -> bool {
+        self.depths[(self.index_of)(tag)] > 0
     }
 }
 
@@ -72,7 +83,12 @@ pub trait Schema {
     fn tag_index(tag: Self::Tag) -> usize;
     fn intern(bytes: &[u8]) -> Option<Self::Tag>;
     fn roots() -> Vec<RootSpec<Self::Tag>>;
-    fn matches_root(root: &RootSpec<Self::Tag>, view: &EngineView<'_, Self::Tag>) -> bool {
+    fn matches_root(
+        root: &RootSpec<Self::Tag>,
+        start: &BytesStart<'_>,
+        view: &EngineView<'_, Self::Tag>,
+    ) -> bool {
+        let _ = start;
         evaluate_guard(&root.guard, view)
     }
 
@@ -184,7 +200,7 @@ impl<S: Schema> Engine<S> {
             let tag_idx = S::tag_index(tag);
             for &root_idx in &self.roots_by_tag[tag_idx] {
                 let root = &self.roots[root_idx];
-                if S::matches_root(root, &guard_view) {
+                if S::matches_root(root, start, &guard_view) {
                     let state = S::open_scope(root.scope_kind, tag, start, &guard_view);
                     let root_depth = self.stack.len() as u32 + 1;
                     self.scopes.push(ActiveScope {
@@ -194,7 +210,7 @@ impl<S: Schema> Engine<S> {
                     });
                 }
             }
-            self.depths[S::tag_index(tag)] += 1;
+            self.depths[tag_idx] += 1;
         }
 
         self.stack.push(interned);
@@ -282,49 +298,27 @@ pub fn normalize_text(text: &[u8]) -> String {
         .to_string()
 }
 
-pub fn selector_matches<Tag>(
-    selector: Selector<Tag>,
-    root_depth: u32,
-    event_depth: u32,
-    tag: Tag,
-) -> bool
-where
-    Tag: Copy + Eq,
-{
-    match selector {
-        Selector::Desc(target) => event_depth > root_depth && tag == target,
-        Selector::Child(target) => event_depth == root_depth + 1 && tag == target,
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct FirstTextReducer<Tag> {
-    selector: Selector<Tag>,
-    root_depth: u32,
+pub struct FirstTextReducer {
     active_depths: Vec<u32>,
     buffer: Vec<u8>,
     value: Option<String>,
 }
 
-impl<Tag> FirstTextReducer<Tag>
-where
-    Tag: Copy + Eq,
-{
-    pub fn new(selector: Selector<Tag>, root_depth: u32) -> Self {
+impl FirstTextReducer {
+    pub fn new() -> Self {
         Self {
-            selector,
-            root_depth,
             active_depths: Vec::new(),
             buffer: Vec::new(),
             value: None,
         }
     }
 
-    pub fn on_start(&mut self, tag: Tag, depth: u32) {
+    pub fn on_start(&mut self, matches_selector: bool, depth: u32) {
         if self.value.is_some() {
             return;
         }
-        if selector_matches(self.selector, self.root_depth, depth, tag) {
+        if matches_selector {
             self.active_depths.push(depth);
         }
     }
@@ -354,37 +348,32 @@ where
     pub fn take(self) -> Option<String> {
         self.value
     }
+}
 
-    pub fn peek(&self) -> Option<&str> {
-        self.value.as_deref()
+impl Default for FirstTextReducer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct AllTextReducer<Tag> {
-    selector: Selector<Tag>,
-    root_depth: u32,
+pub struct AllTextReducer {
     active_depths: Vec<u32>,
     buffer: Vec<u8>,
     values: Vec<String>,
 }
 
-impl<Tag> AllTextReducer<Tag>
-where
-    Tag: Copy + Eq,
-{
-    pub fn new(selector: Selector<Tag>, root_depth: u32) -> Self {
+impl AllTextReducer {
+    pub fn new() -> Self {
         Self {
-            selector,
-            root_depth,
             active_depths: Vec::new(),
             buffer: Vec::new(),
             values: Vec::new(),
         }
     }
 
-    pub fn on_start(&mut self, tag: Tag, depth: u32) {
-        if selector_matches(self.selector, self.root_depth, depth, tag) {
+    pub fn on_start(&mut self, matches_selector: bool, depth: u32) {
+        if matches_selector {
             self.active_depths.push(depth);
         }
     }
@@ -413,71 +402,9 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TextReducer<Tag> {
-    selector: Selector<Tag>,
-    except: Vec<Selector<Tag>>,
-    root_depth: u32,
-    active_depths: Vec<u32>,
-    excluded_depths: Vec<u32>,
-    buffer: Vec<u8>,
-    value: Option<String>,
-}
-
-impl<Tag> TextReducer<Tag>
-where
-    Tag: Copy + Eq,
-{
-    pub fn new(selector: Selector<Tag>, except: Vec<Selector<Tag>>, root_depth: u32) -> Self {
-        Self {
-            selector,
-            except,
-            root_depth,
-            active_depths: Vec::new(),
-            excluded_depths: Vec::new(),
-            buffer: Vec::new(),
-            value: None,
-        }
-    }
-
-    pub fn on_start(&mut self, tag: Tag, depth: u32) {
-        if selector_matches(self.selector, self.root_depth, depth, tag) {
-            self.active_depths.push(depth);
-        }
-        for selector in &self.except {
-            if selector_matches(*selector, self.root_depth, depth, tag) {
-                self.excluded_depths.push(depth);
-            }
-        }
-    }
-
-    pub fn on_text(&mut self, text: &[u8]) {
-        if !self.active_depths.is_empty() && self.excluded_depths.is_empty() {
-            self.buffer.extend_from_slice(text);
-        }
-    }
-
-    pub fn on_end(&mut self, depth: u32) {
-        if self.excluded_depths.last().copied() == Some(depth) {
-            self.excluded_depths.pop();
-        }
-        if self.active_depths.last().copied() == Some(depth) {
-            self.active_depths.pop();
-            if self.active_depths.is_empty() {
-                let normalized = normalize_text(&self.buffer);
-                self.buffer.clear();
-                if !normalized.is_empty() {
-                    self.value = Some(match self.value.take() {
-                        Some(existing) => format!("{existing}\n\n{normalized}"),
-                        None => normalized,
-                    });
-                }
-            }
-        }
-    }
-
-    pub fn take(self) -> Option<String> {
-        self.value
+impl Default for AllTextReducer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -509,5 +436,92 @@ impl AttrReducer {
 
     pub fn take(self) -> Option<String> {
         self.value
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FragmentChunk {
+    Text(String),
+    Styled(u16, String),
+}
+
+#[derive(Debug, Clone)]
+pub struct AllFragmentsReducer<Tag> {
+    inline_rules: Vec<(Tag, u16)>,
+    active_depths: Vec<u32>,
+    styles: Vec<(u32, u16)>,
+    buffer: Vec<u8>,
+    chunks: Vec<FragmentChunk>,
+}
+
+impl<Tag> AllFragmentsReducer<Tag>
+where
+    Tag: Copy + Eq,
+{
+    pub fn new(inline_rules: Vec<(Tag, u16)>) -> Self {
+        Self {
+            inline_rules,
+            active_depths: Vec::new(),
+            styles: Vec::new(),
+            buffer: Vec::new(),
+            chunks: Vec::new(),
+        }
+    }
+
+    pub fn inline_kind_for_tag(&self, tag: Tag) -> Option<u16> {
+        self.inline_rules
+            .iter()
+            .find_map(|(candidate, kind)| (*candidate == tag).then_some(*kind))
+    }
+
+    pub fn on_start(&mut self, matches_selector: bool, depth: u32, inline_kind: Option<u16>) {
+        if matches_selector {
+            self.active_depths.push(depth);
+        }
+        if self.active_depths.is_empty() {
+            return;
+        }
+        if let Some(kind) = inline_kind {
+            self.flush();
+            self.styles.push((depth, kind));
+        }
+    }
+
+    pub fn on_text(&mut self, text: &[u8]) {
+        if !self.active_depths.is_empty() {
+            self.buffer.extend_from_slice(text);
+        }
+    }
+
+    pub fn on_end(&mut self, depth: u32) {
+        if self.styles.last().copied().map(|(d, _)| d) == Some(depth) {
+            self.flush();
+            self.styles.pop();
+        }
+        if self.active_depths.last().copied() == Some(depth) {
+            self.flush();
+            self.active_depths.pop();
+        }
+    }
+
+    pub fn take(mut self) -> Vec<FragmentChunk> {
+        self.flush();
+        self.chunks
+    }
+
+    fn flush(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+        let normalized = normalize_text(&self.buffer);
+        self.buffer.clear();
+        if normalized.is_empty() {
+            return;
+        }
+        if let Some((_, kind)) = self.styles.last().copied() {
+            self.chunks.push(FragmentChunk::Styled(kind, normalized));
+        } else {
+            self.chunks.push(FragmentChunk::Text(normalized));
+        }
     }
 }

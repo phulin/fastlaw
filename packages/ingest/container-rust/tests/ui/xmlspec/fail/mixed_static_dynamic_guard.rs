@@ -4,9 +4,9 @@ xmlspec! {
     schema MixedGuardSchema {
         record Item
         from tag("item")
-        where parent("doc") and attr("kind") == "x"
+        where ancestor(has_attr("kind"))
         {
-            value: first_text(child("value")),
+            value: first_text() where and(tag("value"), parent(tag("item"))),
         }
     }
 }

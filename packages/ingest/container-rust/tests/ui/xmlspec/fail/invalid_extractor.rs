@@ -5,7 +5,7 @@ xmlspec! {
         record Item
         from tag("item")
         {
-            value: unknown(desc("value")),
+            value: unknown() where tag("value"),
         }
     }
 }

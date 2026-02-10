@@ -6,7 +6,7 @@ xmlspec! {
         from tag("item")
         where false
         {
-            value: first_text(child("value")),
+            value: first_text() where tag("value"),
         }
     }
 }

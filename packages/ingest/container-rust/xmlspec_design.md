@@ -1,438 +1,460 @@
-# Streaming XML Extraction Engine (`xmlspec!`)
+# `xmlspec!`: A Streaming XML Selection, Extraction, and Inline Transformation System
 
 ## Design Document
 
 ### Status
 
-Proposed / Ready for implementation
+Authoritative design / Ready for implementation
 
 ---
 
-## 1. Motivation
+## 1. Overview
 
-We need a **high-performance, streaming XML ingestion system** in Rust that:
+`xmlspec!` is a **compile-time specification language** and **runtime engine** for high-performance XML ingestion in Rust.
 
-* Operates in **one pass** over XML (`quick-xml`)
-* Uses **bounded memory**
-* Achieves **near-manual state machine performance**
-* Avoids:
+It is designed to:
+
+* Process XML in **a single streaming pass**
+* Operate with **bounded memory**
+* Achieve **near hand-written parser performance**
+* Avoid:
 
   * DOM construction
   * XPath engines
   * runtime matcher graphs
-* Allows users to **declaratively specify what to extract**, without writing per-schema state machines
+* Allow declarative, schema-specific extraction logic
+* Support **inline structural transformations** into typed fragments
 
-The target domain includes:
-
-* statutory text
-* regulations
-* hierarchical legal documents
-* large XML files (tens to hundreds of MB)
-
-This system is **not** a general XML query engine. It is an **ingestion compiler**.
+This system is intentionally *not* a general-purpose XML query language. It is a **streaming ingestion compiler**.
 
 ---
 
-## 2. Core Idea
+## 2. Core Principles (Normative)
 
-Instead of interpreting XPath-like queries at runtime, we:
+Every feature in `xmlspec!` must satisfy the following invariants:
 
-> **Compile a restricted, streaming-friendly “selection + extraction” specification into monomorphic Rust code that runs directly on XML tokens.**
+1. **Streaming-safe**
 
-Key principles:
+   * All decisions are made using only:
 
-1. **Genericity at compile time, not runtime**
-2. **Static tag identity**
-3. **Streaming reducers instead of tree queries**
-4. **Scopes instead of global state machines**
+     * the current XML event
+     * the ancestor stack
+     * the parent
+     * the attributes of the current element
+2. **Single-pass**
+
+   * No buffering of siblings or descendants
+3. **Bounded memory**
+
+   * Memory usage grows with specification size, not document size
+4. **Compile-time specialization**
+
+   * Genericity exists at compile time, not in the hot path
+5. **Predictable performance**
+
+   * O(1) work per XML event (amortized)
+
+Anything that violates these principles is explicitly out of scope.
 
 ---
 
-## 3. Architectural Overview
+## 3. Conceptual Model
+
+The system operates on four core concepts:
+
+1. **Schemas**
+2. **Records**
+3. **Selectors**
+4. **Reducers**
+
+### High-level flow
 
 ```
-┌─────────────────────────────────────┐
-│ xmlspec! schema definition (eDSL)   │
-│                                     │
-│ record SectionData { … }             │
-└───────────────┬─────────────────────┘
-                │ macro expansion
-┌───────────────▼─────────────────────┐
-│ Schema module (generated code)       │
-│ - Tag enum                           │
-│ - tag interner                       │
-│ - scope structs                      │
-│ - reducer logic                      │
-│ - root matcher specs                 │
-└───────────────┬─────────────────────┘
-                │ used by
-┌───────────────▼─────────────────────┐
-│ Generic streaming engine             │
-│ - XML event loop                     │
-│ - tag stack                          │
-│ - depth counters                     │
-│ - active scopes                      │
-└─────────────────────────────────────┘
+XML token stream
+  → structural matching (from)
+      → conditional filtering (where)
+          → scope opens
+              → reducers activate
+                  → optional inline transformations
+              → scope closes
+          → record emitted
 ```
 
 ---
 
-## 4. Runtime Model
+## 4. Schemas
 
-### 4.1 XML Event Stream
+A schema defines a **closed world** of:
 
-We consume `quick-xml` events:
+* tag names
+* selectors
+* record types
+* reducers
 
-* `Start`
-* `Text`
-* `CData`
-* `End`
+### Semantics
 
-The engine never buffers the document.
+* One schema expands into one Rust module
+* All tags referenced are statically known
+* The macro generates:
+
+  * a tag enum
+  * a tag interner
+  * scope structs
+  * reducer implementations
+  * selector evaluation code
 
 ---
 
-### 4.2 Tag Interning
+## 5. Records and Scopes
 
-All tag names are mapped to a **schema-local enum**.
+### 5.1 Records
+
+A **record** defines one output value emitted per matched subtree.
+
+Each record corresponds to a **scope** with a clear lifecycle:
+
+* **Open**: on a matching start tag
+* **Active**: while inside that element
+* **Close**: on the matching end tag
+* **Emit**: exactly once, at close
+
+### 5.2 Record Definition
 
 ```rust
-enum Tag {
-    Section,
-    Note,
-    Heading,
-    Num,
+record SectionData
+from tag("section", "appendix")
+where ...
+{
+    ...
 }
 ```
+
+---
+
+## 6. `from`: Structural Root Matching
+
+### Purpose
+
+The `from` clause defines **which element names may start a scope**.
+
+### Rules (Strict)
+
+* `from` may only specify tag names
+* No selectors
+* No predicates
+* No boolean logic
+
+### Syntax
+
+```rust
+from tag("section")
+from tag("section", "appendix")
+```
+
+### Semantics
 
 At runtime:
 
-* byte slice → `Option<Tag>`
-* no strings or allocations in the hot path
-
-Each schema chooses its own interning strategy:
-
-* `match` on literals (preferred)
-* `phf`
-* fallback hash map (discouraged)
-
----
-
-### 4.3 Stack and Depth Counters
-
-We maintain:
-
 ```rust
-stack: Vec<Tag>
-depths: Vec<u32>   // indexed by Tag
+if current_tag ∈ from_tags {
+    // candidate scope root
+}
 ```
 
-This enables:
+This separation ensures:
 
-* `ancestor(x)` → `depths[x] > 0`
-* `parent(x)` → `stack[stack.len() - 2] == x`
-
-No tree structure is ever built.
-
----
-
-## 5. Scopes
-
-### 5.1 What Is a Scope?
-
-A **scope** represents a matched subtree that will emit exactly one output record.
-
-Example:
-
-```text
-<section> ... </section> → SectionData
-```
-
-Scopes are:
-
-* created on `Start(root_tag)` if guard passes
-* active until matching `End(root_tag)`
-* may nest (rare but supported)
+* scope lifetime is purely structural
+* predictable opening/closing
+* minimal hot-path cost
 
 ---
 
-### 5.2 Scope Structure
+## 7. `where`: Conditional Filtering
 
-Each scope contains:
+### Purpose
 
-* reducer state (text buffers, flags)
-* output fields
-* no dynamic dispatch
+The `where` clause determines **whether a structurally valid root is allowed to open a scope**.
 
-Example:
+### Semantics
+
+* Evaluated on the same `Start` event that matched `from`
+* Uses the unified selector grammar
+* If false → scope is not opened
+
+---
+
+## 8. Fields and Reducers
+
+### 8.1 Fields
+
+Each field defines a **streaming reducer** that runs while the scope is active.
 
 ```rust
-struct SectionScope {
-    heading_done: bool,
-    heading_buf: Vec<u8>,
-    heading: Option<String>,
+field_name: reducer() where selector,
+```
 
-    notes_buf: Vec<u8>,
-    notes: Vec<String>,
+### Semantics
+
+* Reducers are inactive until their selector matches
+* Reducers only see events inside their parent scope
+* Reducers accumulate output incrementally
+
+---
+
+## 9. Reducer Types
+
+### Supported reducers
+
+| Reducer           | Description                                |
+| ----------------- | ------------------------------------------ |
+| `first_text()`    | Capture text of the first matching element |
+| `all_text()`      | Capture text of all matching elements      |
+| `attr("x")`       | Capture attribute `x`                      |
+| `all_fragments()` | Capture inline-typed fragments             |
+
+Reducers are **compile-time generated**, not dynamic objects.
+
+---
+
+## 10. Inline Transformations (Fragments)
+
+### Purpose
+
+Inline transformations allow text to be emitted as **typed fragments**, preserving inline structure.
+
+### Example
+
+```xml
+abc <heading>xyz</heading> def
+```
+
+→
+
+```rust
+[
+  Text("abc "),
+  Bold("xyz"),
+  Text(" def"),
+]
+```
+
+---
+
+### Syntax
+
+```rust
+body: all_fragments()
+    where tag("p")
+    inline {
+        tag("heading") => Bold,
+        tag("i")       => Italic,
+    },
+```
+
+---
+
+### Semantics
+
+* Inline transforms are reducer-local
+* Reducer maintains an inline-style stack
+* Text is flushed into fragments when styles change
+* Nested inline elements are supported
+* Text outside any inline style becomes `Text(...)`
+
+### Fragment model (conceptual)
+
+```rust
+enum Fragment {
+    Text(String),
+    Bold(String),
+    Italic(String),
 }
 ```
 
 ---
 
-## 6. Reducers (Extraction Semantics)
+## 11. Unified Selector Language
 
-Reducers are **compiled streaming reductions**, not runtime objects.
+Selectors are **boolean predicates evaluated on the current element**.
 
-### 6.1 Supported Reducers
+They are used in:
 
-| Reducer      | Meaning                                  |
-| ------------ | ---------------------------------------- |
-| `first_text` | capture text from first matching element |
-| `all_text`   | capture text from all matching elements  |
-| `attr`       | capture attribute value                  |
+* `where` (record filtering)
+* field activation
+* inline transformation rules
 
-Reducers operate only while a scope is active.
+Selectors are evaluated **only on `Start` events**.
 
 ---
 
-### 6.2 Selector Semantics
+## 12. Selector Grammar (Authoritative)
 
-Reducers listen to events defined by selectors:
+### BNF
 
-| Selector     | Meaning                           |
-| ------------ | --------------------------------- |
-| `desc("x")`  | any descendant `<x>` within scope |
-| `child("x")` | direct child of scope root        |
-
----
-
-### 6.3 Text Capture Rules
-
-* `Text` and `CData` both count
-* Text may arrive in multiple chunks
-* Buffers are reused
-* Conversion to `String` happens only at finalization
-
----
-
-## 7. Guards (Root Filters)
-
-Guards determine whether a scope opens.
-
-### 7.1 Supported Guard Primitives
-
-* `ancestor(tag)`
-* `parent(tag)`
-* `not(expr)`
-* `and`, `or`
-* `true`
-
-Example:
-
-```rust
-where not(ancestor("note"))
+```
+selector       ::= tag_expr
+                 | ancestor_expr
+                 | parent_expr
+                 | attr_expr
+                 | and_expr
+                 | or_expr
+                 | not_expr
+                 | "(" selector ")"
 ```
 
 ---
 
-### 7.2 Guard Evaluation
+### Tag selector
 
-Guards compile to **inline boolean checks**:
-
-```rust
-depths[Tag::Note] == 0
+```
+tag_expr       ::= "tag" "(" STRING ("," STRING)* ")"
 ```
 
-No closures, no function pointers.
+True if the current element name matches any listed tag.
 
 ---
 
-## 8. Engine Core (Generic)
+### Structural selectors
 
-The engine is generic over tag sets.
+```
+ancestor_expr  ::= "ancestor" "(" selector ")"
+parent_expr    ::= "parent" "(" selector ")"
+```
+
+#### Restrictions (compile-time enforced)
+
+* `ancestor(...)` may only contain selectors reducible to tag checks:
+
+  ```
+  tag("x") | or(tag("x"), tag("y"), ...)
+  ```
+* Attribute predicates inside `ancestor(...)` are forbidden
+
+---
+
+### Attribute selectors
+
+```
+attr_expr      ::= "has_attr" "(" STRING ")"
+                 | "attr_is"  "(" STRING "," STRING ")"
+```
+
+Evaluated by scanning attributes of the current element.
+
+---
+
+### Boolean combinators (function syntax)
+
+```
+and_expr       ::= "and" "(" selector ("," selector)+ ")"
+or_expr        ::= "or"  "(" selector ("," selector)+ ")"
+not_expr       ::= "not" "(" selector ")"
+```
+
+* Short-circuit evaluation
+* Empty `and()` / `or()` is invalid
+
+---
+
+## 13. Inline Rule Selectors (Restricted)
+
+Inline rules:
 
 ```rust
-trait TagSet {
-    type Tag: Copy + Eq;
-    fn intern(bytes: &[u8]) -> Option<Self::Tag>;
+inline {
+    selector => FragmentVariant,
 }
 ```
 
-```rust
-struct Engine<TS: TagSet> {
-    stack: Vec<TS::Tag>,
-    depths: Vec<u32>,
-    scopes: Vec<Scope<TS>>,
-    roots: &'static [RootSpec<TS::Tag>],
-}
-```
+### Restrictions
 
-### 8.1 Hot Path Guarantees
+* Selector must be reducible to a tag check
+* No `ancestor`, `parent`, or attribute predicates
+* Enforced at compile time
 
-* O(1) per event
-* No heap allocation unless capturing text
-* No string comparisons
-* No hash maps
-* No dynamic dispatch
+This keeps inline logic strictly local and streaming-safe.
 
 ---
 
-## 9. `xmlspec!` eDSL
+## 14. Compile-Time Validation Rules (Normative)
 
-### 9.1 High-Level Syntax
+The macro **must reject**:
 
-```rust
-xmlspec! {
-    schema Statutes {
-
-        record SectionData
-        from tag("section")
-        where not(ancestor("note"))
-        {
-            title: first_text(desc("heading")),
-            num:   first_text(desc("num")),
-            notes: all_text(desc("note")),
-        }
-
-    }
-}
-```
+1. Any non-tag logic in `from`
+2. Attribute predicates inside `ancestor(...)`
+3. Empty `and()` / `or()`
+4. Inline rules using non-tag selectors
+5. Reducers without a `where` clause (unless explicitly allowed)
+6. Unknown fragment variants
+7. Any construct requiring sibling or descendant buffering
 
 ---
 
-### 9.2 Grammar (Formal Sketch)
+## 15. Runtime Semantics Summary
 
-```
-xmlspec        := "xmlspec!" "{" schema "}"
+At runtime:
 
-schema         := "schema" IDENT "{" record* "}"
+1. XML events are read sequentially
+2. Tag names are interned to small enums
+3. A stack and depth counters track ancestry
+4. `from` performs a cheap structural match
+5. `where` selector decides scope opening
+6. Active scopes receive events
+7. Reducers activate on selector matches
+8. Inline reducers emit typed fragments incrementally
+9. Scope closes → record emitted
 
-record         := "record" IDENT
-                  "from" root_selector
-                  guard?
-                  "{" field* "}"
-
-root_selector  := "tag" "(" STRING ")"
-
-guard          := "where" guard_expr
-
-guard_expr     := "true"
-                | "ancestor" "(" STRING ")"
-                | "parent" "(" STRING ")"
-                | "not" "(" guard_expr ")"
-                | guard_expr "and" guard_expr
-                | guard_expr "or"  guard_expr
-
-field          := IDENT ":" extractor ","
-
-extractor      := "first_text" "(" selector ")"
-                | "all_text" "(" selector ")"
-                | "attr" "(" STRING ")"
-
-selector       := "desc" "(" STRING ")"
-                | "child" "(" STRING ")"
-```
+No DOM. No backtracking. No buffering.
 
 ---
 
-## 10. Compile-Time Guarantees
+## 16. Mental Model (Canonical)
 
-The macro ensures:
+> **`from`** — “Which tags may start a record?”
+> **`where`** — “Under what conditions is it valid?”
+> **Reducers** — “What do I accumulate while inside?”
+> **Inline transforms** — “How is text typed as it flows?”
 
-* All tags are statically known
-* Tag enum is minimal
-* Only necessary depth counters exist
-* Reducers are concrete fields
-* No runtime reflection
-
-Invalid constructs fail at compile time.
+If a feature does not fit this model, it does not belong in `xmlspec!`.
 
 ---
 
-## 11. Performance Characteristics
+## 17. Explicit Non-Goals
 
-* Linear scan
-* Near hand-written parser speed
-* Scales to very large XML inputs
-* Stable memory usage
+This system will **never** support:
 
-This is intentionally **faster than SAX + user handler** for non-trivial extraction logic.
+* XPath or XQuery
+* sibling traversal
+* positional predicates
+* descendant content tests
+* tree rewriting
+* user-defined runtime code
 
----
-
-## 12. Extensibility Rules (Strict)
-
-### Allowed Extensions
-
-* New reducer types
-* New guard primitives that map to O(1) checks
-* New selectors that depend only on stack/depth
-
-### Forbidden Extensions
-
-* Arbitrary XPath
-* Backward traversal
-* Sibling iteration
-* Position predicates
-* Tree materialization
-
-If an extension requires:
-
-> “remembering past siblings” or “looking ahead”
-
-…it does not belong here.
+Those features violate streaming guarantees.
 
 ---
 
-## 13. Transition Plan (From Existing Code)
+## 18. Intended Use
 
-### Phase 1 — Kill Matcher Graphs
+`xmlspec!` is designed for:
 
-* Replace `TrackingMatcher` with:
+* legal text ingestion
+* regulatory corpora
+* large structured XML
+* data pipelines where **performance and predictability matter**
 
-  * tag enum
-  * stack
-  * depth counters
-
-### Phase 2 — Introduce Scopes
-
-* Move handler logic into scope structs
-* Emit records only on scope close
-
-### Phase 3 — Reducers
-
-* Replace ad-hoc text logic with reducer patterns
-
-### Phase 4 — TagSet Genericity
-
-* Make engine generic over tag sets
-* Remove schema-specific logic from engine core
-
-### Phase 5 — `xmlspec!` Macro
-
-* Generate schema modules
-* Lock API
-
-Each phase yields performance and clarity improvements independently.
+It trades expressive power for **speed, safety, and clarity**.
 
 ---
 
-## 14. Mental Model for Users
+## 19. Status
 
-> “I declare when a record starts, when it is allowed, and what I want to collect while I’m inside it.”
+This document defines the **final surface language and execution model**.
 
-If something can’t be expressed that way, it probably violates streaming constraints.
+Future work should:
 
----
+* add new reducers
+* add new *stream-safe* selectors
+* improve diagnostics
 
-## 15. Summary
-
-This system:
-
-* Is **generic across XML schemas**
-* Preserves **streaming guarantees**
-* Eliminates **runtime matching overhead**
-* Compiles declarative specs into **tight Rust code**
-* Scales to legal-scale datasets
-
-It is intentionally narrow — and that narrowness is what makes it fast, safe, and maintainable.
+…but **not** expand the language in ways that compromise streaming invariants.

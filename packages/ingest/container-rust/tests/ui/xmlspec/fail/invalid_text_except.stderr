@@ -1,5 +1,5 @@
-error: expected except(...) as second argument to text(...)
- --> tests/ui/xmlspec/fail/invalid_text_except.rs:8:40
+error: inline { ... } is only valid for all_fragments() reducers
+ --> tests/ui/xmlspec/fail/invalid_text_except.rs:8:13
   |
-8 |             value: text(desc("value"), bad(desc("note"))),
-  |                                        ^^^
+8 |             value: first_text() where tag("value") inline {
+  |             ^^^^^

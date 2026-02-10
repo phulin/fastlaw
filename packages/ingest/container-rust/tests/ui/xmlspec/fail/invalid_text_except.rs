@@ -5,7 +5,9 @@ xmlspec! {
         record Item
         from tag("item")
         {
-            value: text(desc("value"), bad(desc("note"))),
+            value: first_text() where tag("value") inline {
+                has_attr("x") => Marked,
+            },
         }
     }
 }
