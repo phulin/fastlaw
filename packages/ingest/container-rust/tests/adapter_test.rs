@@ -96,8 +96,8 @@ async fn test_adapter_extracts_levels_and_sections() {
 
     // We expect:
     // 1. Title Level (1-title)
-    // 2. Chapter Level (1-ch1)
-    // 3. Section Node (1/s1 or similar ID logic)
+    // 2. Chapter Level (nested under title identifier)
+    // 3. Section Node nested under chapter
 
     // Check Title
     let title = nodes
@@ -112,7 +112,7 @@ async fn test_adapter_extracts_levels_and_sections() {
         .iter()
         .find(|n| n.meta.level_name == "chapter")
         .expect("Chapter not found");
-    assert_eq!(chapter.meta.id, "root/chapter-1-ch1");
+    assert_eq!(chapter.meta.id, "root/1-title/chapter-1");
     // Parent of chapter is title?
     // DocContext tracks parents.
     assert_eq!(chapter.meta.parent_id.as_deref(), Some("root/title-1"));
@@ -122,14 +122,10 @@ async fn test_adapter_extracts_levels_and_sections() {
         .iter()
         .find(|n| n.meta.level_name == "section")
         .expect("Section not found");
-    // ID logic for sections usually appends to parent?
-    // Wait, adapter logic for section ID: `parent_id + "/s" + section_num`.
-    // Parent of section is Chapter -> "1-ch1".
-    // So ID -> "1-ch1/s1".
-    assert_eq!(section.meta.id, "root/chapter-1-ch1/section-1");
+    assert_eq!(section.meta.id, "root/1-title/chapter-1/section-1");
     assert_eq!(
         section.meta.parent_id.as_deref(),
-        Some("root/chapter-1-ch1")
+        Some("root/1-title/chapter-1")
     );
     assert_eq!(
         section.meta.name.as_deref(),

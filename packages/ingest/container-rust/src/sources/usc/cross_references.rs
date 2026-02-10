@@ -49,8 +49,13 @@ struct SectionMention {
 
 #[derive(Debug, Clone)]
 enum SectionTarget {
-    Section { mention: SectionMention },
-    Range { start: SectionMention, end: SectionMention },
+    Section {
+        mention: SectionMention,
+    },
+    Range {
+        start: SectionMention,
+        end: SectionMention,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -87,8 +92,7 @@ static QUALIFIER_KEYWORDS: LazyLock<std::collections::HashMap<&str, &str>> = Laz
 
 static SECTION_KEYWORDS: LazyLock<HashSet<&str>> =
     LazyLock::new(|| ["section", "sections", "sec", "secs"].into_iter().collect());
-static TITLE_KEYWORDS: LazyLock<HashSet<&str>> =
-    LazyLock::new(|| ["title"].into_iter().collect());
+static TITLE_KEYWORDS: LazyLock<HashSet<&str>> = LazyLock::new(|| ["title"].into_iter().collect());
 static USC_KEYWORDS: LazyLock<HashSet<&str>> =
     LazyLock::new(|| ["usc", "u.s.c.", "u.s.c"].into_iter().collect());
 static SEPARATOR_WORDS: LazyLock<HashSet<&str>> =
@@ -293,12 +297,8 @@ fn parse_reference(
             Token::Word { value } => value == "sections" || value == "secs",
             _ => false,
         };
-        let section_list = parse_section_list_with_title(
-            tokens,
-            index + 1,
-            allow_multiple,
-            current_title_num,
-        )?;
+        let section_list =
+            parse_section_list_with_title(tokens, index + 1, allow_multiple, current_title_num)?;
         let references = build_references(&section_list.items);
         return Some(ParsedReferences {
             references,
@@ -359,10 +359,7 @@ struct QualifierChainResult {
     next_index: usize,
 }
 
-fn parse_qualifier_chain(
-    tokens: &[Token],
-    start_index: usize,
-) -> Option<QualifierChainResult> {
+fn parse_qualifier_chain(tokens: &[Token], start_index: usize) -> Option<QualifierChainResult> {
     let qualifier = parse_qualifier(tokens, start_index)?;
     let mut index = qualifier.next_index;
 
@@ -404,10 +401,7 @@ struct DesignatorListResult {
     next_index: usize,
 }
 
-fn parse_designator_list(
-    tokens: &[Token],
-    start_index: usize,
-) -> Option<DesignatorListResult> {
+fn parse_designator_list(tokens: &[Token], start_index: usize) -> Option<DesignatorListResult> {
     let first = tokens.get(start_index)?;
     if !is_designator(first) {
         return None;
@@ -447,12 +441,8 @@ fn parse_section_list_with_title(
     allow_multiple: bool,
     default_title_num: &str,
 ) -> Option<SectionListResult> {
-    let mut section_list = parse_section_list(
-        tokens,
-        start_index,
-        allow_multiple,
-        Some(default_title_num),
-    )?;
+    let mut section_list =
+        parse_section_list(tokens, start_index, allow_multiple, Some(default_title_num))?;
 
     let mut index = section_list.next_index;
 
@@ -596,7 +586,10 @@ fn parse_section_item(
 
         // Check for ", inclusive" or "inclusive"
         if let Some(Token::Punct { value: ',' }) = tokens.get(index) {
-            if tokens.get(index + 1).map_or(false, |t| is_word(t, "inclusive")) {
+            if tokens
+                .get(index + 1)
+                .map_or(false, |t| is_word(t, "inclusive"))
+            {
                 index += 2;
             }
         } else if tokens.get(index).map_or(false, |t| is_word(t, "inclusive")) {

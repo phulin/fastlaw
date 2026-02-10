@@ -15,6 +15,10 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+xmlspec-macros = { path = "xmlspec-macros" }
+
+[dev-dependencies]
+trybuild = "1"
 
 [[bin]]
 name = "usc-ingest"

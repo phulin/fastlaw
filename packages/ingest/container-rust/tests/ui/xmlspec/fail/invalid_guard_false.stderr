@@ -1,0 +1,5 @@
+error: only `true` is allowed in guard expressions
+ --> tests/ui/xmlspec/fail/invalid_guard_false.rs:7:15
+  |
+7 |         where false
+  |               ^^^^^

@@ -1,4 +1,6 @@
-use usc_ingest::sources::usc::cross_references::{extract_section_cross_references, SectionCrossReference};
+use usc_ingest::sources::usc::cross_references::{
+    extract_section_cross_references, SectionCrossReference,
+};
 
 fn find_target<'a>(
     references: &'a [SectionCrossReference],
