@@ -1,12 +1,30 @@
 use axum::{extract::Json, http::StatusCode, routing::post, Router};
+use ingest::ingest::ingest_source;
+use ingest::runtime::logging::{log_event_with_callback, LogLevel};
+use ingest::types::IngestConfig;
 use serde_json::json;
-use usc_ingest::ingest::ingest_source;
-use usc_ingest::types::IngestConfig;
 
 async fn handle_ingest(Json(config): Json<IngestConfig>) -> (StatusCode, Json<serde_json::Value>) {
-    tokio::spawn(async move {
+    let callback_base = config.callback_base.clone();
+    let callback_token = config.callback_token.clone();
+    let handle = tokio::spawn(async move {
         if let Err(err) = ingest_source(config).await {
             tracing::error!("[Container] Ingest failed: {}", err);
+        }
+    });
+    tokio::spawn(async move {
+        if let Err(err) = handle.await {
+            tracing::error!("[Container] Ingest task panicked or was cancelled: {}", err);
+            let client = reqwest::Client::new();
+            log_event_with_callback(
+                &client,
+                Some(&callback_base),
+                Some(&callback_token),
+                LogLevel::Error,
+                "ingest_task_panicked_or_cancelled",
+                Some(json!({ "error": err.to_string() })),
+            )
+            .await;
         }
     });
 
@@ -26,9 +44,7 @@ async fn handle_discover(
 
     match params.source.as_str() {
         "usc" => {
-            match usc_ingest::sources::usc::discover::discover_usc_root(&client, download_base)
-                .await
-            {
+            match ingest::sources::usc::discover::discover_usc_root(&client, download_base).await {
                 Ok(result) => (StatusCode::OK, Json(json!(result))),
                 Err(err) => (
                     StatusCode::INTERNAL_SERVER_ERROR,

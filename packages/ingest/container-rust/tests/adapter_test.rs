@@ -1,9 +1,9 @@
 use async_trait::async_trait;
+use ingest::runtime::types::{BlobStore, BuildContext, IngestContext, NodeStore};
+use ingest::sources::usc::adapter::UscAdapter;
+use ingest::sources::SourceAdapter;
+use ingest::types::{NodePayload, UnitEntry};
 use std::sync::{Arc, Mutex};
-use usc_ingest::runtime::types::{BlobStore, BuildContext, IngestContext, NodeStore};
-use usc_ingest::sources::usc::adapter::UscAdapter;
-use usc_ingest::sources::SourceAdapter;
-use usc_ingest::types::{NodePayload, UnitEntry};
 
 #[derive(Clone)]
 struct MockNodeStore {

@@ -1,5 +1,5 @@
+use ingest::xml_path::{Handler, XmlPathFilter};
 use quick_xml::events::{BytesEnd, BytesStart, Event};
-use usc_ingest::xml_path::{Handler, XmlPathFilter};
 
 // Mock Context
 #[derive(Debug, Default)]

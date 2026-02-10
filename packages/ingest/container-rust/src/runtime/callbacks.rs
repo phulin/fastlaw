@@ -26,6 +26,37 @@ pub async fn callback_fetch(
         .map_err(|e| format!("Request to {url} failed: {e}"))
 }
 
+pub(crate) async fn post_debug_log(
+    client: &Client,
+    callback_base: &str,
+    callback_token: &str,
+    level: &str,
+    message: &str,
+    context: Option<serde_json::Value>,
+) {
+    let body = serde_json::json!({
+        "level": level,
+        "message": message,
+        "context": context,
+    });
+
+    let result = callback_fetch(
+        client,
+        callback_base,
+        callback_token,
+        "/api/callback/containerLog",
+        reqwest::Method::POST,
+        Some(body),
+    )
+    .await;
+    if let Err(err) = result {
+        eprintln!(
+            "[Container][stderr] post_debug_log failed: level={} message={} err={}",
+            level, message, err
+        );
+    }
+}
+
 pub async fn post_node_batch(
     client: &Client,
     callback_base: &str,

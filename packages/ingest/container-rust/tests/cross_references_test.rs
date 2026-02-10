@@ -1,4 +1,4 @@
-use usc_ingest::sources::usc::cross_references::{
+use ingest::sources::usc::cross_references::{
     extract_section_cross_references, SectionCrossReference,
 };
 

@@ -24,7 +24,7 @@ import {
 	getOrCreateSource,
 	insertNodesBatched,
 } from "./lib/versioning";
-import { streamXmlFromZip } from "./lib/zip-utils";
+import { streamXmlFromZipStream } from "./lib/zip-utils";
 import type {
 	Env,
 	IngestNode,
@@ -156,7 +156,7 @@ app.post("/api/admin/reset", async (c) => {
 // USC ingest via containers
 // ──────────────────────────────────────────────────────────────
 
-app.post("/api/ingest/usc/jobs", async (c) => {
+app.post("/api/ingest/usc", async (c) => {
 	try {
 		const unitSelectors = (c.req.query("units") ?? "")
 			.split(",")
@@ -187,8 +187,8 @@ app.post("/api/ingest/usc/jobs", async (c) => {
 			c.env.CALLBACK_SECRET,
 		);
 
-		const container = c.env.INGEST_CONTAINER.getByName("usc-discovery");
-		// Using "usc-discovery" as a stable name for the service
+		const container = c.env.INGEST_CONTAINER.getByName("ingest");
+		// Using "ingest" as a stable name for the service
 		// We pass selectors but NO units. The container will discover.
 		await container
 			.fetch(
@@ -269,6 +269,30 @@ app.post("/api/callback/ensureSourceVersion", async (c) => {
 	} catch (err) {
 		console.error(`[Worker] Failed in ensureSourceVersion: ${err}`);
 		return c.json({ error: String(err) }, 500);
+	}
+
+	return c.json({ ok: true });
+});
+
+// ──────────────────────────────────────────────────────────────
+app.post("/api/callback/containerLog", async (c) => {
+	const token = extractBearerToken(c.req.raw);
+	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	const payload = await c.req.json<{
+		level?: "debug" | "info" | "warn" | "error";
+		message: string;
+		context?: Record<string, unknown>;
+	}>();
+	const level = payload.level ?? "info";
+	const context = payload.context ? ` ${JSON.stringify(payload.context)}` : "";
+	const line = `[Container][${level}][job=${params.jobId}] ${payload.message}${context}`;
+
+	if (level === "error") {
+		console.error(line);
+	} else if (level === "warn") {
+		console.warn(line);
+	} else {
+		console.log(line);
 	}
 
 	return c.json({ ok: true });
@@ -363,12 +387,7 @@ app.post("/api/callback/progress", async (c) => {
 	}>();
 
 	if (status === "completed" || status === "skipped") {
-		await markUnitCompleted(
-			c.env.DB,
-			params.jobId,
-			unitId,
-			status as "completed" | "skipped",
-		);
+		await markUnitCompleted(c.env.DB, params.jobId, unitId, status);
 		await incrementProcessedTitles(c.env.DB, params.jobId, 1);
 		console.log(`Title ${unitId} ${status} for job ${params.jobId}`);
 	} else if (error) {
@@ -386,6 +405,7 @@ app.post("/api/callback/progress", async (c) => {
 // ──────────────────────────────────────────────────────────────
 
 const CACHE_R2_PREFIX = "cache/";
+const R2_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 
 function getCacheKey(url: string, extractZip: boolean): string {
 	const urlObj = new URL(url);
@@ -394,6 +414,60 @@ function getCacheKey(url: string, extractZip: boolean): string {
 		return `${CACHE_R2_PREFIX}${filename.replace(/\.zip$/i, ".xml")}`;
 	}
 	return `${CACHE_R2_PREFIX}${filename}`;
+}
+
+function concatChunks(chunks: Uint8Array[], totalSize: number): Uint8Array {
+	const combined = new Uint8Array(totalSize);
+	let offset = 0;
+	for (const chunk of chunks) {
+		combined.set(chunk, offset);
+		offset += chunk.length;
+	}
+	return combined;
+}
+
+async function uploadMultipartFromChunks(
+	bucket: R2Bucket,
+	key: string,
+	chunks: AsyncGenerator<Uint8Array, void, void>,
+): Promise<number> {
+	const upload = await bucket.createMultipartUpload(key);
+	type UploadedPart = Awaited<ReturnType<R2MultipartUpload["uploadPart"]>>;
+	const uploadedParts: UploadedPart[] = [];
+	let partNumber = 1;
+	let totalSize = 0;
+	let pendingChunks: Uint8Array[] = [];
+	let pendingSize = 0;
+
+	const flushPart = async (force: boolean): Promise<void> => {
+		if (pendingSize === 0) return;
+		if (!force && pendingSize < R2_MULTIPART_PART_SIZE) return;
+		const partData = concatChunks(pendingChunks, pendingSize);
+		const uploadedPart = await upload.uploadPart(partNumber, partData);
+		uploadedParts.push(uploadedPart);
+		partNumber += 1;
+		totalSize += partData.byteLength;
+		pendingChunks = [];
+		pendingSize = 0;
+	};
+
+	try {
+		for await (const chunk of chunks) {
+			pendingChunks.push(chunk);
+			pendingSize += chunk.byteLength;
+			await flushPart(false);
+		}
+		await flushPart(true);
+		if (uploadedParts.length === 0) {
+			await bucket.put(key, new Uint8Array(0));
+			return 0;
+		}
+		await upload.complete(uploadedParts);
+		return totalSize;
+	} catch (error) {
+		await upload.abort();
+		throw error;
+	}
 }
 
 app.post("/api/proxy/cache", async (c) => {
@@ -423,35 +497,32 @@ app.post("/api/proxy/cache", async (c) => {
 	if (!response.ok) {
 		return c.json({ error: `Failed to fetch ${url}: ${response.status}` }, 502);
 	}
+	const responseBody = response.body;
+	if (!responseBody) {
+		return c.json({ error: "empty_response_body" }, 502);
+	}
 
 	const contentType = response.headers.get("content-type") ?? "";
 	if (extractZip && contentType.toLowerCase().includes("text/html")) {
 		return c.json({ error: "html_response" }, 422);
 	}
 
-	let data: Uint8Array;
-	if (extractZip && response.body) {
-		// Extract XML from ZIP
-		const chunks: Uint8Array[] = [];
-		for await (const chunk of streamXmlFromZip(await response.arrayBuffer())) {
-			chunks.push(chunk);
-		}
-		const totalSize = chunks.reduce((sum, c) => sum + c.length, 0);
-		data = new Uint8Array(totalSize);
-		let offset = 0;
-		for (const chunk of chunks) {
-			data.set(chunk, offset);
-			offset += chunk.length;
-		}
-	} else {
-		data = new Uint8Array(await response.arrayBuffer());
+	if (extractZip) {
+		const totalSize = await uploadMultipartFromChunks(
+			c.env.STORAGE,
+			r2Key,
+			streamXmlFromZipStream(responseBody as ReadableStream<Uint8Array>),
+		);
+		console.log(`Cached ${url} → ${r2Key} (${totalSize} bytes, multipart)`);
+		return c.json({ r2Key, totalSize });
 	}
 
-	// Cache in R2
-	await c.env.STORAGE.put(r2Key, data);
-	console.log(`Cached ${url} → ${r2Key} (${data.length} bytes)`);
+	await c.env.STORAGE.put(r2Key, responseBody as ReadableStream);
+	const stored = await c.env.STORAGE.head(r2Key);
+	const totalSize = stored?.size ?? 0;
+	console.log(`Cached ${url} → ${r2Key} (${totalSize} bytes)`);
 
-	return c.json({ r2Key, totalSize: data.length });
+	return c.json({ r2Key, totalSize });
 });
 
 app.get("/api/proxy/r2-read", async (c) => {

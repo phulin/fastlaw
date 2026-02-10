@@ -15,8 +15,10 @@ pub async fn discover_usc_root(
     let html = fetch_download_page(client).await?;
     let hrefs = extract_href_links(&html);
 
-    let xml_link_re = Regex::new(r"(?i)xml_usc(?!all)(\d{2}[a-z]?)@").unwrap();
-    let release_point_re = Regex::new(r"(?i)@(\d+-[^./?#\s]+)").unwrap();
+    let xml_link_re = Regex::new(r"(?i)xml_usc(\d{2}[a-z]?)@")
+        .map_err(|e| format!("Failed to compile USC XML link regex: {e}"))?;
+    let release_point_re = Regex::new(r"(?i)@(\d+-[^./?#\s]+)")
+        .map_err(|e| format!("Failed to compile USC release point regex: {e}"))?;
 
     let mut by_title: HashMap<String, String> = HashMap::new();
     let mut release_points = std::collections::HashSet::new();
@@ -116,9 +118,11 @@ async fn fetch_download_page(client: &Client) -> Result<String, String> {
         return Err(format!("USC download page returned {}", res.status()));
     }
 
-    res.text()
+    let text = res
+        .text()
         .await
-        .map_err(|e| format!("Failed to read USC download page body: {}", e))
+        .map_err(|e| format!("Failed to read USC download page body: {}", e))?;
+    Ok(text)
 }
 
 fn extract_href_links(html: &str) -> Vec<String> {

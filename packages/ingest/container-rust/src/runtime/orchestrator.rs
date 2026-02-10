@@ -8,6 +8,7 @@ use crate::types::{IngestConfig, NodePayload, UnitEntry};
 use async_trait::async_trait;
 use reqwest::Client;
 use std::sync::Mutex;
+use std::time::Duration;
 
 const BATCH_SIZE: usize = 200;
 
@@ -80,7 +81,11 @@ impl BlobStore for DummyBlobStore {
 }
 
 pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
-    let client = Client::new();
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|err| format!("Failed to build HTTP client: {err}"))?;
     let adapter = adapter_for(config.source);
 
     // Determines the units to process and the version context
@@ -98,9 +103,13 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     } else {
         // Discovery mode
         tracing::info!("[Container] Exploring source...");
-        let discovery = adapter
+        let discovery = match adapter
             .discover(&client, "https://uscode.house.gov/download/download.shtml")
-            .await?;
+            .await
+        {
+            Ok(discovery) => discovery,
+            Err(err) => return Err(err),
+        };
 
         let source_version_id = format!("{}-{}", config.source_id, discovery.version_id);
         let root_node_id = discovery.root_node.id.clone();
@@ -126,7 +135,6 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
             } else {
                 discovery.unit_roots
             };
-
         // Ensure source version exists in backend
         post_ensure_source_version(
             &client,

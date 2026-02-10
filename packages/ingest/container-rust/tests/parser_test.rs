@@ -1,7 +1,7 @@
+use ingest::sources::usc::parser::usc_level_index;
+use ingest::sources::usc::parser::{parse_usc_xml, USCParentRef};
 use std::fs;
 use std::path::Path;
-use usc_ingest::sources::usc::parser::usc_level_index;
-use usc_ingest::sources::usc::parser::{parse_usc_xml, USCParentRef};
 
 fn fixtures_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
@@ -426,7 +426,7 @@ fn test_url_collision_overlapping_parts() {
             </main>
         </uscDoc>"#;
 
-    let result = usc_ingest::sources::usc::parser::parse_usc_xml(xml, "10", "");
+    let result = ingest::sources::usc::parser::parse_usc_xml(xml, "10", "");
 
     let parts: Vec<_> = result
         .levels
