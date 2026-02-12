@@ -11,6 +11,7 @@ class_name = "IngestContainer"
 image = "./container-rust/Dockerfile"
 instance_type = "basic"
 max_instances = 60
+image_vars = { RUST_PROFILE = "debug" }
 
 [[durable_objects.bindings]]
 class_name = "IngestContainer"
@@ -62,3 +63,43 @@ invocation_logs = true
 [observability.traces]
 enabled = true
 head_sampling_rate = 1
+
+[[env.production.containers]]
+class_name = "IngestContainer"
+image = "./container-rust/Dockerfile"
+instance_type = "basic"
+max_instances = 60
+image_vars = { RUST_PROFILE = "release" }
+
+[[env.production.durable_objects.bindings]]
+class_name = "IngestContainer"
+name = "INGEST_CONTAINER"
+
+[[env.production.durable_objects.bindings]]
+class_name = "PackfileDO"
+name = "PACKFILE_DO"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "fastlaw"
+database_id = "dc9efc6c-abb6-4790-9546-c3565022c186"
+migrations_dir = "../../db/migrations"
+
+[[env.production.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "fastlaw-content"
+
+[env.production.ai]
+binding = "AI"
+
+[[env.production.vectorize]]
+binding = "VECTOR_SEARCH_INDEX"
+index_name = "fastlaw-search"
+
+[[env.production.workflows]]
+name = "vector-ingest-workflow"
+binding = "VECTOR_WORKFLOW"
+class_name = "VectorIngestWorkflow"
+
+[env.production.vars]
+USC_DOWNLOAD_BASE = "https://uscode.house.gov/download/releasepoints"
