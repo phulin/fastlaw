@@ -1,41 +1,42 @@
 # Scraper Specification
 
-This document defines how to implement a new statute scraper in `packages/ingest` using the existing generic ingestion workflow.
+This document defines how to implement a new statute scraper in `packages/ingest` using the current ingestion architecture (Rust running in a container, callbacking batched nodes into the Worker).
 
 The goal is simple: produce a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
 
-DO NOT return success without a fully compliant scraper. Keep iterating on your own until you have met all requirements in this document.
+DO NOT return success without a fully compliant scraper. Keep iterating until all requirements in this document are met.
 
 ## 0. New Jurisdiction Implementation Playbook
 
 When adding a scraper for a new jurisdiction, follow this sequence:
 
-1. Mirror existing patterns first.
-2. Keep parsing and workflow steps bounded for Cloudflare runtime constraints.
+1. Mirror existing source-adapter patterns first.
+2. Keep parsing and callback flow bounded for container and Worker limits.
 3. Build comprehensive edge-case tests early.
 4. Iterate until all required tests and quality checks pass.
 
 ### 0.1 Build order
 
-1. Start from the closest existing adapter (`usc` for XML-heavy sources, `cga` for HTML-heavy sources).
-2. Reuse the same generic workflow contract and node/content conventions from this document.
-3. Keep IDs, level naming, block types, and cross-reference metadata consistent with existing scrapers unless the source requires a clear deviation.
+1. Start from the closest existing adapter under `packages/ingest/container-rust/src/sources/`.
+2. Reuse node/content conventions from this document.
+3. Keep IDs, level naming, block types, and cross-reference metadata consistent with existing scrapers unless source requirements force a clear deviation.
 
-### 0.2 Cloudflare execution constraints
+### 0.2 Execution constraints
 
-- Keep memory bounded:
-  - you MUST use streaming parsers over full-document in-memory transforms 
-  - avoid retaining full crawls in RAM (cache any necessary information in R2)
-  - parse once for planning and only re-parse where required for shard loading
-  - only pass information between workers via the workflows data model
-  - the orchestrating worker must keep only the plan in memory
-  - CF workers has a hard memory limit of 128 MB. This is very tight and you will have to stick to it strictly. Estimate usage based on the largest unit you process to ensure we stay under the limit.
-- Keep workflow step counts bounded (hard limit of 500 steps):
-  - batch shard work items
-  - avoid unnecessary per-section `step.do` fan-out
-  - keep `discoverRoot` and `planUnit` deterministic and compact
-  - limit concurrency to ~5 units at a time (use `promiseAllWithConcurrency`)
-- If details are unclear, check Cloudflare docs and tune batch sizes and parsing strategy accordingly.
+- Keep memory bounded by unit:
+  - use streaming/event-driven parsers over full DOM transforms
+  - avoid retaining the full crawl/version in RAM
+  - it is OK to hold one entire unit (for example one title XML) in memory
+  - target deployment is a container with **1 GB RAM**; size parsing strategy for that budget
+- Keep callback and persistence throughput stable:
+  - emit nodes in batches from container to Worker
+  - avoid one-callback-per-node behavior
+  - current baseline batch size is `BATCH_SIZE = 200` in `packages/ingest/container-rust/src/runtime/orchestrator.rs`
+  - tune batch size only with measured memory/latency/throughput data
+- Keep ingest progress deterministic:
+  - discovery should be cheap and deterministic
+  - unit processing should produce stable node IDs and ordering
+  - retries should be idempotent at the Worker insertion layer
 
 ### 0.3 Test and validation bar before success
 
@@ -45,15 +46,18 @@ A new scraper is not complete until all of the following pass:
 2. A full-title (or equivalently medium-size unit) text-content baseline test:
    - compare concatenated parser output to a simple extract-all-text-content baseline
    - baseline should skip only navigational/labeling text
-3. Manual spot checks on a few sampled sections:
-   - include at least five ordinary sections
-   - include at least five of each type of complex/edge section (for example repealed/reserved/transferred/table-heavy)
-   - verify heading, body, history/citations routing, and path/ID correctness
+3. Manual spot checks on sampled sections:
+   - at least five ordinary sections
+   - at least five of each complex/edge type (for example repealed/reserved/transferred/table-heavy)
+   - verify heading, body, note/amendment/citation routing, and path/ID correctness
+4. Runtime sanity checks:
+   - callback batching is happening (multiple `insertNodeBatch` callbacks)
+   - no unbounded memory growth over a medium-size unit
 
 ### 0.4 Politeness rules
 
-- Limit scraping to 10 requests/second.
-- First, try to find a bulk data download. If you can't find bulk data, try to find an API. If you can't do that, scrape any official-source HTML you can find.
+- Limit scraping to 10 requests/second unless source policy requires stricter behavior.
+- First, try to find a bulk data download. If not available, use an API. If neither exists, scrape official-source pages.
 
 Do not report success until all checks above pass.
 
@@ -61,142 +65,161 @@ Do not report success until all checks above pass.
 
 ### 1.1 Pipeline shape
 
-All scrapers plug into the same 3-phase generic workflow (`packages/ingest/src/lib/workflows/generic/runner.ts`):
+All containerized scrapers follow the same shape:
 
-1. `discoverRoot`
-2. `planUnit`
-3. `loadShardItems`
+1. Worker starts ingest (`/api/ingest/<source>`) and provides callback credentials.
+2. Container performs source discovery.
+3. Container calls `/api/callback/ensureSourceVersion` with version/root/unit discovery output.
+4. Container processes each unit and emits node batches via `/api/callback/insertNodeBatch`.
+5. Worker inserts nodes, stores content blobs, updates ingest job state.
 
-The runner handles source/version records, blob storage writes, and batched node inserts. The scraper adapter provides source-specific discovery and parsing.
+Relevant files:
+
+- Worker orchestration: `packages/ingest/src/worker.ts`
+- Container service binding: `packages/ingest/src/lib/ingest-container.ts`
+- Rust orchestrator: `packages/ingest/container-rust/src/runtime/orchestrator.rs`
+- Runtime callbacks: `packages/ingest/container-rust/src/runtime/callbacks.rs`
 
 ### 1.2 Why this split exists
 
-- `discoverRoot` should be cheap and define the version + root + unit roots.
-- `planUnit` should define full hierarchy and all section shard work items for one unit.
-- `loadShardItems` should materialize final node content for shard items.
-
-This allows large ingests without loading all content at once.
+- Container handles source-specific parsing and extraction where CPU-heavy work belongs.
+- Worker handles durable persistence (D1 + packfiles) and job lifecycle bookkeeping.
+- Batch callbacks decouple parser throughput from storage throughput.
 
 ## 2. Required Contract
 
-Implement `GenericWorkflowAdapter<TUnit, TShardMeta>` (`packages/ingest/src/lib/workflows/generic/types.ts`).
+Implement `SourceAdapter` in Rust (`packages/ingest/container-rust/src/sources/mod.rs`).
 
-### 2.1 Required fields
+### 2.1 Required fields/methods
 
-- `source`: `{ code, name, jurisdiction, region, docType }`
-- `discoverRoot({ env, force }) => RootPlan<TUnit>`
-- `planUnit({ env, root, unit }) => UnitPlan<TShardMeta>`
-- `loadShardItems({ env, root, unit, sourceId, sourceVersionId, items }) => ShardItem[]`
+- `discover(client, download_base) -> DiscoveryResult`
+- `process_unit(unit, context, xml) -> Result<(), String>`
+- `unit_label(unit) -> String`
 
 ### 2.2 Data structures you produce
 
-- `RootPlan`
-- `rootNode` (`NodeMeta`)
-- `unitRoots` (list of top-level crawl units)
-- `UnitPlan`
-- `shardItems` containing either:
-  - prebuilt structural node metadata (`kind: "node"`)
-  - section content work (`kind: "section"`)
-- `ShardItem`
-  - `node` (`NodeMeta`)
-  - `content` (`null` for structural nodes, object for sections)
+Core types live in `packages/ingest/container-rust/src/types.rs`.
+
+- `DiscoveryResult`
+- `root_node` (`NodeMeta`)
+- `unit_roots` (list of top-level ingest units)
+- `NodePayload`
+  - `meta` (`NodeMeta`)
+  - `content` (`None` for structural nodes, object for sections)
+- section content JSON (`SectionContent` with `blocks` and optional `metadata`)
+
+`IngestContext` in `packages/ingest/container-rust/src/runtime/types.rs` provides:
+
+- `nodes.insert_node(...)`
+- `nodes.flush()`
+- `blobs.store_blob(...)` abstraction
+
+Adapters must emit through these interfaces; do not bypass them with direct callback calls.
 
 ## 3. Node and ID Model
 
-`NodeMeta` is defined in `packages/ingest/src/types.ts` and persisted directly.
+`NodeMeta` is persisted directly by the Worker.
 
 ### 3.1 ID rules
 
-- `id` is the canonical string ID; do not create a separate opaque ID.
+- `id` is canonical; do not create a separate opaque ID layer.
 - IDs must be deterministic across runs for unchanged source content.
-- Parent IDs must resolve to another deterministic node ID in the same source version.
+- Parent IDs must resolve to deterministic node IDs in the same source version.
 
-### 3.2 Recommended patterns (from existing scrapers)
+### 3.2 Recommended patterns
 
-- Root: `{source_code}/{version}/root`
-- Intermediate levels: append `/title-{id}`, `/chapter-{id}`, `/article-{id}`, etc.
-- Section: append `/section-{slug}`
+- Root/version-scoped IDs should include source/version identity.
+- Intermediate levels should encode normalized hierarchy designators.
+- Section IDs should be derived from normalized section keys under deterministic parents.
 
-Examples:
+USC-style examples in the current adapter:
 
-- USC: `usc/119-73not60/root/title-42/chapter-21/section-1983`
-- CGA: `cgs/2025/root/title-42a/article-2a/section-42a-2a-404`
+- title root under `{root_string_id}/t{title}/root`
+- section paths like `/statutes/usc/section/{title}/{section}`
 
 ### 3.3 Level and sort semantics
 
 - `level_index` must be stable and meaningful for that source.
 - `sort_order` must provide deterministic sibling ordering.
-- For alphanumeric designators, normalize for sorting (see CGA `designatorSortOrder`).
+- For alphanumeric designators, normalize and sort deterministically.
 
 ## 4. Source Discovery and Versioning
 
-### 4.1 `discoverRoot` responsibilities
+### 4.1 Discovery responsibilities
 
-- Fetch the source index/root page.
-- Compute `versionId` (date for USC, revision year for CGA).
-- Build `rootNode` with:
-  - `level_name: "root"`
-  - `level_index: -1`
-  - `path`, `readable_id`, `heading_citation` for root landing page.
-- Discover unit roots (usually title pages/files).
+Discovery should:
+
+- fetch source index/root metadata
+- compute source-native `version_id`
+- build `root_node` with stable root metadata
+- discover unit roots (for example title files/pages)
+
+Container must then call Worker callback `ensureSourceVersion` exactly once per run.
 
 ### 4.2 Version meaning
 
-Version should represent the source snapshot identity, not ingestion runtime.
+Version should represent the source snapshot identity, not ingestion runtime timestamp.
 
-- USC currently uses the "release point" from the House statute revisors.
-- CGA uses extracted "revised to" year from page content.
+- USC uses release metadata from the official distribution
+- other sources should use native revision/version markers where available
 
-For a new scraper, prefer source-native revision/version metadata when available.
+## 5. Unit Processing
 
-## 5. Unit Planning
-
-### 5.1 `planUnit` responsibilities
+### 5.1 `process_unit` responsibilities
 
 For each unit:
 
-- Build all structural nodes for that unit.
-- Build section shard items keyed by enough metadata to re-find the section in `loadShardItems`.
-- Do not write blobs here.
+- parse unit source
+- emit all structural nodes
+- emit section nodes with content blocks
+- dedupe duplicates by deterministic IDs/keys
+- flush remaining buffered nodes at unit end
 
 ### 5.2 Practical guidance
 
-- Parse once for structure/indexing.
-- Keep section identity minimal and deterministic:
-  - section number
-  - normalized slug
-  - source URL + local identifier if needed
-- Dedupe duplicates early with a `Set` keyed by final node ID.
+- parse once for structure and section content when feasible
+- keep section identity minimal and deterministic:
+  - section number/designator
+  - normalized slug/key
+  - source URL/local identifier when required
+- dedupe early with `HashSet`/maps keyed by final deterministic IDs
 
 ### 5.3 Parent resolution
 
-Resolve parent IDs at planning time.
+Resolve parent IDs during unit processing.
 
-Patterns in current code:
+USC current pattern:
 
-- USC levels infer parent from `identifier`/`parentIdentifier` relationships.
-- USC sections derive parent from parsed `parentLevelId`.
-- CGA sections attach to chapter/article nodes directly.
+- levels use parsed identifier/parent_identifier relationships
+- sections resolve parent from parsed `USCParentRef` (title-level or level-level)
 
-## 6. Shard Loading and Content Assembly
+## 6. Batch Emission and Content Assembly
 
-### 6.1 `loadShardItems` responsibilities
+### 6.1 Node batch emission responsibilities
 
-- Return all nodes for the shard batch.
-- For `kind: "node"`: return `content: null`.
-- For sections: parse/extract text blocks and return content object.
+Container runtime `NodeStore` must:
+
+- buffer nodes
+- send batches to Worker via `/api/callback/insertNodeBatch`
+- flush at end-of-unit
+
+Requirements:
+
+- structural nodes emit `content: null`/`None`
+- section nodes emit normalized content object
+- batch size should avoid callback overhead explosions and memory spikes
 
 ### 6.2 Content format
 
-Use block-based content JSON:
+Use block-based section content JSON:
 
 ```ts
 {
   blocks: [
     { type: "body", content: string },
-    { type: "history_short", label: "Short History", content: string },
-    { type: "history_long", label: "Long History", content: string },
-    { type: "citations", label: "Citations" | "Notes", content: string }
+    { type: "source_credit", label: "Source Credit", content: string },
+    { type: "amendments", label: "Amendments", content: string },
+    { type: "note", label: "Notes", content: string }
   ],
   metadata?: {
     cross_references: SectionCrossReference[]
@@ -208,29 +231,31 @@ Only include optional blocks when non-empty.
 
 ### 6.3 Cross-references
 
-Extract cross-references from body plus citation-like blocks where useful.
+Extract cross-references from body plus relevant note/citation-like blocks.
 
-- USC: `extractSectionCrossReferences([body, citations].join("\n"), titleNum)`
-- CGA: `extractSectionCrossReferences([body, seeAlso].join("\n"))`
+For USC, current adapter behavior uses body + notes text as input to cross-reference extraction.
 
 ## 7. Parsing Guidelines
 
 ### 7.1 Parse directly to normalized output
 
-Do not keep huge intermediate raw DOM structures when avoidable.
+Do not keep large intermediate DOM/tree structures when avoidable.
 
-- USC: SAX-style XML stream parser emits title/level/section events.
-- CGA: HTML parser extracts TOC + body in one pass with parser state.
+Current USC parser (`packages/ingest/container-rust/src/sources/usc/parser.rs`) is the model:
+
+- event-driven streaming parse
+- emits title/level/section events
+- adapter consumes and writes nodes incrementally
 
 ### 7.2 URL normalization and crawl boundaries
 
-Implement strict URL normalization/filtering for HTML crawlers:
+For HTML crawlers, implement strict URL normalization/filtering:
 
 - reject `mailto:` and `javascript:`
 - resolve relative URLs
 - enforce allowed domain
 - enforce allowed path prefix
-- normalize path case when source is case-insensitive
+- normalize case where source paths are case-insensitive
 - strip fragments
 
 ### 7.3 Text extraction
@@ -238,19 +263,20 @@ Implement strict URL normalization/filtering for HTML crawlers:
 Expected behavior:
 
 - capture real statutory text
-- skip pure navigation and labeling wrappers
+- skip pure navigation/label wrappers
 - preserve meaningful structure with newlines
 - collapse excess whitespace
-- trim noisy trailing headings accidentally included in section body
+- trim accidental trailing noise
 
-### 7.4 Content blocks
+### 7.4 Parser performance lessons (from current USC parser)
 
-For class-based HTML sources, name the default (section content) block "body" and name any other block an identifier based on its name in the source material.
+Use these patterns in hot paths:
 
-- default -> `body`
-- History -> `history`
-- Citations -> `citations`
-- Amendments -> `amendments`
+- compact tag classification with bitmask checks
+- avoid repeated attribute decoding (cache decoded attrs per event)
+- keep parser state flat (stacks + small structs), not object-heavy trees
+- normalize and append text with minimal allocation churn
+- dedupe path/key collisions deterministically during parse
 
 ## 8. Testing Specification
 
@@ -272,6 +298,7 @@ For each new scraper, include fixtures for at least:
 - section extraction (IDs, names, paths, order)
 - content block routing
 - at least one cross-reference extraction assertion
+- batch callback behavior (aggregated callbacks, not per-node)
 
 ### 8.3 Baseline text-comparison test (required)
 
@@ -293,8 +320,6 @@ Then compare, per section:
 
 Assert near-equality with whitespace-insensitive comparison.
 
-This test is intentionally simpler than the current USC helper in `packages/ingest/src/__tests__/usc-parser.test.ts`; do not replicate complex token-level spacing heuristics unless a source absolutely requires it.
-
 ### 8.4 Failure diagnostics
 
 When mismatch occurs, print:
@@ -307,24 +332,25 @@ Keep diagnostics terse so fixture updates remain maintainable.
 
 ## 9. Implementation Checklist
 
-1. Define adapter types (`TUnit`, `TShardMeta`) and `source` descriptor.
-2. Implement `discoverRoot` with version + root node + unit roots.
-3. Implement `planUnit` to create structural nodes and section shard items.
-4. Implement `loadShardItems` to produce section content blocks.
+1. Define source kinds, unit payload shape, and adapter module.
+2. Implement `discover` with version + root node + unit roots.
+3. Implement `process_unit` to emit structural and section nodes.
+4. Ensure node emission is buffered and flushed in batches.
 5. Add URL normalization and parsing helpers.
 6. Add deterministic designator normalization/sort helpers.
 7. Add or adapt cross-reference extraction for the source citation grammar.
 8. Add fixtures and tests including the simple baseline text-comparison test.
-9. Wire workflow entrypoint (`workflow.ts`) to `runGenericWorkflow`.
-10. Export public parser/fetcher utilities through package index if needed.
+9. Wire Worker ingest endpoint and callback flow for the new source.
+10. Validate end-to-end ingest with real sample units.
 
 ## 10. References in This Codebase
 
-- Generic workflow contract: `packages/ingest/src/lib/workflows/generic/types.ts`
-- Generic runner: `packages/ingest/src/lib/workflows/generic/runner.ts`
-- USC adapter/parser: `packages/ingest/src/lib/usc/adapter.ts`, `packages/ingest/src/lib/usc/parser.ts`
-- USC fetcher: `packages/ingest/src/lib/usc/fetcher.ts`
-- CGA adapter/parser: `packages/ingest/src/lib/cga/adapter.ts`, `packages/ingest/src/lib/cga/parser.ts`
-- CGA workflow helpers: `packages/ingest/src/lib/cga/workflow-helpers.ts`
-- Example USC parser tests: `packages/ingest/src/__tests__/usc-parser.test.ts`
-- Example CGA parser tests: `packages/ingest/src/__tests__/cga.test.ts`
+- Worker ingest/callback endpoints: `packages/ingest/src/worker.ts`
+- Container binding: `packages/ingest/src/lib/ingest-container.ts`
+- Packfile persistence DO: `packages/ingest/src/lib/packfile-do.ts`
+- Rust orchestrator: `packages/ingest/container-rust/src/runtime/orchestrator.rs`
+- Runtime callbacks: `packages/ingest/container-rust/src/runtime/callbacks.rs`
+- Runtime interfaces/types: `packages/ingest/container-rust/src/runtime/types.rs`, `packages/ingest/container-rust/src/types.rs`
+- Source adapter trait/registry: `packages/ingest/container-rust/src/sources/mod.rs`
+- USC adapter/parser: `packages/ingest/container-rust/src/sources/usc/adapter.rs`, `packages/ingest/container-rust/src/sources/usc/parser.rs`
+- Parser benchmark harness: `packages/ingest/container-rust/src/bench_parser.rs`
