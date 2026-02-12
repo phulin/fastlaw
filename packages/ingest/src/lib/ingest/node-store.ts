@@ -1,5 +1,5 @@
 import type { NodeInsert, NodeMeta } from "../../types";
-import { insertNodesBatched } from "../versioning";
+import { insertNodes } from "../versioning";
 
 const NODE_BATCH_SIZE = 100;
 
@@ -40,7 +40,7 @@ export class NodeStore {
 
 		const batch = this.pending;
 		this.pending = [];
-		await insertNodesBatched(this.db, batch);
+		await insertNodes(this.db, batch);
 		this.insertedCount += batch.length;
 	}
 }

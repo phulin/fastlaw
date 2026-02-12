@@ -197,7 +197,7 @@ const BATCH_SIZE = 100;
  * Insert multiple nodes in batches for better performance.
  * Returns a map from stringId to nodeId.
  */
-export async function insertNodesBatched(
+export async function insertNodes(
 	db: D1Database,
 	nodes: NodeInsert[],
 ): Promise<Map<string, string>> {

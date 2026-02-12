@@ -150,6 +150,14 @@ const INGEST_JOB_COLUMNS = `
 	error_count, last_error,
 	started_at, completed_at, created_at, updated_at`;
 
+const ABORTABLE_JOB_STATUSES = new Set(["planning", "running"]);
+const TERMINAL_JOB_STATUSES = new Set([
+	"completed",
+	"completed_with_errors",
+	"failed",
+	"aborted",
+]);
+
 export async function listIngestJobs(limit = 100): Promise<IngestJobRecord[]> {
 	const db = getDB();
 	const result = await db
@@ -176,6 +184,63 @@ export async function getIngestJobById(
 		)
 		.bind(jobId)
 		.first<IngestJobRecord>();
+}
+
+export async function abortIngestJob(jobId: string): Promise<IngestJobRecord> {
+	const db = getDB();
+	const job = await db
+		.prepare(
+			`SELECT ${INGEST_JOB_COLUMNS}
+			FROM ingest_jobs
+			WHERE id = ?`,
+		)
+		.bind(jobId)
+		.first<IngestJobRecord>();
+
+	if (!job) {
+		throw new Error("Job not found");
+	}
+	if (TERMINAL_JOB_STATUSES.has(job.status)) {
+		throw new Error(`Job cannot be aborted from status '${job.status}'`);
+	}
+	if (!ABORTABLE_JOB_STATUSES.has(job.status)) {
+		throw new Error(`Job status '${job.status}' is not abortable`);
+	}
+
+	await db.batch([
+		db
+			.prepare(
+				`UPDATE ingest_jobs
+				SET status = 'aborted', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ? AND status IN ('planning', 'running')`,
+			)
+			.bind(jobId),
+		db
+			.prepare(
+				`UPDATE ingest_job_units
+				SET
+					status = 'aborted',
+					error = COALESCE(error, 'aborted by user'),
+					completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+				WHERE job_id = ? AND status IN ('pending', 'running')`,
+			)
+			.bind(jobId),
+	]);
+
+	const updated = await db
+		.prepare(
+			`SELECT ${INGEST_JOB_COLUMNS}
+			FROM ingest_jobs
+			WHERE id = ?`,
+		)
+		.bind(jobId)
+		.first<IngestJobRecord>();
+
+	if (!updated) {
+		throw new Error("Job not found");
+	}
+
+	return updated;
 }
 
 export async function listIngestJobUnits(

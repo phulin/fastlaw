@@ -21,7 +21,8 @@ export type IngestJobStatus =
 	| "running"
 	| "completed"
 	| "completed_with_errors"
-	| "failed";
+	| "failed"
+	| "aborted";
 
 export interface IngestJobRecord {
 	id: string;
@@ -45,7 +46,8 @@ export type IngestJobUnitStatus =
 	| "running"
 	| "completed"
 	| "skipped"
-	| "error";
+	| "error"
+	| "aborted";
 
 export interface IngestJobUnitRecord {
 	id: number;

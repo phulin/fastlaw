@@ -459,8 +459,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
         if section.depth < state.tag_stack.len()
             && current_tag.is_some_and(is_body_block_tag)
             && !in_body_excluded_context(mask)
-            && !(current_tag == Some(Tag::Heading)
-                && section.depth + 1 == state.tag_stack.len())
+            && !(current_tag == Some(Tag::Heading) && section.depth + 1 == state.tag_stack.len())
         {
             section.body_frames.push(BodyFrame {
                 depth: state.tag_stack.len(),
@@ -486,8 +485,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
 
         if current_tag.is_some_and(is_body_decorated_tag)
             && !in_body_excluded_context(mask)
-            && !(current_tag == Some(Tag::Heading)
-                && section.depth + 1 == state.tag_stack.len())
+            && !(current_tag == Some(Tag::Heading) && section.depth + 1 == state.tag_stack.len())
         {
             section.target_text_mut().push_str("**");
         }
@@ -580,8 +578,7 @@ where
     if let Some(section) = &mut state.active_section {
         if current_tag.is_some_and(is_body_decorated_tag)
             && !in_body_excluded_context(mask)
-            && !(current_tag == Some(Tag::Heading)
-                && section.depth + 1 == state.tag_stack.len())
+            && !(current_tag == Some(Tag::Heading) && section.depth + 1 == state.tag_stack.len())
         {
             section.target_text_mut().push_str("**");
         }

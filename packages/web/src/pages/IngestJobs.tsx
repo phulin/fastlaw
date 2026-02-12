@@ -29,9 +29,13 @@ export default function IngestJobsPage() {
 	const [jobs, setJobs] = createSignal<IngestJobRecord[]>([]);
 	const [loading, setLoading] = createSignal(true);
 	const [error, setError] = createSignal<string | null>(null);
+	const [abortingJobId, setAbortingJobId] = createSignal<string | null>(null);
 	const [lastRefreshedAt, setLastRefreshedAt] = createSignal<string | null>(
 		null,
 	);
+
+	const isAbortable = (jobStatus: IngestJobRecord["status"]): boolean =>
+		jobStatus === "planning" || jobStatus === "running";
 
 	const refresh = async () => {
 		try {
@@ -51,6 +55,28 @@ export default function IngestJobsPage() {
 			);
 		} finally {
 			setLoading(false);
+		}
+	};
+
+	const abortJob = async (jobId: string) => {
+		setAbortingJobId(jobId);
+		try {
+			const response = await fetch(`/api/ingest/jobs/${jobId}/abort`, {
+				method: "POST",
+			});
+			if (!response.ok) {
+				const payload = (await response.json().catch(() => null)) as {
+					error?: string;
+				} | null;
+				throw new Error(payload?.error ?? `HTTP ${response.status}`);
+			}
+			await refresh();
+		} catch (abortError) {
+			setError(
+				abortError instanceof Error ? abortError.message : String(abortError),
+			);
+		} finally {
+			setAbortingJobId(null);
 		}
 	};
 
@@ -102,6 +128,7 @@ export default function IngestJobsPage() {
 									<th>Version</th>
 									<th>Started</th>
 									<th>Completed</th>
+									<th>Action</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -123,6 +150,19 @@ export default function IngestJobsPage() {
 											<td>{job.source_version_id ?? "—"}</td>
 											<td>{formatDate(job.started_at)}</td>
 											<td>{formatDate(job.completed_at)}</td>
+											<td>
+												<button
+													type="button"
+													class="job-abort-button"
+													onClick={() => void abortJob(job.id)}
+													disabled={
+														!isAbortable(job.status) ||
+														abortingJobId() === job.id
+													}
+												>
+													{abortingJobId() === job.id ? "Aborting..." : "Abort"}
+												</button>
+											</td>
 										</tr>
 									)}
 								</For>

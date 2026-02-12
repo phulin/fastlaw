@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { PageData } from "./App";
 import { render } from "./entry-server";
 import {
+	abortIngestJob,
 	getAncestorNodes,
 	getChildNodes,
 	getIngestJobById,
@@ -77,6 +78,20 @@ app.get("/api/ingest/jobs/:jobId", async (c) => {
 app.get("/api/ingest/jobs/:jobId/units", async (c) => {
 	const units = await listIngestJobUnits(c.req.param("jobId"));
 	return c.json({ units });
+});
+app.post("/api/ingest/jobs/:jobId/abort", async (c) => {
+	try {
+		const job = await abortIngestJob(c.req.param("jobId"));
+		return c.json({ ok: true, job });
+	} catch (error) {
+		if (error instanceof Error && error.message === "Job not found") {
+			return c.json({ error: error.message }, 404);
+		}
+		if (error instanceof Error) {
+			return c.json({ error: error.message }, 409);
+		}
+		return c.json({ error: "Abort failed" }, 500);
+	}
 });
 
 app.get("*", async (c) => {

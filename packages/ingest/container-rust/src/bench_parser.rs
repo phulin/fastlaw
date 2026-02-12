@@ -17,7 +17,9 @@ fn count_xml_nodes(xml: &str) -> usize {
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("Usage: bench_parser <xml_file>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("Usage: bench_parser <xml_file>");
     let xml = std::fs::read_to_string(&path).expect("Failed to read XML file");
 
     let iterations = 5;
@@ -37,13 +39,19 @@ fn main() {
             node_count,
         );
     }
-    let baseline_avg =
-        baseline_durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / iterations as f64;
+    let baseline_avg = baseline_durations
+        .iter()
+        .map(|d| d.as_secs_f64())
+        .sum::<f64>()
+        / iterations as f64;
     let baseline_min = baseline_durations
         .iter()
         .map(|d| d.as_secs_f64())
         .fold(f64::INFINITY, f64::min);
-    println!("Baseline avg: {:.3}s, min: {:.3}s\n", baseline_avg, baseline_min);
+    println!(
+        "Baseline avg: {:.3}s, min: {:.3}s\n",
+        baseline_avg, baseline_min
+    );
 
     // Parser benchmark
     let _ = parse_usc_xml(&xml, "42", "");
@@ -63,7 +71,10 @@ fn main() {
     }
 
     let avg = durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / iterations as f64;
-    let min = durations.iter().map(|d| d.as_secs_f64()).fold(f64::INFINITY, f64::min);
+    let min = durations
+        .iter()
+        .map(|d| d.as_secs_f64())
+        .fold(f64::INFINITY, f64::min);
     println!("\nParser avg: {:.3}s, min: {:.3}s", avg, min);
     println!("Overhead vs baseline: {:.1}x", avg / baseline_avg);
 }

@@ -32,6 +32,10 @@ export default function IngestJobPage(props: { jobId: string }) {
 	const [units, setUnits] = createSignal<IngestJobUnitRecord[]>([]);
 	const [loading, setLoading] = createSignal(true);
 	const [error, setError] = createSignal<string | null>(null);
+	const [aborting, setAborting] = createSignal(false);
+
+	const isAbortable = (jobStatus: IngestJobRecord["status"]): boolean =>
+		jobStatus === "planning" || jobStatus === "running";
 
 	const refresh = async () => {
 		try {
@@ -59,6 +63,29 @@ export default function IngestJobPage(props: { jobId: string }) {
 		}
 	};
 
+	const abortJob = async () => {
+		if (!job()) return;
+		setAborting(true);
+		try {
+			const response = await fetch(`/api/ingest/jobs/${props.jobId}/abort`, {
+				method: "POST",
+			});
+			if (!response.ok) {
+				const payload = (await response.json().catch(() => null)) as {
+					error?: string;
+				} | null;
+				throw new Error(payload?.error ?? `HTTP ${response.status}`);
+			}
+			await refresh();
+		} catch (abortError) {
+			setError(
+				abortError instanceof Error ? abortError.message : String(abortError),
+			);
+		} finally {
+			setAborting(false);
+		}
+	};
+
 	onMount(() => {
 		void refresh();
 		const timer = setInterval(() => {
@@ -77,6 +104,18 @@ export default function IngestJobPage(props: { jobId: string }) {
 						<a href="/ingest/jobs">Ingest Jobs</a>
 					</p>
 					<h1>Job {props.jobId.slice(0, 8)}…</h1>
+					<Show when={job()}>
+						{(j) => (
+							<button
+								type="button"
+								class="job-abort-button"
+								onClick={() => void abortJob()}
+								disabled={!isAbortable(j().status) || aborting()}
+							>
+								{aborting() ? "Aborting..." : "Abort job"}
+							</button>
+						)}
+					</Show>
 				</section>
 
 				<Show when={loading()}>

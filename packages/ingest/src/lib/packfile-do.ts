@@ -20,11 +20,37 @@ export class PackfileDO extends DurableObject<Env> {
 	async appendBlobs(
 		sourceCode: string,
 		sourceId: string,
-		blobs: Array<{ hashHex: string; content: number[] }>,
+		blobs: Array<{ hashHex: string; content: string }>,
 	): Promise<void> {
+		// Batch existence checks: 10 hashes per query, all queries at once
+		const EXISTENCE_BATCH_SIZE = 10;
+		const existingHashes = new Set<string>();
+
+		const statements: D1PreparedStatement[] = [];
+		for (let i = 0; i < blobs.length; i += EXISTENCE_BATCH_SIZE) {
+			const chunk = blobs.slice(i, i + EXISTENCE_BATCH_SIZE);
+			const placeholders = chunk.map(() => "?").join(", ");
+			statements.push(
+				this.env.DB.prepare(
+					`SELECT hash FROM blobs WHERE source_id = ? AND hash IN (${placeholders})`,
+				).bind(sourceId, ...chunk.map((b) => b.hashHex)),
+			);
+		}
+
+		if (statements.length > 0) {
+			const results = await this.env.DB.batch<{ hash: string }>(statements);
+			for (const result of results) {
+				for (const row of result.results) {
+					existingHashes.add(row.hash);
+				}
+			}
+		}
+
 		const writer = this.getWriter(sourceCode);
 		for (const blob of blobs) {
-			await writer.addBlob(new Uint8Array(blob.content));
+			if (!existingHashes.has(blob.hashHex)) {
+				await writer.addBlob(new TextEncoder().encode(blob.content));
+			}
 		}
 		await this.uploadFinished(sourceId);
 	}

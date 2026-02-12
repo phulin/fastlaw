@@ -5,14 +5,16 @@ export type IngestJobStatus =
 	| "running"
 	| "completed"
 	| "completed_with_errors"
-	| "failed";
+	| "failed"
+	| "aborted";
 
 export type IngestJobUnitStatus =
 	| "pending"
 	| "running"
 	| "completed"
 	| "skipped"
-	| "error";
+	| "error"
+	| "aborted";
 
 export interface IngestJobRecord {
 	id: string;
@@ -90,14 +92,19 @@ export async function markUnitRunning(
 			.prepare(
 				`UPDATE ingest_job_units
 				SET status = 'running', total_nodes = ?, started_at = CURRENT_TIMESTAMP
-				WHERE job_id = ? AND unit_id = ?`,
+				WHERE job_id = ? AND unit_id = ?
+					AND EXISTS (
+						SELECT 1
+						FROM ingest_jobs
+						WHERE id = ? AND status IN ('planning', 'running', 'completed_with_errors')
+					)`,
 			)
-			.bind(totalNodes, jobId, unitId),
+			.bind(totalNodes, jobId, unitId, jobId),
 		db
 			.prepare(
 				`UPDATE ingest_jobs
 				SET total_nodes = total_nodes + ?, updated_at = CURRENT_TIMESTAMP
-				WHERE id = ?`,
+				WHERE id = ? AND status IN ('planning', 'running', 'completed_with_errors')`,
 			)
 			.bind(totalNodes, jobId),
 	]);
@@ -131,7 +138,7 @@ export async function markUnitCompleted(
 	db: D1Database,
 	jobId: string,
 	unitId: string,
-	status: "completed" | "skipped" | "error",
+	status: "completed" | "skipped" | "error" | "aborted",
 	error?: string,
 ): Promise<void> {
 	await db
@@ -141,9 +148,14 @@ export async function markUnitCompleted(
 				status = ?,
 				error = ?,
 				completed_at = CURRENT_TIMESTAMP
-			WHERE job_id = ? AND unit_id = ?`,
+			WHERE job_id = ? AND unit_id = ?
+				AND EXISTS (
+					SELECT 1
+					FROM ingest_jobs
+					WHERE id = ? AND status IN ('planning', 'running', 'completed_with_errors')
+				)`,
 		)
-		.bind(status, error?.slice(0, 1000) ?? null, jobId, unitId)
+		.bind(status, error?.slice(0, 1000) ?? null, jobId, unitId, jobId)
 		.run();
 }
 
@@ -173,7 +185,7 @@ export async function completePlanning(
 					ELSE completed_at
 				END,
 				updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?`,
+			WHERE id = ? AND status = 'planning'`,
 		)
 		.bind(
 			sourceVersionId,

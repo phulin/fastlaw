@@ -22,7 +22,7 @@ import {
 	computeDiff,
 	ensureSourceVersion,
 	getOrCreateSource,
-	insertNodesBatched,
+	insertNodes,
 } from "./lib/versioning";
 import { streamXmlFromZipStream } from "./lib/zip-utils";
 import type {
@@ -64,6 +64,22 @@ const INGEST_JOB_COLUMNS = `
 	error_count, last_error,
 	started_at, completed_at, created_at, updated_at`;
 
+const ABORTABLE_JOB_STATUSES = new Set(["planning", "running"]);
+const TERMINAL_JOB_STATUSES = new Set([
+	"completed",
+	"completed_with_errors",
+	"failed",
+	"aborted",
+]);
+
+async function isJobAborted(db: D1Database, jobId: string): Promise<boolean> {
+	const row = await db
+		.prepare("SELECT status FROM ingest_jobs WHERE id = ?")
+		.bind(jobId)
+		.first<{ status: string }>();
+	return row?.status === "aborted";
+}
+
 app.get("/api/ingest/jobs", async (c) => {
 	const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
 	const { results } = await c.env.DB.prepare(
@@ -101,6 +117,59 @@ app.get("/api/ingest/jobs/:jobId/units", async (c) => {
 		.bind(c.req.param("jobId"))
 		.all();
 	return c.json({ units: results });
+});
+
+app.post("/api/ingest/jobs/:jobId/abort", async (c) => {
+	const jobId = c.req.param("jobId");
+	const job = await c.env.DB.prepare(
+		`SELECT ${INGEST_JOB_COLUMNS}
+		FROM ingest_jobs
+		WHERE id = ?`,
+	)
+		.bind(jobId)
+		.first<{ status: string }>();
+
+	if (!job) {
+		return c.json({ error: "Job not found" }, 404);
+	}
+	if (TERMINAL_JOB_STATUSES.has(job.status)) {
+		return c.json(
+			{ error: `Job cannot be aborted from status '${job.status}'` },
+			409,
+		);
+	}
+	if (!ABORTABLE_JOB_STATUSES.has(job.status)) {
+		return c.json(
+			{ error: `Job status '${job.status}' is not abortable` },
+			409,
+		);
+	}
+
+	await c.env.DB.batch([
+		c.env.DB.prepare(
+			`UPDATE ingest_jobs
+				SET status = 'aborted', completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ? AND status IN ('planning', 'running')`,
+		).bind(jobId),
+		c.env.DB.prepare(
+			`UPDATE ingest_job_units
+				SET
+					status = 'aborted',
+					error = COALESCE(error, 'aborted by user'),
+					completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+				WHERE job_id = ? AND status IN ('pending', 'running')`,
+		).bind(jobId),
+	]);
+
+	const updatedJob = await c.env.DB.prepare(
+		`SELECT ${INGEST_JOB_COLUMNS}
+		FROM ingest_jobs
+		WHERE id = ?`,
+	)
+		.bind(jobId)
+		.first();
+
+	return c.json({ ok: true, job: updatedJob });
 });
 
 app.get("/api/storage/objects", async (c) => {
@@ -227,6 +296,9 @@ app.post("/api/ingest/usc", async (c) => {
 app.post("/api/callback/ensureSourceVersion", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	if (await isJobAborted(c.env.DB, params.jobId)) {
+		return c.json({ error: "Job aborted" }, 409);
+	}
 	const { sourceId, sourceVersionId, rootNode, units } = await c.req.json<{
 		sourceId: string;
 		sourceVersionId: string;
@@ -246,7 +318,7 @@ app.post("/api/callback/ensureSourceVersion", async (c) => {
 		await ensureSourceVersion(c.env.DB, sourceId, versionDate, rootNode.id);
 
 		// Insert root node
-		await insertNodesBatched(c.env.DB, [
+		await insertNodes(c.env.DB, [
 			{
 				...rootNode,
 				source_version_id: sourceVersionId,
@@ -302,6 +374,9 @@ app.post("/api/callback/containerLog", async (c) => {
 app.post("/api/callback/unitStart", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	if (await isJobAborted(c.env.DB, params.jobId)) {
+		return c.json({ error: "Job aborted" }, 409);
+	}
 	const { unitId, totalNodes } = await c.req.json<{
 		unitId: string;
 		totalNodes: number;
@@ -320,6 +395,9 @@ app.post("/api/callback/unitStart", async (c) => {
 app.post("/api/callback/insertNodeBatch", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	if (await isJobAborted(c.env.DB, params.jobId)) {
+		return c.json({ error: "Job aborted" }, 409);
+	}
 	const { unitId, nodes } = await c.req.json<{
 		unitId: string;
 		nodes: NodePayload[];
@@ -331,25 +409,17 @@ app.post("/api/callback/insertNodeBatch", async (c) => {
 	if (nodes.length > 0) {
 		console.log(`[Worker] Sample node ID: ${nodes[0].meta.id}`);
 	}
-	const newBlobs: Array<{ hashHex: string; content: number[] }> = [];
+	const allBlobs: Array<{ hashHex: string; content: string }> = [];
 	const nodeInserts: IngestNode[] = [];
 
 	for (const node of nodes) {
 		let blobHash: string | null = null;
 
 		if (node.content) {
-			const bytes = new TextEncoder().encode(JSON.stringify(node.content));
+			const contentStr = JSON.stringify(node.content);
+			const bytes = new TextEncoder().encode(contentStr);
 			blobHash = hash64ToHex(await hash64(bytes));
-
-			const existing = await c.env.DB.prepare(
-				"SELECT 1 FROM blobs WHERE source_id = ? AND hash = ?",
-			)
-				.bind(params.sourceId, blobHash)
-				.first();
-
-			if (!existing) {
-				newBlobs.push({ hashHex: blobHash, content: Array.from(bytes) });
-			}
+			allBlobs.push({ hashHex: blobHash, content: contentStr });
 		}
 
 		nodeInserts.push({
@@ -360,26 +430,32 @@ app.post("/api/callback/insertNodeBatch", async (c) => {
 		});
 	}
 
-	if (newBlobs.length > 0) {
-		const packfileDO = c.env.PACKFILE_DO.get(
-			c.env.PACKFILE_DO.idFromName(params.sourceId),
-		);
-		await packfileDO.appendBlobs(params.sourceId, params.sourceId, newBlobs);
-	}
-
-	await insertNodesBatched(c.env.DB, nodeInserts);
+	await insertNodes(c.env.DB, nodeInserts);
 	await incrementUnitProcessedNodes(
 		c.env.DB,
 		params.jobId,
 		unitId,
 		nodes.length,
 	);
+
+	if (allBlobs.length > 0) {
+		const packfileDO = c.env.PACKFILE_DO.get(
+			c.env.PACKFILE_DO.idFromName(params.sourceId),
+		);
+		c.executionCtx.waitUntil(
+			packfileDO.appendBlobs(params.sourceId, params.sourceId, allBlobs),
+		);
+	}
+
 	return c.json({ accepted: nodes.length });
 });
 
 app.post("/api/callback/progress", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	if (await isJobAborted(c.env.DB, params.jobId)) {
+		return c.json({ error: "Job aborted" }, 409);
+	}
 	const { unitId, status, error } = await c.req.json<{
 		unitId: string;
 		status: string;
