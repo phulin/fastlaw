@@ -27,3 +27,7 @@ path = "src/dummy.rs"
 [[bin]]
 name = "bench_parser"
 path = "src/bench_parser.rs"
+
+[[bin]]
+name = "explore"
+path = "src/explore.rs"

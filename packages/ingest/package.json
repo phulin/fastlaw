@@ -5,8 +5,8 @@
 	"type": "module",
 	"scripts": {
 		"dev": "NODE_EXTRA_CA_CERTS=certs/godaddy-g2.pem wrangler dev --persist-to ../web/.wrangler/state",
-		"build:container": "RUSTC_WRAPPER=sccache docker run --rm --platform=linux/amd64 -v \"$PWD/container-rust:/work\" -v \"$HOME/.cache/cargo-cross:/cargo\" -v \"$HOME/.cache/sccache:/sccache\" rust-musl-builder cargo build --target x86_64-unknown-linux-musl --release",
-		"build:container:debug": "RUSTC_WRAPPER=sccache docker run --rm --platform=linux/amd64 -v \"$PWD/container-rust:/work\" -v \"$HOME/.cache/cargo-cross:/cargo\" -v \"$HOME/.cache/sccache:/sccache\" rust-musl-builder cargo build --target x86_64-unknown-linux-musl",
+		"build:container": "RUSTC_WRAPPER=sccache docker run --rm --platform=linux/amd64 -v \"$INIT_CWD/container-rust:/work\" -v \"$HOME/.cache/cargo-cross:/cargo\" -v \"$HOME/.cache/sccache:/sccache\" rust-musl-builder cargo build --target x86_64-unknown-linux-musl --release",
+		"build:container:debug": "RUSTC_WRAPPER=sccache docker run --rm --platform=linux/amd64 -v \"$INIT_CWD/container-rust:/work\" -v \"$HOME/.cache/cargo-cross:/cargo\" -v \"$HOME/.cache/sccache:/sccache\" rust-musl-builder cargo build --target x86_64-unknown-linux-musl",
 		"build": "wrangler deploy --dry-run --outdir=dist",
 		"deploy": "wrangler deploy",
 		"typecheck": "../../node_modules/.bin/tsc --noEmit && cd container-rust && cargo check",

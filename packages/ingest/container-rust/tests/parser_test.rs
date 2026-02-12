@@ -61,6 +61,7 @@ fn bolds_leading_outline_markers_in_section_body() {
     assert!(section.body.contains("**(a)**General rule."));
     assert!(section.body.contains("**(1)**First item."));
     assert!(section.body.contains("**(A)**Upper item."));
+    assert!(!section.body.contains("§ 1."));
 }
 
 #[test]
@@ -88,6 +89,201 @@ fn inserts_line_break_before_nested_outline_marker_after_colon() {
     let result = parse_usc_xml(xml, "99", "");
     let section = result.sections.first().expect("section should exist");
     assert!(section.body.contains("Intro text:\n\n**(1)**"));
+}
+
+#[test]
+fn does_not_bold_internal_cross_references() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t42">
+            <main>
+                <title identifier="/us/usc/t42">
+                    <section identifier="/us/usc/t42/s303">
+                        <num value="303">§ 303.</num>
+                        <heading>Test section</heading>
+                        <subsection>
+                            <num>(a)</num>
+                            <content>The plan shall comply with clause (B) and subsection (a) of this section.</content>
+                        </subsection>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "42", "");
+    let section = result.sections.first().expect("section should exist");
+    assert!(section.body.contains("clause (B) and subsection (a)"));
+    assert!(!section.body.contains("clause **(B)**"));
+    assert!(!section.body.contains("subsection **(a)**"));
+}
+
+#[test]
+fn excludes_section_num_from_body_when_content_blocks_exist() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t42">
+            <main>
+                <title identifier="/us/usc/t42">
+                    <section identifier="/us/usc/t42/s27">
+                        <num value="27">§ 27.</num>
+                        <heading>Definitions</heading>
+                        <content>
+                            <p>The terms "State" and "States" include the District of Columbia.</p>
+                        </content>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "42", "");
+    let section = result.sections.first().expect("section should exist");
+    assert_eq!(
+        section.body,
+        "The terms \"State\" and \"States\" include the District of Columbia."
+    );
+    assert!(!section.body.contains("§ 27."));
+}
+
+#[test]
+fn skips_cross_heading_notes_and_keeps_each_note_separate() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t42">
+            <main>
+                <title identifier="/us/usc/t42">
+                    <section identifier="/us/usc/t42/s27">
+                        <num value="27">§ 27.</num>
+                        <heading>Definitions</heading>
+                        <content>Body text.</content>
+                        <notes>
+                            <note role="crossHeading" topic="editorialNotes">
+                                <heading>Editorial Notes</heading>
+                            </note>
+                            <note topic="referencesInText">
+                                <heading>References in Text</heading>
+                                <p>This chapter means chapter XV of act July 9, 1918.</p>
+                            </note>
+                        </notes>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "42", "");
+    let section = result.sections.first().expect("section should exist");
+    let heading_block = section
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "heading")
+        .expect("heading block should exist");
+    assert_eq!(heading_block.label.as_deref(), Some("Editorial Notes"));
+    assert!(heading_block.content.is_none());
+    let note_block = section
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "note")
+        .expect("note block should exist");
+    assert_eq!(note_block.label.as_deref(), Some("References in Text"));
+    assert_eq!(
+        note_block.content,
+        Some("This chapter means chapter XV of act July 9, 1918.".to_string())
+    );
+}
+
+#[test]
+fn extracts_usc_42_section_27_notes_and_source_credit_cleanly() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t42">
+            <main>
+                <title identifier="/us/usc/t42">
+                    <section identifier="/us/usc/t42/s27">
+                        <num value="27">§ 27.</num>
+                        <heading>Definitions</heading>
+                        <content>
+                            <p>The terms "State" and "States," as used in this chapter, shall be held to include the District of Columbia.</p>
+                        </content>
+                        <sourceCredit>(<ref href="/us/act/1918-07-09/ch143">July 9, 1918, ch. 143</ref>, ch. XV, § 8, <ref href="/us/stat/40/887">40 Stat. 887</ref>.)</sourceCredit>
+                        <notes type="uscNote">
+                            <note role="crossHeading" topic="editorialNotes">
+                                <heading>Editorial Notes</heading>
+                            </note>
+                            <note topic="referencesInText">
+                                <heading>References in Text</heading>
+                                <p>This chapter, referred to in text, means chapter XV of act July 9, 1918, ch. 143, 40 Stat. 887, which, insofar as classified to the Code, enacted sections 24 to 27 of this title and amended section 28 of this title. For complete classification of this Act to the Code, see Tables.</p>
+                            </note>
+                        </notes>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "42", "");
+    let section = result.sections.first().expect("section should exist");
+
+    let source_credit_block = section
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "source_credit")
+        .expect("source credit block should exist");
+    assert_eq!(
+        source_credit_block.content,
+        Some("(July 9, 1918, ch. 143, ch. XV, § 8, 40 Stat. 887.)".to_string())
+    );
+    let heading_block = section
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "heading")
+        .expect("heading block should exist");
+    assert_eq!(heading_block.label.as_deref(), Some("Editorial Notes"));
+    let note = section
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "note")
+        .expect("note block should exist");
+    assert_eq!(note.label.as_deref(), Some("References in Text"));
+    assert!(
+        note.content
+            .as_deref()
+            .is_some_and(|content| !content.contains("References in Text")),
+        "note body should not duplicate the label"
+    );
+    assert!(note.content.as_deref().is_some_and(
+        |content| content.starts_with("This chapter, referred to in text, means chapter XV")
+    ));
+}
+
+#[test]
+fn parses_note_paragraphs_as_markdown_paragraphs() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t42">
+            <main>
+                <title identifier="/us/usc/t42">
+                    <section identifier="/us/usc/t42/s27">
+                        <num value="27">§ 27.</num>
+                        <heading>Definitions</heading>
+                        <content>Body text.</content>
+                        <notes>
+                            <note topic="referencesInText">
+                                <heading>References in Text</heading>
+                                <p>First paragraph.</p>
+                                <p>Second paragraph.</p>
+                            </note>
+                        </notes>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "42", "");
+    let section = result.sections.first().expect("section should exist");
+    let note = section
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "note")
+        .expect("note block should exist");
+
+    assert_eq!(note.label.as_deref(), Some("References in Text"));
+    assert_eq!(
+        note.content.as_deref(),
+        Some("First paragraph.\n\nSecond paragraph.")
+    );
 }
 
 #[test]
@@ -216,7 +412,7 @@ fn extracts_source_credit_as_history_short() {
     let sections_with_history: Vec<_> = result
         .sections
         .iter()
-        .filter(|s| !s.source_credit.is_empty())
+        .filter(|s| s.blocks.iter().any(|block| block.type_ == "source_credit"))
         .collect();
     assert!(
         !sections_with_history.is_empty(),
@@ -234,19 +430,22 @@ fn extracts_amendments_and_notes() {
         .find(|s| s.section_num == "201")
         .expect("201 found");
 
-    // Check amendments (from topic="amendments")
-    assert!(
-        !section201.amendments.is_empty(),
-        "Section 201 should have amendment notes"
-    );
-    assert!(section201.amendments.contains("1984\u{2014}Subsec. (a)"));
+    let amendments = section201
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "amendments")
+        .expect("Section 201 should have amendment notes");
+    assert!(amendments
+        .content
+        .as_deref()
+        .is_some_and(|content| content.contains("1984\u{2014}Subsec. (a)")));
 
-    // Check notes (other notes)
-    assert!(
-        !section201.note.is_empty(),
-        "Section 201 should have general notes"
-    );
-    assert!(section201.note.contains("Change of Name"));
+    let notes = section201
+        .blocks
+        .iter()
+        .find(|block| block.type_ == "note")
+        .expect("Section 201 should have general notes");
+    assert_eq!(notes.label.as_deref(), Some("Change of Name"));
 }
 
 #[test]

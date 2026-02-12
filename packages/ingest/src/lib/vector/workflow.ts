@@ -38,7 +38,7 @@ interface BlobLocationRow {
 interface ContentBlock {
 	type: string;
 	label?: string;
-	content: string;
+	content?: string | null;
 }
 
 interface StoredNodeContent {

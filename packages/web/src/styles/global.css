@@ -361,27 +361,33 @@ body {
 	color: var(--ink);
 }
 
-.statute-body .indent-0 {
+.statute-body .indent0,
+.statute-meta .indent0 {
 	margin-left: 0;
 }
 
-.statute-body .indent-1 {
+.statute-body .indent1,
+.statute-meta .indent1 {
 	margin-left: 1.4rem;
 }
 
-.statute-body .indent-2 {
+.statute-body .indent2,
+.statute-meta .indent2 {
 	margin-left: 2.4rem;
 }
 
-.statute-body .indent-3 {
+.statute-body .indent3,
+.statute-meta .indent3 {
 	margin-left: 3.4rem;
 }
 
-.statute-body .indent-4 {
+.statute-body .indent4,
+.statute-meta .indent4 {
 	margin-left: 4.4rem;
 }
 
-.statute-body .indent-5 {
+.statute-body .indent5,
+.statute-meta .indent5 {
 	margin-left: 5.4rem;
 }
 
@@ -392,17 +398,60 @@ body {
 }
 
 .statute-meta h2 {
-	font-family: "Space Grotesk", sans-serif;
-	font-size: 0.9rem;
-	letter-spacing: 0.18em;
-	text-transform: uppercase;
-	color: var(--accent-dark);
-	margin-bottom: 12px;
+	font-family: "Newsreader", serif;
+	font-size: clamp(1.6rem, 2.4vw, 2rem);
+	line-height: 1.1;
+	color: var(--ink);
+	margin-bottom: 20px;
+}
+
+.statute-meta > h3 {
+	font-family: "Newsreader", serif;
+	font-size: clamp(1.25rem, 2vw, 1.5rem);
+	line-height: 1.2;
+	color: var(--ink);
+	margin-top: 26px;
+	margin-bottom: 10px;
+}
+
+.statute-meta > h2 + h3 {
+	margin-top: 0;
 }
 
 .statute-meta p {
 	color: var(--ink-soft);
 	line-height: 1.6;
+}
+
+.statute-meta .meta-block + .meta-block {
+	margin-top: 18px;
+}
+
+.statute-meta .meta-block-heading {
+	padding: 12px 14px;
+	border-left: 4px solid var(--accent-dark);
+	background: color-mix(in oklab, var(--accent) 8%, white);
+	border-radius: 8px;
+}
+
+.statute-meta .meta-block-heading .level-marker {
+	margin: 0;
+	font-size: 0.76rem;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--accent-dark);
+}
+
+.statute-meta .meta-block-heading .markdown {
+	margin-top: 4px;
+	font-weight: 700;
+	color: var(--ink);
+}
+
+.statute-meta .meta-block-heading .markdown p {
+	margin: 0;
+	line-height: 1.35;
+	color: var(--ink);
 }
 
 .statute-meta ul {
@@ -416,6 +465,42 @@ body {
 	padding: 10px 0;
 	border-bottom: 1px solid var(--line);
 	color: var(--ink-soft);
+}
+
+.statute-meta .markdown h3,
+.statute-meta .markdown h4,
+.statute-meta .markdown h5,
+.statute-meta .markdown h6 {
+	color: var(--ink);
+	line-height: 1.25;
+}
+
+.statute-meta .markdown h3 {
+	font-family: "Newsreader", serif;
+	font-size: clamp(1.2rem, 1.8vw, 1.4rem);
+	margin-top: 24px;
+	margin-bottom: 10px;
+}
+
+.statute-meta .markdown h4 {
+	font-family: "Space Grotesk", sans-serif;
+	font-size: 1.05rem;
+	font-weight: 600;
+	margin-top: 18px;
+	margin-bottom: 8px;
+}
+
+.statute-meta .markdown h5,
+.statute-meta .markdown h6 {
+	font-family: "Space Grotesk", sans-serif;
+	font-size: 0.95rem;
+	font-weight: 600;
+	margin-top: 14px;
+	margin-bottom: 8px;
+}
+
+.statute-meta .markdown h3 + h4 {
+	margin-top: 8px;
 }
 
 .statute-nav {

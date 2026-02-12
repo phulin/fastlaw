@@ -1,67 +1,14 @@
 import { Title } from "@solidjs/meta";
-import { marked } from "marked";
 import { For, onMount, Show } from "solid-js";
 import { Breadcrumbs } from "~/components/Breadcrumbs";
 import { Footer } from "~/components/Footer";
 import { Header } from "~/components/Header";
+import { renderMarkdown } from "~/lib/markdown";
 import { capitalizeWords, pluralize } from "~/lib/text";
-import type { NodeRecord, PageData, SectionCrossReference } from "~/lib/types";
+import type { NodeRecord, PageData } from "~/lib/types";
 
 const toTitle = (value: string) =>
 	value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-
-const filterNonOverlappingReferences = (
-	references: SectionCrossReference[],
-) => {
-	const sorted = [...references].sort(
-		(a, b) => a.offset - b.offset || b.length - a.length,
-	);
-	const result: SectionCrossReference[] = [];
-	let lastEnd = -1;
-
-	for (const ref of sorted) {
-		const end = ref.offset + ref.length;
-		if (ref.offset < lastEnd) continue;
-		result.push(ref);
-		lastEnd = end;
-	}
-
-	return result;
-};
-
-const buildLinkedMarkdown = (
-	text: string,
-	baseOffset: number,
-	references: SectionCrossReference[],
-) => {
-	const inRange = references.filter((ref) => {
-		const start = ref.offset;
-		const end = ref.offset + ref.length;
-		return start >= baseOffset && end <= baseOffset + text.length;
-	});
-	if (inRange.length === 0) return text;
-
-	const filtered = filterNonOverlappingReferences(inRange);
-	let result = "";
-	let cursor = 0;
-
-	for (const ref of filtered) {
-		const start = ref.offset - baseOffset;
-		const end = start + ref.length;
-		if (start > cursor) {
-			result += text.slice(cursor, start);
-		}
-		const label = text.slice(start, end);
-		result += `[${label}](${ref.link})`;
-		cursor = end;
-	}
-
-	if (cursor < text.length) {
-		result += text.slice(cursor);
-	}
-
-	return result;
-};
 
 const navLabel = (node: NodeRecord | null) => {
 	if (node?.heading_citation && node?.name) {
@@ -133,8 +80,6 @@ export function NodePage(props: NodePageProps) {
 		content()?.blocks.filter((block) => block.type === "body") ?? [];
 	const metaBlocks = () =>
 		content()?.blocks.filter((block) => block.type !== "body") ?? [];
-	const crossReferences = () => content()?.metadata?.cross_references ?? [];
-
 	const tocItems = () => {
 		const items = [];
 		if (content()) {
@@ -248,16 +193,10 @@ export function NodePage(props: NodePageProps) {
 						<div id="statute-body" class="statute-body">
 							<For each={bodyBlocks()}>
 								{(block) => {
-									const markdown = buildLinkedMarkdown(
-										block.content,
-										0,
-										crossReferences(),
-									);
-
 									return (
 										<div
 											class="markdown"
-											innerHTML={marked.parse(markdown) as string}
+											innerHTML={renderMarkdown(block.content ?? "")}
 										/>
 									);
 								}}
@@ -267,17 +206,28 @@ export function NodePage(props: NodePageProps) {
 							<div class="statute-meta">
 								<h2>Additional context</h2>
 								<For each={metaBlocks()}>
-									{(block, index) => (
-										<div id={`statute-meta-${index()}`}>
-											<p class="level-marker">
+									{(block, index) =>
+										block.type === "heading" ? (
+											<h3 id={`statute-meta-${index()}`}>
 												{block.label ?? toTitle(block.type)}
-											</p>
+											</h3>
+										) : (
 											<div
-												class="markdown"
-												innerHTML={marked.parse(block.content) as string}
-											/>
-										</div>
-									)}
+												id={`statute-meta-${index()}`}
+												class={`meta-block meta-block-${block.type}`}
+											>
+												<p class="level-marker">
+													{block.label ?? toTitle(block.type)}
+												</p>
+												<Show when={block.content}>
+													<div
+														class="markdown"
+														innerHTML={renderMarkdown(block.content ?? "")}
+													/>
+												</Show>
+											</div>
+										)
+									}
 								</For>
 							</div>
 						</Show>

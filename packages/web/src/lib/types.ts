@@ -111,7 +111,7 @@ export type PageData =
 export interface ContentBlock {
 	type: string;
 	label?: string;
-	content: string;
+	content?: string | null;
 }
 
 export interface SectionCrossReference {

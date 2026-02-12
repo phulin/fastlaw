@@ -10,6 +10,17 @@ static WHITESPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwr
 static UNICODE_DASH_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\u2010-\u2014\u2212]").unwrap());
 static MULTI_NEWLINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+static INLINE_OUTLINE_MARKER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?P<prefix>^|[\s,;])\((?P<marker>[A-Z]|[ivxlcdm]{1,8})\)(?P<suffix>\s)").unwrap()
+});
+static LEVEL_NAME_PREFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)(subsections?|sections?|subparagraphs?|paragraphs?|subclauses?|clauses?|subitems?|items?)\s+$",
+    )
+    .unwrap()
+});
+static STANDALONE_BOLD_MARKER_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\*\*\([^)]+\)\*\*$").unwrap());
 static LEVEL_SEGMENT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(?P<prefix>st|sch|spt|sd|ch|pt|t|d)(?P<num>.+)$").unwrap());
 
@@ -51,11 +62,16 @@ pub struct USCSection {
     pub section_key: String,
     pub heading: String,
     pub body: String,
-    pub source_credit: String,
-    pub amendments: String,
-    pub note: String,
+    pub blocks: Vec<USCSectionBlock>,
     pub path: String,
     pub parent_ref: USCParentRef,
+}
+
+#[derive(Debug, Clone)]
+pub struct USCSectionBlock {
+    pub type_: String,
+    pub label: Option<String>,
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +112,7 @@ enum Tag {
     Note = 25,
     QuotedContent = 26,
     P = 27,
+    Ref = 28,
 }
 
 #[inline(always)]
@@ -146,6 +163,7 @@ fn classify(name: &[u8]) -> Option<Tag> {
         b"note" => Some(Tag::Note),
         b"quotedContent" => Some(Tag::QuotedContent),
         b"p" => Some(Tag::P),
+        b"ref" => Some(Tag::Ref),
         _ => None,
     }
 }
@@ -178,6 +196,7 @@ struct OpenLevelRef {
 #[derive(Debug, Clone)]
 struct BodyFrame {
     depth: usize,
+    quote_prefix: String,
     text: String,
 }
 
@@ -185,8 +204,24 @@ struct BodyFrame {
 struct ActiveNote {
     depth: usize,
     topic: Option<String>,
+    role: Option<String>,
     heading: String,
     text: String,
+}
+
+#[derive(Debug, Clone)]
+enum RefTarget {
+    Body,
+    SourceCredit,
+    Note { depth: usize },
+}
+
+#[derive(Debug, Clone)]
+struct OpenRef {
+    depth: usize,
+    link: String,
+    target: RefTarget,
+    start: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -199,14 +234,16 @@ struct ActiveSection {
     body_parts: Vec<String>,
     free_text: String,
     source_credit: String,
-    amendments: Vec<String>,
-    notes: Vec<String>,
+    blocks: Vec<USCSectionBlock>,
     active_notes: Vec<ActiveNote>,
 }
 
 impl ActiveSection {
     fn target_text_mut(&mut self) -> &mut String {
         if let Some(frame) = self.body_frames.last_mut() {
+            if frame.text.is_empty() && !frame.quote_prefix.is_empty() {
+                frame.text.push_str(&frame.quote_prefix);
+            }
             &mut frame.text
         } else {
             &mut self.free_text
@@ -220,15 +257,19 @@ enum AttrName {
     Identifier = 0,
     Value = 1,
     Topic = 2,
+    Role = 3,
+    Href = 4,
 }
 
-const ATTR_COUNT: usize = 3;
+const ATTR_COUNT: usize = 5;
 
 fn classify_attr(name: &[u8]) -> Option<AttrName> {
     match name {
         b"identifier" => Some(AttrName::Identifier),
         b"value" => Some(AttrName::Value),
         b"topic" => Some(AttrName::Topic),
+        b"role" => Some(AttrName::Role),
+        b"href" => Some(AttrName::Href),
         _ => None,
     }
 }
@@ -248,7 +289,7 @@ impl<'a> Attributes<'a> {
 
     fn load(&self) -> &[Option<Cow<'a, [u8]>>; ATTR_COUNT] {
         self.values.get_or_init(|| {
-            let mut values: [Option<Cow<'a, [u8]>>; ATTR_COUNT] = [None, None, None];
+            let mut values: [Option<Cow<'a, [u8]>>; ATTR_COUNT] = [None, None, None, None, None];
             for attr in self.event.attributes().flatten() {
                 if let Some(name) = classify_attr(attr.key.as_ref()) {
                     values[name as usize] = Some(attr.value);
@@ -279,6 +320,7 @@ struct ParserState {
     mask_stack: Vec<u64>,
 
     open_level_refs: Vec<OpenLevelRef>,
+    open_refs: Vec<OpenRef>,
     active_section: Option<ActiveSection>,
 
     section_path_counts: HashMap<String, usize>,
@@ -295,6 +337,7 @@ impl ParserState {
             tag_stack: Vec::new(),
             mask_stack: Vec::new(),
             open_level_refs: Vec::new(),
+            open_refs: Vec::new(),
             active_section: None,
             section_path_counts: HashMap::new(),
             section_key_counts: HashMap::new(),
@@ -422,6 +465,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
     }
 
     if current_tag == Some(Tag::Section) && !in_note_or_quoted(mask) {
+        state.open_refs.clear();
         let identifier = attrs.get(AttrName::Identifier);
         let section_num = identifier
             .as_deref()
@@ -449,8 +493,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
             body_parts: Vec::new(),
             free_text: String::new(),
             source_credit: String::new(),
-            amendments: Vec::new(),
-            notes: Vec::new(),
+            blocks: Vec::new(),
             active_notes: Vec::new(),
         });
     }
@@ -463,6 +506,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
         {
             section.body_frames.push(BodyFrame {
                 depth: state.tag_stack.len(),
+                quote_prefix: blockquote_prefix(current_tag.unwrap(), section.body_frames.len()),
                 text: String::new(),
             });
         }
@@ -478,16 +522,51 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
             section.active_notes.push(ActiveNote {
                 depth: state.tag_stack.len(),
                 topic: attrs.get(AttrName::Topic),
+                role: attrs.get(AttrName::Role),
                 heading: String::new(),
                 text: String::new(),
             });
         }
 
+        if current_tag == Some(Tag::Ref) {
+            if let Some(link) = attrs
+                .get(AttrName::Href)
+                .and_then(|href| usc_section_link_from_href(&href))
+            {
+                if is_source_credit(&state.tag_stack, section.depth) {
+                    state.open_refs.push(OpenRef {
+                        depth: state.tag_stack.len(),
+                        link,
+                        target: RefTarget::SourceCredit,
+                        start: section.source_credit.len(),
+                    });
+                } else if let Some(note) = section.active_notes.last() {
+                    if !is_note_heading(&state.tag_stack, note.depth) {
+                        state.open_refs.push(OpenRef {
+                            depth: state.tag_stack.len(),
+                            link,
+                            target: RefTarget::Note { depth: note.depth },
+                            start: note.text.len(),
+                        });
+                    }
+                } else if !in_body_excluded_context(mask) {
+                    let start = section.target_text_mut().len();
+                    state.open_refs.push(OpenRef {
+                        depth: state.tag_stack.len(),
+                        link,
+                        target: RefTarget::Body,
+                        start,
+                    });
+                }
+            }
+        }
+
         if current_tag.is_some_and(is_body_decorated_tag)
             && !in_body_excluded_context(mask)
+            && !(current_tag == Some(Tag::Num) && is_section_num(&state.tag_stack, section.depth))
             && !(current_tag == Some(Tag::Heading) && section.depth + 1 == state.tag_stack.len())
         {
-            section.target_text_mut().push_str("**");
+            push_bold_open(section.target_text_mut());
         }
 
         if current_tag == Some(Tag::Num) {
@@ -542,6 +621,10 @@ where
     }
 
     if let Some(section) = &mut state.active_section {
+        if is_section_num(&state.tag_stack, section.depth) {
+            return;
+        }
+
         if is_section_heading(&state.tag_stack, section.depth) {
             append_text(&mut section.capture.heading, &text);
             return;
@@ -576,8 +659,18 @@ where
     let mask = state.current_mask();
 
     if let Some(section) = &mut state.active_section {
+        if current_tag == Some(Tag::Ref) {
+            if let Some(open_ref) = state.open_refs.last() {
+                if open_ref.depth == state.tag_stack.len() {
+                    let open_ref = state.open_refs.pop().unwrap();
+                    finalize_ref(section, open_ref);
+                }
+            }
+        }
+
         if current_tag.is_some_and(is_body_decorated_tag)
             && !in_body_excluded_context(mask)
+            && !(current_tag == Some(Tag::Num) && is_section_num(&state.tag_stack, section.depth))
             && !(current_tag == Some(Tag::Heading) && section.depth + 1 == state.tag_stack.len())
         {
             section.target_text_mut().push_str("**");
@@ -587,46 +680,109 @@ where
             if let Some(note) = section.active_notes.last() {
                 if note.depth == state.tag_stack.len() {
                     let note = section.active_notes.pop().unwrap();
-                    let heading = normalize_heading(&note.heading);
-                    let mut merged = String::new();
-                    if !heading.is_empty() {
-                        append_text(&mut merged, &heading);
-                    }
-                    if !note.text.is_empty() {
-                        if !merged.is_empty() {
-                            merged.push(' ');
-                        }
-                        append_text(&mut merged, &note.text);
-                    }
-                    let is_amendments = note
-                        .topic
+                    let is_cross_heading = note
+                        .role
                         .as_deref()
-                        .map(|topic| topic.eq_ignore_ascii_case("amendments"))
-                        .unwrap_or(false)
-                        || heading.to_ascii_lowercase().contains("amendments");
+                        .is_some_and(|role| role.eq_ignore_ascii_case("crossHeading"));
 
-                    if !merged.is_empty() {
-                        if is_amendments {
-                            section.amendments.push(merged);
-                        } else {
-                            section.notes.push(merged);
+                    let heading = normalize_heading(&note.heading);
+                    if is_cross_heading {
+                        if !heading.is_empty() {
+                            section.blocks.push(USCSectionBlock {
+                                type_: "heading".to_string(),
+                                label: Some(heading),
+                                content: None,
+                            });
+                        }
+                    } else {
+                        let note_text = clean_body_fragment(&note.text);
+                        let is_amendments = note
+                            .topic
+                            .as_deref()
+                            .map(|topic| topic.eq_ignore_ascii_case("amendments"))
+                            .unwrap_or(false)
+                            || heading.to_ascii_lowercase().contains("amendments");
+
+                        if !note_text.is_empty() || !heading.is_empty() {
+                            if is_amendments {
+                                let label = if heading.is_empty() {
+                                    "Amendments".to_string()
+                                } else {
+                                    heading.clone()
+                                };
+                                section.blocks.push(USCSectionBlock {
+                                    type_: "amendments".to_string(),
+                                    label: Some(label),
+                                    content: if note_text.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(note_text)
+                                    },
+                                });
+                            } else {
+                                let label = if heading.is_empty() {
+                                    None
+                                } else {
+                                    Some(heading)
+                                };
+                                section.blocks.push(USCSectionBlock {
+                                    type_: "note".to_string(),
+                                    label,
+                                    content: if note_text.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(note_text)
+                                    },
+                                });
+                            }
                         }
                     }
                 }
             }
         }
 
+        if current_tag == Some(Tag::P) {
+            if let Some(note) = section.active_notes.last_mut() {
+                if !note.text.trim().is_empty() && !note.text.ends_with("\n\n") {
+                    note.text.push_str("\n\n");
+                }
+            }
+        }
+
+        if current_tag == Some(Tag::SourceCredit)
+            && is_source_credit(&state.tag_stack, section.depth)
+        {
+            let source_credit = clean_body_fragment(&section.source_credit);
+            if !source_credit.is_empty() {
+                section.blocks.push(USCSectionBlock {
+                    type_: "source_credit".to_string(),
+                    label: Some("Source Credit".to_string()),
+                    content: Some(source_credit),
+                });
+            }
+            section.source_credit.clear();
+        }
+
         if current_tag.is_some_and(is_body_block_tag) {
             if let Some(frame) = section.body_frames.last() {
                 if frame.depth == state.tag_stack.len() {
                     let frame = section.body_frames.pop().unwrap();
-                    let cleaned = clean_body_fragment(&frame.text);
+                    let cleaned = normalize_body_fragment(&frame.text);
                     if !cleaned.is_empty() {
                         if let Some(parent) = section.body_frames.last_mut() {
                             if !parent.text.is_empty() {
-                                parent.text.push_str("\n\n");
+                                if is_standalone_bold_marker(&parent.text) {
+                                    parent.text.push(' ');
+                                    parent
+                                        .text
+                                        .push_str(strip_leading_blockquote_prefix(&cleaned));
+                                } else {
+                                    parent.text.push_str("\n\n");
+                                    parent.text.push_str(&cleaned);
+                                }
+                            } else {
+                                parent.text.push_str(&cleaned);
                             }
-                            parent.text.push_str(&cleaned);
                         } else {
                             section.body_parts.push(cleaned);
                         }
@@ -639,6 +795,7 @@ where
     if current_tag == Some(Tag::Section) {
         if let Some(section) = &state.active_section {
             if section.depth == state.tag_stack.len() {
+                state.open_refs.clear();
                 let section = state.active_section.take().unwrap();
                 let base_num = if section.capture.num.is_empty() {
                     section
@@ -658,7 +815,7 @@ where
                 let section_key = uniquify(&mut state.section_key_counts, &base_key);
 
                 let mut body_parts = section.body_parts;
-                let trailing = clean_body_fragment(&section.free_text);
+                let trailing = normalize_body_fragment(&section.free_text);
                 if !trailing.is_empty() {
                     body_parts.push(trailing);
                 }
@@ -670,9 +827,7 @@ where
                     section_key,
                     heading: normalize_heading(&section.capture.heading),
                     body,
-                    source_credit: clean_body_fragment(&section.source_credit),
-                    amendments: section.amendments.join("\n\n"),
-                    note: section.notes.join("\n\n"),
+                    blocks: section.blocks,
                     path,
                     parent_ref: section.parent_ref,
                 }));
@@ -808,15 +963,27 @@ fn is_level_ancestor(stack: &[Tag], level_depth: usize) -> bool {
 }
 
 fn is_section_heading(stack: &[Tag], section_depth: usize) -> bool {
-    stack.len() == section_depth + 1 && stack.ends_with(&[Tag::Section, Tag::Heading])
+    stack.len() >= section_depth + 1
+        && stack[section_depth - 1] == Tag::Section
+        && stack[section_depth] == Tag::Heading
+}
+
+fn is_section_num(stack: &[Tag], section_depth: usize) -> bool {
+    stack.len() >= section_depth + 1
+        && stack[section_depth - 1] == Tag::Section
+        && stack[section_depth] == Tag::Num
 }
 
 fn is_source_credit(stack: &[Tag], section_depth: usize) -> bool {
-    stack.len() >= section_depth + 1 && stack.ends_with(&[Tag::Section, Tag::SourceCredit])
+    stack.len() >= section_depth + 1
+        && stack[section_depth - 1] == Tag::Section
+        && stack[section_depth] == Tag::SourceCredit
 }
 
 fn is_note_heading(stack: &[Tag], note_depth: usize) -> bool {
-    stack.len() >= note_depth + 1 && stack.ends_with(&[Tag::Note, Tag::Heading])
+    stack.len() >= note_depth + 1
+        && stack[note_depth - 1] == Tag::Note
+        && stack[note_depth] == Tag::Heading
 }
 
 #[inline(always)]
@@ -850,12 +1017,27 @@ fn append_text(target: &mut String, text: &str) {
     let needs_space = !target.ends_with(' ')
         && !target.ends_with('\n')
         && !target.ends_with("**")
-        && !matches!(first, ',' | '.' | ';' | ':' | ')' | ']' | '?' | '!');
+        && !has_unclosed_bold(target)
+        && !target.ends_with('(')
+        && !target.ends_with('[')
+        && !target.ends_with('{')
+        && !matches!(first, ',' | '.' | ';' | ':' | '(' | ')' | ']' | '?' | '!');
 
     if needs_space {
         target.push(' ');
     }
     target.push_str(text);
+}
+
+fn push_bold_open(target: &mut String) {
+    if target.ends_with("**") && !target.ends_with(' ') && !target.ends_with('\n') {
+        target.push(' ');
+    }
+    target.push_str("**");
+}
+
+fn has_unclosed_bold(target: &str) -> bool {
+    target.match_indices("**").count() % 2 == 1
 }
 
 fn clean_body_fragment(text: &str) -> String {
@@ -864,6 +1046,66 @@ fn clean_body_fragment(text: &str) -> String {
         .replace_all(&out, "\n\n")
         .trim()
         .to_string()
+}
+
+fn normalize_body_fragment(text: &str) -> String {
+    let cleaned = clean_body_fragment(text);
+    if cleaned.is_empty() {
+        return cleaned;
+    }
+    INLINE_OUTLINE_MARKER_RE
+        .replace_all(&cleaned, |caps: &regex::Captures<'_>| {
+            let full = caps.get(0).expect("outline marker match should exist");
+            let prefix = caps
+                .name("prefix")
+                .expect("outline marker should have prefix");
+            let open_paren_start = full.start() + prefix.as_str().len();
+
+            if LEVEL_NAME_PREFIX_RE.is_match(&cleaned[..open_paren_start]) {
+                return full.as_str().to_string();
+            }
+
+            format!(
+                "{}**({})**{}",
+                &caps["prefix"], &caps["marker"], &caps["suffix"]
+            )
+        })
+        .to_string()
+}
+
+fn is_standalone_bold_marker(text: &str) -> bool {
+    let mut trimmed = text.trim();
+    while let Some(rest) = trimmed.strip_prefix('>') {
+        trimmed = rest.trim_start();
+    }
+    STANDALONE_BOLD_MARKER_RE.is_match(trimmed)
+}
+
+fn strip_leading_blockquote_prefix(text: &str) -> &str {
+    let mut trimmed = text.trim_start();
+    while let Some(rest) = trimmed.strip_prefix("> ") {
+        trimmed = rest;
+    }
+    trimmed
+}
+
+fn body_blockquote_depth(tag: Tag, ancestor_count: usize) -> usize {
+    if tag == Tag::Subsection {
+        0
+    } else if tag == Tag::Chapeau || tag == Tag::Continuation || tag == Tag::P {
+        ancestor_count
+    } else {
+        ancestor_count + 1
+    }
+}
+
+fn blockquote_prefix(tag: Tag, ancestor_count: usize) -> String {
+    let depth = body_blockquote_depth(tag, ancestor_count);
+    if depth == 0 {
+        String::new()
+    } else {
+        "> ".repeat(depth)
+    }
 }
 
 fn normalize_heading(heading: &str) -> String {
@@ -927,6 +1169,76 @@ fn section_num_from_identifier(identifier: &str) -> Option<String> {
         .next()
         .and_then(|part| part.strip_prefix('s'))
         .map(ToString::to_string)
+}
+
+fn usc_section_link_from_href(href: &str) -> Option<String> {
+    let native = strip_usc_prefix(href)?;
+    let mut title_num: Option<&str> = None;
+    let mut section_num: Option<String> = None;
+
+    for part in native.split('/') {
+        if title_num.is_none() {
+            if let Some(value) = part.strip_prefix('t') {
+                if !value.is_empty() {
+                    title_num = Some(value);
+                }
+            }
+        }
+        if section_num.is_none() {
+            if let Some(value) = part.strip_prefix('s') {
+                if !value.is_empty() {
+                    section_num = Some(normalize_section_num(value));
+                }
+            }
+        }
+        if title_num.is_some() && section_num.is_some() {
+            break;
+        }
+    }
+
+    Some(format!(
+        "/statutes/usc/section/{}/{}",
+        title_num?, section_num?
+    ))
+}
+
+fn finalize_ref(section: &mut ActiveSection, open_ref: OpenRef) {
+    let target = match &open_ref.target {
+        RefTarget::Body => section.target_text_mut(),
+        RefTarget::SourceCredit => &mut section.source_credit,
+        RefTarget::Note { depth } => {
+            let Some(note) = section
+                .active_notes
+                .iter_mut()
+                .rev()
+                .find(|candidate| candidate.depth == *depth)
+            else {
+                return;
+            };
+            &mut note.text
+        }
+    };
+
+    let end = target.len();
+    if open_ref.start >= end {
+        return;
+    }
+
+    let mut link_start = open_ref.start;
+    let mut link_end = end;
+    while link_start < link_end && target[link_start..link_end].starts_with(' ') {
+        link_start += 1;
+    }
+    while link_start < link_end && target[link_start..link_end].ends_with(' ') {
+        link_end -= 1;
+    }
+    if link_start >= link_end {
+        return;
+    }
+
+    let label = target[link_start..link_end].to_string();
+    let linked = format!("[{}]({})", label, open_ref.link);
+    target.replace_range(link_start..link_end, &linked);
 }
 
 fn level_num_from_identifier(identifier: &str) -> Option<String> {

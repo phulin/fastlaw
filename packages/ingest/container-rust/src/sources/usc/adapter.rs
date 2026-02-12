@@ -1,14 +1,11 @@
 use crate::runtime::types::IngestContext;
 use crate::sources::SourceAdapter;
-use crate::types::{
-    ContentBlock, NodeMeta, NodePayload, SectionContent, SectionMetadata, UnitEntry,
-};
+use crate::types::{ContentBlock, NodeMeta, NodePayload, SectionContent, UnitEntry};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 
-use crate::sources::usc::cross_references::extract_section_cross_references;
 use crate::sources::usc::parser::{
     parse_usc_xml_stream, section_level_index, USCParentRef, USCStreamEvent,
 };
@@ -141,49 +138,36 @@ impl SourceAdapter for UscAdapter {
                         continue;
                     }
 
-                    let text_for_xrefs = [&section.body, &section.note]
-                        .iter()
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-
-                    let cross_references =
-                        extract_section_cross_references(&text_for_xrefs, &section.title_num);
+                    let body_content = section.body.clone();
 
                     let mut blocks = vec![ContentBlock {
                         type_: "body".to_string(),
-                        content: section.body.clone(),
+                        content: if body_content.trim().is_empty() {
+                            None
+                        } else {
+                            Some(body_content)
+                        },
                         label: None,
                     }];
-                    if !section.source_credit.is_empty() {
+                    for block in &section.blocks {
+                        let block_content = block.content.clone();
                         blocks.push(ContentBlock {
-                            type_: "source_credit".to_string(),
-                            content: section.source_credit.clone(),
-                            label: Some("Source Credit".to_string()),
-                        });
-                    }
-                    if !section.amendments.is_empty() {
-                        blocks.push(ContentBlock {
-                            type_: "amendments".to_string(),
-                            content: section.amendments.clone(),
-                            label: Some("Amendments".to_string()),
-                        });
-                    }
-                    if !section.note.is_empty() {
-                        blocks.push(ContentBlock {
-                            type_: "note".to_string(),
-                            content: section.note.clone(),
-                            label: Some("Notes".to_string()),
+                            type_: block.type_.clone(),
+                            content: block_content.and_then(|content| {
+                                if content.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(content)
+                                }
+                            }),
+                            label: block.label.clone(),
                         });
                     }
 
-                    let metadata = if cross_references.is_empty() {
-                        None
-                    } else {
-                        Some(SectionMetadata { cross_references })
+                    let content = SectionContent {
+                        blocks,
+                        metadata: None,
                     };
-                    let content = SectionContent { blocks, metadata };
                     let readable_id = format!("{} USC {}", section.title_num, section.section_num);
                     let parent_id = resolve_section_parent_string_id(
                         context.build.root_node_id,
