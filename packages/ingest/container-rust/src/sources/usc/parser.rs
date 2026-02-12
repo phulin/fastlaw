@@ -2,6 +2,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use regex::Regex;
 use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -233,22 +234,32 @@ fn classify_attr(name: &[u8]) -> Option<AttrName> {
 }
 
 struct Attributes<'a> {
-    values: [Option<Cow<'a, [u8]>>; ATTR_COUNT],
+    event: &'a BytesStart<'a>,
+    values: OnceCell<[Option<Cow<'a, [u8]>>; ATTR_COUNT]>,
 }
 
 impl<'a> Attributes<'a> {
-    fn from_event(event: &'a BytesStart<'a>) -> Self {
-        let mut values: [Option<Cow<'a, [u8]>>; ATTR_COUNT] = [None, None, None];
-        for attr in event.attributes().flatten() {
-            if let Some(name) = classify_attr(attr.key.as_ref()) {
-                values[name as usize] = Some(attr.value);
-            }
+    fn new(event: &'a BytesStart<'a>) -> Self {
+        Self {
+            event,
+            values: OnceCell::new(),
         }
-        Self { values }
+    }
+
+    fn load(&self) -> &[Option<Cow<'a, [u8]>>; ATTR_COUNT] {
+        self.values.get_or_init(|| {
+            let mut values: [Option<Cow<'a, [u8]>>; ATTR_COUNT] = [None, None, None];
+            for attr in self.event.attributes().flatten() {
+                if let Some(name) = classify_attr(attr.key.as_ref()) {
+                    values[name as usize] = Some(attr.value);
+                }
+            }
+            values
+        })
     }
 
     fn get(&self, name: AttrName) -> Option<String> {
-        self.values[name as usize].as_ref().map(|bytes| {
+        self.load()[name as usize].as_ref().map(|bytes| {
             std::str::from_utf8(bytes)
                 .ok()
                 .and_then(|s| quick_xml::escape::unescape(s).ok())
@@ -371,7 +382,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
     }
 
     let mask = state.current_mask();
-    let attrs = Attributes::from_event(e);
+    let attrs = Attributes::new(e);
 
     if current_tag.is_some_and(is_level_tag) {
         let level_type = level_tag_str(current_tag.unwrap());
@@ -448,7 +459,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
         if section.depth < state.tag_stack.len()
             && current_tag.is_some_and(is_body_block_tag)
             && !in_body_excluded_context(mask)
-            && !(current_tag.is_some_and(is_heading_tag)
+            && !(current_tag == Some(Tag::Heading)
                 && section.depth + 1 == state.tag_stack.len())
         {
             section.body_frames.push(BodyFrame {
@@ -475,13 +486,13 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
 
         if current_tag.is_some_and(is_body_decorated_tag)
             && !in_body_excluded_context(mask)
-            && !(current_tag.is_some_and(is_heading_tag)
+            && !(current_tag == Some(Tag::Heading)
                 && section.depth + 1 == state.tag_stack.len())
         {
             section.target_text_mut().push_str("**");
         }
 
-        if current_tag.is_some_and(is_num_tag) {
+        if current_tag == Some(Tag::Num) {
             if let Some(value) = attrs.get(AttrName::Value) {
                 if section.capture.num.is_empty() {
                     section.capture.num = normalize_section_num(&value);
@@ -490,7 +501,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
         }
     }
 
-    if current_tag.is_some_and(is_num_tag) {
+    if current_tag == Some(Tag::Num) {
         if let Some(level) = state.open_level_refs.last_mut() {
             if is_level_num(&state.tag_stack, level.depth) && level.capture.num.is_empty() {
                 if let Some(value) = attrs.get(AttrName::Value) {
@@ -569,7 +580,7 @@ where
     if let Some(section) = &mut state.active_section {
         if current_tag.is_some_and(is_body_decorated_tag)
             && !in_body_excluded_context(mask)
-            && !(current_tag.is_some_and(is_heading_tag)
+            && !(current_tag == Some(Tag::Heading)
                 && section.depth + 1 == state.tag_stack.len())
         {
             section.target_text_mut().push_str("**");
@@ -749,8 +760,6 @@ const BODY_BLOCK_TAG_MASK: u64 = bit(Tag::Subsection)
     | bit(Tag::P);
 const BODY_DECORATED_TAG_MASK: u64 = bit(Tag::Num) | bit(Tag::Heading);
 const LEVEL_ANCESTOR_TAG_MASK: u64 = bit(Tag::Title) | LEVEL_TAG_MASK;
-const NUM_TAG_MASK: u64 = bit(Tag::Num);
-const HEADING_TAG_MASK: u64 = bit(Tag::Heading);
 const INLINE_SEPARATOR_TAG_MASK: u64 =
     bit(Tag::Content) | bit(Tag::Chapeau) | bit(Tag::Continuation);
 
@@ -767,16 +776,6 @@ fn is_body_block_tag(tag: Tag) -> bool {
 #[inline(always)]
 fn is_body_decorated_tag(tag: Tag) -> bool {
     bit(tag) & BODY_DECORATED_TAG_MASK != 0
-}
-
-#[inline(always)]
-fn is_num_tag(tag: Tag) -> bool {
-    bit(tag) & NUM_TAG_MASK != 0
-}
-
-#[inline(always)]
-fn is_heading_tag(tag: Tag) -> bool {
-    bit(tag) & HEADING_TAG_MASK != 0
 }
 
 #[inline(always)]
