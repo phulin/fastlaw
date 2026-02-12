@@ -16,9 +16,6 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
-[build]
-rustc-wrapper = "sccache"
-
 [[bin]]
 name = "ingest"
 path = "src/main.rs"
@@ -26,3 +23,7 @@ path = "src/main.rs"
 [[bin]]
 name = "dummy"
 path = "src/dummy.rs"
+
+[[bin]]
+name = "bench_parser"
+path = "src/bench_parser.rs"
