@@ -350,6 +350,41 @@ body {
 	margin-top: 14px;
 }
 
+.statute-body .markdown a,
+.statute-meta .markdown a {
+	color: var(--accent-dark);
+	text-decoration-color: color-mix(
+		in oklab,
+		var(--accent-dark) 72%,
+		transparent
+	);
+	text-decoration-thickness: 0.08em;
+	text-underline-offset: 0.12em;
+}
+
+.statute-body .markdown a:visited,
+.statute-meta .markdown a:visited {
+	color: color-mix(in oklab, var(--accent-dark) 76%, var(--ink-soft));
+	text-decoration-color: color-mix(
+		in oklab,
+		var(--accent-dark) 58%,
+		transparent
+	);
+}
+
+.statute-body .markdown a:hover,
+.statute-meta .markdown a:hover {
+	color: var(--accent);
+	text-decoration-color: var(--accent);
+}
+
+.statute-body .markdown a:focus-visible,
+.statute-meta .markdown a:focus-visible {
+	outline: 2px solid color-mix(in oklab, var(--accent) 55%, white);
+	outline-offset: 2px;
+	border-radius: 2px;
+}
+
 .statute-body .paragraph-identifier,
 .statute-meta .paragraph-identifier {
 	font-weight: 600;
