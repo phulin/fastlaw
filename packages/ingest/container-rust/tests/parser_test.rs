@@ -172,7 +172,7 @@ fn extracts_section_1_with_correct_structure() {
     // Parent linkage (sections in chapter 1 should have chapter parent)
     match &section1.parent_ref {
         USCParentRef::Level { level_type, .. } => {
-            assert_eq!(level_type, "chapter");
+            assert_eq!(*level_type, "chapter");
         }
         USCParentRef::Title { .. } => {
             panic!("Expected level parent, got title parent");
@@ -258,7 +258,7 @@ fn sets_chapter_identifiers_correctly() {
         .iter()
         .find(|l| l.level_type == "chapter" && l.num == "1")
         .expect("Chapter 1 not found");
-    assert_eq!(chapter1.identifier, "title-1/chapter-1");
+    assert_eq!(chapter1.identifier, "t1/ch1");
     assert_eq!(chapter1.title_num, "1");
 }
 
@@ -270,8 +270,8 @@ fn links_chapters_to_title_as_parent() {
         if level.level_type == "chapter" {
             assert_eq!(
                 level.parent_identifier.as_deref(),
-                Some("title-1"),
-                "Chapter {} should have parent title-1",
+                Some("t1/root"),
+                "Chapter {} should have parent t1/root",
                 level.num
             );
         }
@@ -440,8 +440,8 @@ fn test_url_collision_overlapping_parts() {
         parts[0].identifier, parts[1].identifier,
         "Part identifiers should be unique"
     );
-    assert_eq!(parts[0].identifier, "title-10/subtitle-A/part-I");
-    assert_eq!(parts[1].identifier, "title-10/subtitle-B/part-I");
+    assert_eq!(parts[0].identifier, "t10/stA/ptI");
+    assert_eq!(parts[1].identifier, "t10/stB/ptI");
 
     // Check paths
     assert_ne!(parts[0].path, parts[1].path, "Part paths should be unique");

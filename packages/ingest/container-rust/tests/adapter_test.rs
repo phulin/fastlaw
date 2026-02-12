@@ -104,7 +104,7 @@ async fn test_adapter_extracts_levels_and_sections() {
         .iter()
         .find(|n| n.meta.level_name == "title")
         .expect("Title not found");
-    assert_eq!(title.meta.id, "root/title-1");
+    assert_eq!(title.meta.id, "root/t1/root");
     assert_eq!(title.meta.name.as_deref(), Some("General Provisions"));
 
     // Check Chapter
@@ -112,25 +112,16 @@ async fn test_adapter_extracts_levels_and_sections() {
         .iter()
         .find(|n| n.meta.level_name == "chapter")
         .expect("Chapter not found");
-    assert_eq!(chapter.meta.id, "root/chapter-1-ch1");
-    // Parent of chapter is title?
-    // DocContext tracks parents.
-    assert_eq!(chapter.meta.parent_id.as_deref(), Some("root/title-1"));
+    assert_eq!(chapter.meta.id, "root/t1/ch1");
+    assert_eq!(chapter.meta.parent_id.as_deref(), Some("root/t1/root"));
 
     // Check Section
     let section = nodes
         .iter()
         .find(|n| n.meta.level_name == "section")
         .expect("Section not found");
-    // ID logic for sections usually appends to parent?
-    // Wait, adapter logic for section ID: `parent_id + "/s" + section_num`.
-    // Parent of section is Chapter -> "1-ch1".
-    // So ID -> "1-ch1/s1".
-    assert_eq!(section.meta.id, "root/chapter-1-ch1/section-1");
-    assert_eq!(
-        section.meta.parent_id.as_deref(),
-        Some("root/chapter-1-ch1")
-    );
+    assert_eq!(section.meta.id, "root/t1/ch1/section-1");
+    assert_eq!(section.meta.parent_id.as_deref(), Some("root/t1/ch1"));
     assert_eq!(
         section.meta.name.as_deref(),
         Some("Words denoting number, gender, etc.")

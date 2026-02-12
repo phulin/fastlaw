@@ -1,7 +1,16 @@
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use regex::Regex;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::LazyLock;
+
+static WHITESPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+static UNICODE_DASH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\u2010-\u2014\u2212]").unwrap());
+static MULTI_NEWLINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+static LEVEL_SEGMENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?P<prefix>st|sch|spt|sd|ch|pt|t|d)(?P<num>.+)$").unwrap());
 
 #[derive(Debug, Clone)]
 pub struct USCParseResult {
@@ -14,7 +23,7 @@ pub struct USCParseResult {
 #[derive(Debug, Clone)]
 pub struct USCLevel {
     pub title_num: String,
-    pub level_type: String,
+    pub level_type: &'static str,
     pub level_index: usize,
     pub identifier: String,
     pub parent_identifier: Option<String>,
@@ -30,7 +39,7 @@ pub enum USCParentRef {
     },
     Level {
         identifier: String,
-        level_type: String,
+        level_type: &'static str,
     },
 }
 
@@ -93,6 +102,19 @@ const fn bit(tag: Tag) -> u64 {
     1u64 << (tag as u64)
 }
 
+fn level_tag_str(tag: Tag) -> &'static str {
+    match tag {
+        Tag::Subtitle => "subtitle",
+        Tag::Chapter => "chapter",
+        Tag::Subchapter => "subchapter",
+        Tag::Division => "division",
+        Tag::Subdivision => "subdivision",
+        Tag::Part => "part",
+        Tag::Subpart => "subpart",
+        _ => unreachable!(),
+    }
+}
+
 fn classify(name: &[u8]) -> Option<Tag> {
     match name {
         b"meta" => Some(Tag::Meta),
@@ -145,7 +167,7 @@ impl NumHeadingCapture {
 #[derive(Debug, Clone)]
 struct OpenLevelRef {
     depth: usize,
-    level_type: String,
+    level_type: &'static str,
     identifier: String,
     parent_identifier: Option<String>,
     raw_identifier: Option<String>,
@@ -188,6 +210,51 @@ impl ActiveSection {
         } else {
             &mut self.free_text
         }
+    }
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum AttrName {
+    Identifier = 0,
+    Value = 1,
+    Topic = 2,
+}
+
+const ATTR_COUNT: usize = 3;
+
+fn classify_attr(name: &[u8]) -> Option<AttrName> {
+    match name {
+        b"identifier" => Some(AttrName::Identifier),
+        b"value" => Some(AttrName::Value),
+        b"topic" => Some(AttrName::Topic),
+        _ => None,
+    }
+}
+
+struct Attributes<'a> {
+    values: [Option<Cow<'a, [u8]>>; ATTR_COUNT],
+}
+
+impl<'a> Attributes<'a> {
+    fn from_event(event: &'a BytesStart<'a>) -> Self {
+        let mut values: [Option<Cow<'a, [u8]>>; ATTR_COUNT] = [None, None, None];
+        for attr in event.attributes().flatten() {
+            if let Some(name) = classify_attr(attr.key.as_ref()) {
+                values[name as usize] = Some(attr.value);
+            }
+        }
+        Self { values }
+    }
+
+    fn get(&self, name: AttrName) -> Option<String> {
+        self.values[name as usize].as_ref().map(|bytes| {
+            std::str::from_utf8(bytes)
+                .ok()
+                .and_then(|s| quick_xml::escape::unescape(s).ok())
+                .map(|cow| cow.into_owned())
+                .unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned())
+        })
     }
 }
 
@@ -271,13 +338,13 @@ where
                 handle_end(&mut state, e.local_name().as_ref(), &mut emit);
             }
             Ok(Event::Text(t)) => {
-                let decoded = String::from_utf8_lossy(t.as_ref());
-                let text = unescape_to_owned(&decoded);
-                handle_text(&mut state, &text, &mut emit);
+                if let Ok(text) = t.unescape() {
+                    handle_text(&mut state, &text, &mut emit);
+                }
             }
             Ok(Event::CData(t)) => {
-                let decoded = String::from_utf8_lossy(t.as_ref());
-                handle_text(&mut state, &decoded, &mut emit);
+                let text = String::from_utf8_lossy(t.as_ref());
+                handle_text(&mut state, &text, &mut emit);
             }
             Ok(Event::End(e)) => handle_end(&mut state, e.local_name().as_ref(), &mut emit),
             Ok(Event::Eof) => break,
@@ -304,26 +371,32 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
     }
 
     let mask = state.current_mask();
+    let attrs = Attributes::from_event(e);
 
     if current_tag.is_some_and(is_level_tag) {
-        let level_type = std::str::from_utf8(name_ref)
-            .unwrap_or_default()
-            .to_string();
-        let raw_identifier = get_attr(e, b"identifier");
-        let parent_identifier = state
-            .open_level_refs
-            .last()
-            .map(|level| level.identifier.clone())
-            .or_else(|| Some(format!("title-{}", state.title_num)));
-        let open_identifier = raw_identifier
+        let level_type = level_tag_str(current_tag.unwrap());
+        let raw_identifier = attrs.get(AttrName::Identifier);
+        let native_id = raw_identifier
             .as_deref()
-            .and_then(|value| level_identifier_from_path(value, &state.title_num))
-            .unwrap_or_else(|| {
-                let parent = parent_identifier
-                    .clone()
-                    .unwrap_or_else(|| format!("title-{}", state.title_num));
-                format!("{parent}/{}-unknown", level_type)
-            });
+            .and_then(strip_usc_prefix)
+            .map(|s| s.to_string());
+        let open_identifier = native_id.clone().unwrap_or_else(|| {
+            let parent = state
+                .open_level_refs
+                .last()
+                .map(|level| level.identifier.clone())
+                .unwrap_or_else(|| format!("t{}/root", state.title_num));
+            format!("{parent}/{}-unknown", level_type_to_prefix(level_type))
+        });
+        let parent_identifier = if let Some(ref id) = native_id {
+            Some(parent_from_native_id(id))
+        } else {
+            state
+                .open_level_refs
+                .last()
+                .map(|level| level.identifier.clone())
+                .or_else(|| Some(format!("t{}/root", state.title_num)))
+        };
         state.open_level_refs.push(OpenLevelRef {
             depth: state.tag_stack.len(),
             level_type,
@@ -338,11 +411,11 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
     }
 
     if current_tag == Some(Tag::Section) && !in_note_or_quoted(mask) {
-        let identifier = get_attr(e, b"identifier");
+        let identifier = attrs.get(AttrName::Identifier);
         let section_num = identifier
             .as_deref()
             .and_then(section_num_from_identifier)
-            .or_else(|| get_attr(e, b"value"))
+            .or_else(|| attrs.get(AttrName::Value))
             .unwrap_or_default();
 
         let parent_ref = state
@@ -350,7 +423,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
             .last()
             .map(|level| USCParentRef::Level {
                 identifier: level.identifier.clone(),
-                level_type: level.level_type.clone(),
+                level_type: level.level_type,
             })
             .unwrap_or_else(|| USCParentRef::Title {
                 title_num: state.title_num.clone(),
@@ -394,7 +467,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
         if current_tag == Some(Tag::Note) && mask & bit(Tag::QuotedContent) == 0 {
             section.active_notes.push(ActiveNote {
                 depth: state.tag_stack.len(),
-                topic: get_attr(e, b"topic"),
+                topic: attrs.get(AttrName::Topic),
                 heading: String::new(),
                 text: String::new(),
             });
@@ -409,7 +482,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
         }
 
         if current_tag.is_some_and(is_num_tag) {
-            if let Some(value) = get_attr(e, b"value") {
+            if let Some(value) = attrs.get(AttrName::Value) {
                 if section.capture.num.is_empty() {
                     section.capture.num = normalize_section_num(&value);
                 }
@@ -420,7 +493,7 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
     if current_tag.is_some_and(is_num_tag) {
         if let Some(level) = state.open_level_refs.last_mut() {
             if is_level_num(&state.tag_stack, level.depth) && level.capture.num.is_empty() {
-                if let Some(value) = get_attr(e, b"value") {
+                if let Some(value) = attrs.get(AttrName::Value) {
                     level.capture.num = normalize_section_num(&value);
                 }
             }
@@ -440,19 +513,19 @@ where
     let mask = state.current_mask();
 
     if !state.title_emitted && is_main_title_heading(&state.tag_stack) {
-        state.title_name_main = Some(text.clone());
+        state.title_name_main = Some(text.to_string());
         emit(USCStreamEvent::Title(state.title_name()));
         state.title_emitted = true;
     }
 
     if state.title_name_meta.is_none() && is_meta_title(&state.tag_stack) {
-        state.title_name_meta = Some(text.clone());
+        state.title_name_meta = Some(text.to_string());
     }
 
     if let Some(level) = state.open_level_refs.last_mut() {
         if is_level_num(&state.tag_stack, level.depth) {
             if level.capture.num.is_empty() {
-                level.capture.num = text.clone();
+                level.capture.num = text.to_string();
             }
         } else if is_level_heading(&state.tag_stack, level.depth) {
             append_text(&mut level.capture.heading, &text);
@@ -614,26 +687,30 @@ where
                 };
                 let num = normalize_section_num(&fallback_num);
                 let mut identifier = level.identifier.clone();
-                if !num.is_empty() && level.identifier.ends_with("-unknown") {
+                if !num.is_empty() && identifier.ends_with("-unknown") {
                     let parent = level
                         .parent_identifier
                         .clone()
-                        .unwrap_or_else(|| format!("title-{}", state.title_num));
-                    identifier = format!("{parent}/{}-{}", level.level_type, slug_part(&num));
+                        .unwrap_or_else(|| format!("t{}/root", state.title_num));
+                    let prefix = level_type_to_prefix(level.level_type);
+                    identifier = format!("{parent}/{prefix}{}", slug_part(&num));
                 }
 
-                let path = format!(
-                    "/statutes/usc/{}/{}",
-                    state.title_num,
-                    identifier
-                        .strip_prefix(&format!("title-{}/", state.title_num))
-                        .unwrap_or(&identifier)
-                );
+                // Derive path using the friendly title-X/chapter-Y format
+                let friendly = level
+                    .raw_identifier
+                    .as_deref()
+                    .and_then(|raw| level_identifier_from_path(raw, &state.title_num));
+                let path_suffix = friendly
+                    .as_deref()
+                    .and_then(|f| f.strip_prefix(&format!("title-{}/", state.title_num)))
+                    .unwrap_or(&identifier);
+                let path = format!("/statutes/usc/{}/{}", state.title_num, path_suffix);
 
                 let usc_level = USCLevel {
                     title_num: state.title_num.clone(),
-                    level_type: level.level_type.clone(),
-                    level_index: usc_level_index(&level.level_type).unwrap_or(0),
+                    level_type: level.level_type,
+                    level_index: usc_level_index(level.level_type).unwrap_or(0),
                     identifier: identifier.clone(),
                     parent_identifier: level.parent_identifier.clone(),
                     num,
@@ -756,26 +833,12 @@ fn in_body_excluded_context(mask: u64) -> bool {
     mask & (bit(Tag::Note) | bit(Tag::SourceCredit) | bit(Tag::QuotedContent)) != 0
 }
 
-fn normalize_text(raw: &str) -> String {
+fn normalize_text(raw: &str) -> Cow<'_, str> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return String::new();
+        return Cow::Borrowed("");
     }
-
-    let mut out = String::with_capacity(trimmed.len());
-    let mut prev_space = false;
-    for ch in trimmed.chars() {
-        let is_space = ch.is_whitespace();
-        if is_space {
-            if !prev_space {
-                out.push(' ');
-            }
-        } else {
-            out.push(ch);
-        }
-        prev_space = is_space;
-    }
-    out.trim().to_string()
+    WHITESPACE_RE.replace_all(trimmed, " ")
 }
 
 fn append_text(target: &mut String, text: &str) {
@@ -800,11 +863,11 @@ fn append_text(target: &mut String, text: &str) {
 }
 
 fn clean_body_fragment(text: &str) -> String {
-    let mut out = text.replace("\u{a0}", " ");
-    while out.contains("\n\n\n") {
-        out = out.replace("\n\n\n", "\n\n");
-    }
-    out.trim().to_string()
+    let out = text.replace('\u{a0}', " ");
+    MULTI_NEWLINE_RE
+        .replace_all(&out, "\n\n")
+        .trim()
+        .to_string()
 }
 
 fn normalize_heading(heading: &str) -> String {
@@ -820,24 +883,46 @@ fn normalize_heading(heading: &str) -> String {
 }
 
 fn normalize_section_num(value: &str) -> String {
-    value
-        .trim()
-        .replace('\u{2013}', "-")
-        .replace('\u{2014}', "-")
-        .replace('\u{2012}', "-")
-        .replace('\u{2011}', "-")
-        .replace('\u{2212}', "-")
-        .replace('\u{2010}', "-")
+    UNICODE_DASH_RE.replace_all(value.trim(), "-").into_owned()
 }
 
 fn slug_part(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            '\u{2013}' | '\u{2014}' | '\u{2012}' | '\u{2011}' | '\u{2212}' | '\u{2010}' => '-',
-            _ => ch,
-        })
-        .collect::<String>()
+    UNICODE_DASH_RE.replace_all(value, "-").into_owned()
+}
+
+fn strip_usc_prefix(raw: &str) -> Option<&str> {
+    raw.strip_prefix("/us/usc/")
+}
+
+fn parent_from_native_id(native_id: &str) -> String {
+    match native_id.rsplit_once('/') {
+        Some((parent, _)) => {
+            if is_title_path(parent) {
+                format!("{parent}/root")
+            } else {
+                parent.to_string()
+            }
+        }
+        None => String::new(),
+    }
+}
+
+fn is_title_path(path: &str) -> bool {
+    let segment = path.rsplit('/').next().unwrap_or(path);
+    segment.starts_with('t') && segment[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+fn level_type_to_prefix(level_type: &str) -> &str {
+    match level_type {
+        "subtitle" => "st",
+        "subchapter" => "sch",
+        "chapter" => "ch",
+        "subpart" => "spt",
+        "part" => "pt",
+        "subdivision" => "sd",
+        "division" => "d",
+        _ => level_type,
+    }
 }
 
 fn section_num_from_identifier(identifier: &str) -> Option<String> {
@@ -850,8 +935,8 @@ fn section_num_from_identifier(identifier: &str) -> Option<String> {
 
 fn level_num_from_identifier(identifier: &str) -> Option<String> {
     let segment = identifier.rsplit('/').next()?;
-    let (_, num) = segment.split_once(|c| c == 'h' || c == 't' || c == 'p' || c == 'd')?;
-    Some(num.to_string())
+    let caps = LEVEL_SEGMENT_RE.captures(segment)?;
+    Some(caps["num"].to_string())
 }
 
 fn level_identifier_from_path(identifier: &str, title_num: &str) -> Option<String> {
@@ -860,39 +945,29 @@ fn level_identifier_from_path(identifier: &str, title_num: &str) -> Option<Strin
         if raw.is_empty() || raw == "us" || raw == "usc" {
             continue;
         }
-        if let Some(num) = raw.strip_prefix('t') {
-            if num == title_num {
-                parts.push(format!("title-{}", title_num));
+        if let Some(caps) = LEVEL_SEGMENT_RE.captures(raw) {
+            let prefix = &caps["prefix"];
+            let num = &caps["num"];
+            match prefix {
+                "t" => {
+                    if num == title_num {
+                        parts.push(format!("title-{title_num}"));
+                    }
+                }
+                _ => {
+                    let type_name = match prefix {
+                        "st" => "subtitle",
+                        "sch" => "subchapter",
+                        "ch" => "chapter",
+                        "spt" => "subpart",
+                        "pt" => "part",
+                        "sd" => "subdivision",
+                        "d" => "division",
+                        _ => unreachable!(),
+                    };
+                    parts.push(format!("{type_name}-{num}"));
+                }
             }
-            continue;
-        }
-        if let Some(num) = raw.strip_prefix("st") {
-            parts.push(format!("subtitle-{}", num));
-            continue;
-        }
-        if let Some(num) = raw.strip_prefix("sch") {
-            parts.push(format!("subchapter-{}", num));
-            continue;
-        }
-        if let Some(num) = raw.strip_prefix("ch") {
-            parts.push(format!("chapter-{}", num));
-            continue;
-        }
-        if let Some(num) = raw.strip_prefix("spt") {
-            parts.push(format!("subpart-{}", num));
-            continue;
-        }
-        if let Some(num) = raw.strip_prefix("pt") {
-            parts.push(format!("part-{}", num));
-            continue;
-        }
-        if let Some(num) = raw.strip_prefix("sd") {
-            parts.push(format!("subdivision-{}", num));
-            continue;
-        }
-        if let Some(num) = raw.strip_prefix('d') {
-            parts.push(format!("division-{}", num));
-            continue;
         }
     }
 
@@ -910,22 +985,6 @@ fn uniquify(counts: &mut HashMap<String, usize>, base: &str) -> String {
         base.to_string()
     } else {
         format!("{base}-{}", *entry)
-    }
-}
-
-fn get_attr(e: &BytesStart<'_>, attr_name: &[u8]) -> Option<String> {
-    for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == attr_name {
-            return Some(String::from_utf8_lossy(attr.value.as_ref()).to_string());
-        }
-    }
-    None
-}
-
-fn unescape_to_owned(input: &Cow<'_, str>) -> String {
-    match quick_xml::escape::unescape(input) {
-        Ok(unescaped) => unescaped.into_owned(),
-        Err(_) => input.to_string(),
     }
 }
 

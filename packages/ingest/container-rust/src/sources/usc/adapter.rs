@@ -104,7 +104,7 @@ impl SourceAdapter for UscAdapter {
                                 id: string_id,
                                 source_version_id: context.build.source_version_id.to_string(),
                                 parent_id: Some(parent_string_id),
-                                level_name: level.level_type.clone(),
+                                level_name: level.level_type.to_string(),
                                 level_index: level.level_index as i32,
                                 sort_order: level_sort_order,
                                 name: Some(level.heading.clone()),
@@ -232,12 +232,13 @@ async fn emit_title_node(
     title_name: &str,
     seen_level_ids: &mut HashSet<String>,
 ) -> Result<(), String> {
-    if seen_level_ids.contains(&format!("title-{title_num}")) {
+    let native_id = format!("t{title_num}/root");
+    if seen_level_ids.contains(&native_id) {
         return Ok(());
     }
-    seen_level_ids.insert(format!("title-{title_num}"));
+    seen_level_ids.insert(native_id.clone());
 
-    let title_string_id = format!("{}/title-{title_num}", context.build.root_node_id);
+    let title_string_id = format!("{}/{native_id}", context.build.root_node_id);
 
     context
         .nodes
@@ -267,18 +268,15 @@ fn resolve_level_parent_string_id(
     level_title_num: &str,
 ) -> String {
     if let Some(parent_id) = level_parent_identifier {
-        if parent_id.ends_with("-title") {
-            return format!("{root_string_id}/title-{level_title_num}");
-        }
         return format!("{root_string_id}/{parent_id}");
     }
-    format!("{root_string_id}/title-{level_title_num}")
+    format!("{root_string_id}/t{level_title_num}/root")
 }
 
 fn resolve_section_parent_string_id(root_string_id: &str, parent_ref: &USCParentRef) -> String {
     match parent_ref {
         USCParentRef::Title { title_num } => {
-            format!("{root_string_id}/title-{title_num}")
+            format!("{root_string_id}/t{title_num}/root")
         }
         USCParentRef::Level { identifier, .. } => {
             format!("{root_string_id}/{identifier}")
