@@ -1,11 +1,12 @@
 import { MetaProvider } from "@solidjs/meta";
-import { Show } from "solid-js";
+import { Match, Switch } from "solid-js";
+import { isDocumentRoute, parseIngestJobId } from "~/lib/routes";
 import type { PageData as PageDataType } from "~/lib/types";
 import DeepSearchPage from "~/pages/DeepSearch";
-import Home from "~/pages/Home";
 import IngestJobPage from "~/pages/IngestJob";
 import IngestJobsPage from "~/pages/IngestJobs";
 import { NodePage } from "~/pages/Node";
+import NotFoundPage from "~/pages/NotFound";
 import SearchPage from "~/pages/Search";
 
 export type PageData = PageDataType;
@@ -15,44 +16,35 @@ interface AppProps {
 	pageData: PageData | null;
 }
 
-const isDocumentRoute = (path: string) =>
-	path === "/statutes" ||
-	path.startsWith("/statutes/") ||
-	path === "/cases" ||
-	path.startsWith("/cases/");
-
-const JOB_DETAIL_RE = /^\/ingest\/jobs\/([^/]+)$/;
-
-function parseJobId(pathname: string): string | null {
-	const match = JOB_DETAIL_RE.exec(pathname);
-	return match ? match[1] : null;
-}
-
 export default function App(props: AppProps) {
+	const jobId = parseIngestJobId(props.pathname);
+	const isFoundDocument =
+		isDocumentRoute(props.pathname) && props.pageData?.status === "found";
+
 	return (
 		<MetaProvider>
-			<Show when={props.pathname === "/"} fallback={null}>
-				<Home />
-			</Show>
-			<Show when={props.pathname === "/search"} fallback={null}>
-				<SearchPage />
-			</Show>
-			<Show when={props.pathname === "/deepsearch"} fallback={null}>
-				<DeepSearchPage />
-			</Show>
-			<Show when={props.pathname === "/ingest/jobs"} fallback={null}>
-				<IngestJobsPage />
-			</Show>
-			<Show when={parseJobId(props.pathname)} fallback={null}>
-				{(jobId) => <IngestJobPage jobId={jobId()} />}
-			</Show>
-			<Show when={isDocumentRoute(props.pathname)} fallback={null}>
-				<Show when={props.pageData?.status === "found"}>
+			<Switch fallback={<NotFoundPage pathname={props.pathname} />}>
+				<Match when={props.pathname === "/"}>
+					<SearchPage />
+				</Match>
+				<Match when={props.pathname === "/search"}>
+					<SearchPage />
+				</Match>
+				<Match when={props.pathname === "/deepsearch"}>
+					<DeepSearchPage />
+				</Match>
+				<Match when={props.pathname === "/ingest/jobs"}>
+					<IngestJobsPage />
+				</Match>
+				<Match when={jobId}>
+					{(resolvedJobId) => <IngestJobPage jobId={resolvedJobId()} />}
+				</Match>
+				<Match when={isFoundDocument}>
 					<NodePage
 						data={props.pageData as Extract<PageData, { status: "found" }>}
 					/>
-				</Show>
-			</Show>
+				</Match>
+			</Switch>
 		</MetaProvider>
 	);
 }

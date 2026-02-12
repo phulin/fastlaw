@@ -14,6 +14,40 @@ interface SearchResult {
 	text: string | null;
 }
 
+const SOURCE_LINKS = [
+	{
+		label: "Connecticut General Statutes",
+		href: "/statutes/cgs",
+	},
+	{
+		label: "United States Code",
+		href: "/statutes/usc",
+	},
+];
+
+const SEARCH_TYPES = [
+	{
+		value: "auto",
+		label: "Auto",
+		description: "Automatically choose the best mode for the query.",
+	},
+	{
+		value: "lookup",
+		label: "Lookup",
+		description: "Direct citation lookup, e.g. 42 USC 2001.",
+	},
+	{
+		value: "structured",
+		label: "Structured",
+		description: "Terms-and-connectors style search.",
+	},
+	{
+		value: "natural",
+		label: "Natural",
+		description: "Natural language question search.",
+	},
+] as const;
+
 const buildSectionHref = (sectionId: string | null): string | null => {
 	if (!sectionId || typeof sectionId !== "string") return null;
 	const rawId = sectionId.replace(/^secs?_/, "");
@@ -24,6 +58,9 @@ const buildSectionHref = (sectionId: string | null): string | null => {
 
 export default function SearchPage() {
 	const [query, setQuery] = createSignal("");
+	const [searchType, setSearchType] =
+		createSignal<(typeof SEARCH_TYPES)[number]["value"]>("auto");
+	const [isSearchTypeMenuOpen, setIsSearchTypeMenuOpen] = createSignal(false);
 	const [results, setResults] = createSignal<SearchResult[]>([]);
 	const [isLoading, setIsLoading] = createSignal(false);
 	const [error, setError] = createSignal<string | null>(null);
@@ -66,26 +103,58 @@ export default function SearchPage() {
 			<Header />
 			<main class="search-layout">
 				<section class="search-panel">
-					<div class="search-header">
-						<p class="eyebrow">Vector Search</p>
-						<h1>Search Connecticut Statutes</h1>
-						<p class="lead">
-							Find relevant statute sections using semantic similarity search.
-							For deeper analysis with AI-generated answers, try{" "}
-							<a href="/deepsearch">Deep Search</a>.
-						</p>
-					</div>
-
 					<form class="search-form" onSubmit={handleSubmit}>
 						<label class="search-label" for="search-input">
 							Search query
 						</label>
 						<div class="search-input-row">
+							<div class="search-type-menu">
+								<button
+									type="button"
+									class="search-type-trigger"
+									aria-haspopup="menu"
+									aria-expanded={isSearchTypeMenuOpen()}
+									onClick={() => setIsSearchTypeMenuOpen((isOpen) => !isOpen)}
+								>
+									{
+										SEARCH_TYPES.find((mode) => mode.value === searchType())
+											?.label
+									}
+								</button>
+								<Show when={isSearchTypeMenuOpen()}>
+									<div class="search-type-options" role="menu">
+										<For each={SEARCH_TYPES}>
+											{(mode) => (
+												<button
+													type="button"
+													role="menuitemradio"
+													aria-checked={searchType() === mode.value}
+													classList={{
+														"search-type-option": true,
+														active: searchType() === mode.value,
+													}}
+													onClick={() => {
+														setSearchType(mode.value);
+														setIsSearchTypeMenuOpen(false);
+													}}
+												>
+													<span class="search-type-option-label">
+														{mode.label}
+													</span>
+													<span class="search-type-option-description">
+														{mode.description}
+													</span>
+												</button>
+											)}
+										</For>
+									</div>
+								</Show>
+							</div>
 							<input
 								id="search-input"
 								type="text"
 								name="query"
-								placeholder="Ex: penalties for unlicensed daycare"
+								placeholder="Ex: tenant notice requirements"
 								value={query()}
 								onInput={(e) => setQuery(e.currentTarget.value)}
 								disabled={isLoading()}
@@ -96,6 +165,19 @@ export default function SearchPage() {
 							</button>
 						</div>
 					</form>
+
+					<section class="search-sources">
+						<p class="search-sources-title">Sources</p>
+						<ul class="search-sources-list">
+							<For each={SOURCE_LINKS}>
+								{(source) => (
+									<li>
+										<a href={source.href}>{source.label}</a>
+									</li>
+								)}
+							</For>
+						</ul>
+					</section>
 
 					<Show when={error()}>
 						<div class="search-error">{error()}</div>

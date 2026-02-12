@@ -1,0 +1,22 @@
+# Legal source definitions for ingest
+sources:
+  usc:
+    name: United States Code
+    jurisdiction: federal
+    region: US
+    doc_type: statute
+    description: Federal statutory law of the United States
+
+  cgs:
+    name: Connecticut General Statutes
+    jurisdiction: state
+    region: CT
+    doc_type: statute
+    description: Connecticut state statutory law
+
+  mgl:
+    name: Massachusetts General Laws
+    jurisdiction: state
+    region: MA
+    doc_type: statute
+    description: Massachusetts state statutory law

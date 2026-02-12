@@ -2,6 +2,7 @@ use crate::runtime::types::IngestContext;
 use crate::types::{SourceKind, UnitEntry};
 use async_trait::async_trait;
 
+pub mod cga;
 pub mod usc;
 
 #[async_trait]
@@ -25,5 +26,6 @@ pub trait SourceAdapter: Send + Sync {
 pub fn adapter_for(source: SourceKind) -> &'static (dyn SourceAdapter + Send + Sync) {
     match source {
         SourceKind::Usc => &usc::adapter::USC_ADAPTER,
+        SourceKind::Cga => &cga::adapter::CGA_ADAPTER,
     }
 }

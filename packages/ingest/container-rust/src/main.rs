@@ -68,11 +68,14 @@ async fn handle_discover(
     Json(params): Json<DiscoverParams>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let client = reqwest::Client::new();
-    let download_base = "https://uscode.house.gov/download/download.shtml"; // Default for now
+    let usc_download_base = "https://uscode.house.gov/download/download.shtml";
+    let cga_titles_page = ingest::sources::cga::discover::cga_titles_page_url();
 
     match params.source.as_str() {
         "usc" => {
-            match ingest::sources::usc::discover::discover_usc_root(&client, download_base).await {
+            match ingest::sources::usc::discover::discover_usc_root(&client, usc_download_base)
+                .await
+            {
                 Ok(result) => (StatusCode::OK, Json(json!(result))),
                 Err(err) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -80,6 +83,15 @@ async fn handle_discover(
                 ),
             }
         }
+        "cga" => match ingest::sources::cga::discover::discover_cga_root(&client, cga_titles_page)
+            .await
+        {
+            Ok(result) => (StatusCode::OK, Json(json!(result))),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err })),
+            ),
+        },
         _ => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("Unknown source: {}", params.source) })),

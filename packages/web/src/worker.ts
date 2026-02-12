@@ -16,6 +16,7 @@ import {
 	listIngestJobUnits,
 	setEnv,
 } from "./lib/db";
+import { isDocumentRoute, isKnownPageRoute } from "./lib/routes";
 import type { Env } from "./lib/types";
 import { handleQuickSearch, handleSearch } from "./server/search";
 
@@ -24,12 +25,6 @@ type AppContext = {
 };
 
 const app = new Hono<AppContext>();
-
-const isDocumentRoute = (pathname: string) =>
-	pathname === "/statutes" ||
-	pathname.startsWith("/statutes/") ||
-	pathname === "/cases" ||
-	pathname.startsWith("/cases/");
 
 const isAssetRequest = (pathname: string) =>
 	pathname.startsWith("/assets/") ||
@@ -185,7 +180,10 @@ app.get("*", async (c) => {
 			`${rendered.head ?? ""}${ssrScript}${pageScript}`,
 		)
 		.replace("<!--app-html-->", rendered.html ?? "");
-	const status = pageData?.status === "missing" ? 404 : 200;
+	const status =
+		pageData?.status === "missing" || !isKnownPageRoute(url.pathname)
+			? 404
+			: 200;
 	return c.html(html, status);
 });
 

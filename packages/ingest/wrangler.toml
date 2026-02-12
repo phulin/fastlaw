@@ -64,6 +64,12 @@ invocation_logs = true
 enabled = true
 head_sampling_rate = 1
 
+[env.production]
+name = "fastlaw-ingest"
+compatibility_date = "2026-01-20"
+main = "src/worker.ts"
+compatibility_flags = ["nodejs_compat"]
+
 [[env.production.containers]]
 class_name = "IngestContainer"
 image = "./container-rust/Dockerfile"

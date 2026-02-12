@@ -88,7 +88,7 @@ fn inserts_line_break_before_nested_outline_marker_after_colon() {
 
     let result = parse_usc_xml(xml, "99", "");
     let section = result.sections.first().expect("section should exist");
-    assert!(section.body.contains("Intro text:\n\n**(1)**"));
+    assert!(section.body.contains("Intro text:\n\n> > **(1)**"));
 }
 
 #[test]

@@ -17,6 +17,7 @@ import {
 } from "./lib/ingest-jobs";
 import { hash64, hash64ToHex } from "./lib/packfile/hash";
 import { PackfileDO } from "./lib/packfile-do";
+import { getSourceConfig, validateSourceCode } from "./lib/sources-config";
 import { VectorIngestWorkflow } from "./lib/vector/workflow";
 import {
 	computeDiff,
@@ -222,11 +223,26 @@ app.post("/api/admin/reset", async (c) => {
 });
 
 // ──────────────────────────────────────────────────────────────
-// USC ingest via containers
+// Generic ingest via containers
 // ──────────────────────────────────────────────────────────────
 
-app.post("/api/ingest/usc", async (c) => {
+app.post("/api/ingest/:source", async (c) => {
 	try {
+		const sourceCode = c.req.param("source");
+
+		// Validate source code
+		if (!validateSourceCode(sourceCode)) {
+			return c.json({ error: `Invalid source: ${sourceCode}` }, 400);
+		}
+
+		const config = getSourceConfig(sourceCode);
+		if (!config) {
+			return c.json(
+				{ error: `Source configuration not found: ${sourceCode}` },
+				500,
+			);
+		}
+
 		const unitSelectors = (c.req.query("units") ?? "")
 			.split(",")
 			.map((v) => v.trim())
@@ -234,14 +250,14 @@ app.post("/api/ingest/usc", async (c) => {
 
 		const sourceId = await getOrCreateSource(
 			c.env.DB,
-			"usc",
-			"United States Code",
-			"federal",
-			"US",
-			"statute",
+			sourceCode,
+			config.name,
+			config.jurisdiction,
+			config.region,
+			config.doc_type,
 		);
 
-		const jobId = await createIngestJob(c.env.DB, "usc");
+		const jobId = await createIngestJob(c.env.DB, sourceCode);
 
 		// In local dev, containers run in Docker and can't reach the host via
 		// localhost. Replace with host.docker.internal so callbacks work.
@@ -266,7 +282,7 @@ app.post("/api/ingest/usc", async (c) => {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
-						source: "usc",
+						source: sourceCode,
 						sourceId,
 						selectors: unitSelectors.length > 0 ? unitSelectors : undefined,
 						callbackBase,
@@ -289,12 +305,12 @@ app.post("/api/ingest/usc", async (c) => {
 
 		return c.json({
 			jobId,
-			sourceCode: "usc",
+			sourceCode,
 			status: "planning", // Container is planning/discovering
 		});
 	} catch (error) {
-		console.error("USC ingest start failed:", error);
-		return c.json({ error: "USC ingest start failed" }, 500);
+		console.error(`Ingest start failed for ${c.req.param("source")}:`, error);
+		return c.json({ error: "Ingest start failed" }, 500);
 	}
 });
 

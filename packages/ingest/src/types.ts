@@ -74,7 +74,7 @@ export interface VectorWorkflowParams {
 	batchSize?: number;
 }
 
-export type IngestSourceCode = "cgs" | "mgl" | "usc";
+export type IngestSourceCode = string;
 
 export interface Env {
 	DB: D1Database;
