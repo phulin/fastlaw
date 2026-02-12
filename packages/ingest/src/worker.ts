@@ -259,6 +259,7 @@ app.post("/api/ingest/usc", async (c) => {
 		const container = c.env.INGEST_CONTAINER.getByName("ingest");
 		// Using "ingest" as a stable name for the service
 		// We pass selectors but NO units. The container will discover.
+		await container.registerJob(jobId);
 		await container
 			.fetch(
 				new Request("http://container/ingest", {
@@ -278,9 +279,13 @@ app.post("/api/ingest/usc", async (c) => {
 					console.error(
 						`Container returned ${res.status}: ${await res.text()}`,
 					);
+					await container.requestStopForJob(jobId);
 				}
 			})
-			.catch((err) => console.error("Container fetch failed:", err));
+			.catch(async (err) => {
+				console.error("Container fetch failed:", err);
+				await container.requestStopForJob(jobId);
+			});
 
 		return c.json({
 			jobId,
@@ -366,6 +371,27 @@ app.post("/api/callback/containerLog", async (c) => {
 	} else {
 		console.log(line);
 	}
+
+	return c.json({ ok: true });
+});
+
+app.post("/api/callback/containerStop", async (c) => {
+	const token = extractBearerToken(c.req.raw);
+	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	const body = await c.req
+		.json<{ reason?: string }>()
+		.catch((): { reason?: string } => ({}));
+	const reason = body.reason ?? "unspecified";
+
+	console.log(
+		`[Worker] containerStop callback received. jobId=${params.jobId}, reason=${reason}`,
+	);
+
+	const container = c.env.INGEST_CONTAINER.getByName("ingest");
+	const result = await container.requestStopForJob(params.jobId);
+	console.log(
+		`[Worker] containerStop callback processed. jobId=${params.jobId}, stopped=${result.stopped}, remainingJobs=${result.runningJobs.length}`,
+	);
 
 	return c.json({ ok: true });
 });
@@ -471,6 +497,15 @@ app.post("/api/callback/progress", async (c) => {
 		await recordTitleError(c.env.DB, params.jobId, error, false);
 		await incrementProcessedTitles(c.env.DB, params.jobId, 1);
 		console.error(`Title ${unitId} failed for job ${params.jobId}: ${error}`);
+	}
+
+	if (status === "completed" || status === "skipped" || error) {
+		const packfileDO = c.env.PACKFILE_DO.get(
+			c.env.PACKFILE_DO.idFromName(params.sourceId),
+		);
+		c.executionCtx.waitUntil(
+			packfileDO.flush(params.sourceId, params.sourceId),
+		);
 	}
 
 	return c.json({ ok: true });
