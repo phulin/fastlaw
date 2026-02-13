@@ -21,7 +21,7 @@ pub trait BlobStore: Send + Sync {
 
 #[async_trait]
 pub trait Cache: Send + Sync {
-    async fn fetch_cached(&self, url: &str, key: Option<&str>) -> Result<String, String>;
+    async fn fetch_cached(&self, url: &str, key: &str) -> Result<String, String>;
 }
 
 pub struct IngestContext<'a> {

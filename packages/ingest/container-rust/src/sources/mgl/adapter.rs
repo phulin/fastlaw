@@ -81,9 +81,15 @@ impl SourceAdapter for MglAdapter {
             // Fetch chapter details from API
             let chapter_url = chapter_summary.Details.replace("http://", "https://");
 
+            let chapter_cache_key = format!(
+                "mgl/{}/chapter-{}.json",
+                context.build.source_version_id,
+                chapter_summary.Code.to_lowercase()
+            );
+
             let chapter_json = context
                 .cache
-                .fetch_cached(&chapter_url, None)
+                .fetch_cached(&chapter_url, &chapter_cache_key)
                 .await
                 .map_err(|err| {
                     format!("Failed to fetch chapter {}: {err}", chapter_summary.Code)
@@ -149,16 +155,13 @@ impl SourceAdapter for MglAdapter {
                         // Ensure HTTPS
                         let secure_url = details_url.replace("http://", "https://");
                         let cache_key = format!(
-                            "mgl-chapter-{}-section-{}.json",
+                            "mgl/{}/chapter-{}-section-{}.json",
+                            context.build.source_version_id,
                             parsed_chapter.chapter_code.to_lowercase(),
                             section_code.to_lowercase()
                         );
 
-                        match context
-                            .cache
-                            .fetch_cached(&secure_url, Some(&cache_key))
-                            .await
-                        {
+                        match context.cache.fetch_cached(&secure_url, &cache_key).await {
                             Ok(section_json) => {
                                 match serde_json::from_str::<MglApiSection>(&section_json) {
                                     Ok(full_section) => {

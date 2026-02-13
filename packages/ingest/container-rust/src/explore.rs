@@ -250,7 +250,7 @@ struct NoopCache;
 
 #[async_trait]
 impl Cache for NoopCache {
-    async fn fetch_cached(&self, url: &str, _key: Option<&str>) -> Result<String, String> {
+    async fn fetch_cached(&self, url: &str, _key: &str) -> Result<String, String> {
         Err(format!("NoopCache cannot fetch: {}", url))
     }
 }

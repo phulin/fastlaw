@@ -13,7 +13,7 @@ pub async fn ensure_cached(
     callback_base: &str,
     callback_token: &str,
     extract_zip: bool,
-    custom_key: Option<&str>,
+    cache_key: &str,
 ) -> Result<Option<CacheResponse>, String> {
     let cache_res = callback_fetch(
         client,
@@ -21,7 +21,7 @@ pub async fn ensure_cached(
         callback_token,
         "/api/proxy/cache",
         reqwest::Method::POST,
-        Some(serde_json::json!({ "url": url, "extractZip": extract_zip, "customCacheKey": custom_key })),
+        Some(serde_json::json!({ "url": url, "extractZip": extract_zip, "cacheKey": cache_key })),
     )
     .await?;
 

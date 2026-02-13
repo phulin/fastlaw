@@ -43,7 +43,7 @@ struct MockCache;
 use ingest::runtime::types::Cache;
 #[async_trait]
 impl Cache for MockCache {
-    async fn fetch_cached(&self, url: &str, _key: Option<&str>) -> Result<String, String> {
+    async fn fetch_cached(&self, url: &str, _key: &str) -> Result<String, String> {
         Err(format!("MockCache cannot fetch: {}", url))
     }
 }

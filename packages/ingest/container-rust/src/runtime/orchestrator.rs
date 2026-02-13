@@ -88,7 +88,7 @@ struct HttpCache {
 
 #[async_trait]
 impl Cache for HttpCache {
-    async fn fetch_cached(&self, url: &str, key: Option<&str>) -> Result<String, String> {
+    async fn fetch_cached(&self, url: &str, key: &str) -> Result<String, String> {
         let cache_result = ensure_cached(
             &self.client,
             url,
@@ -254,6 +254,20 @@ async fn ingest_unit(
 
     tracing::info!("[Container] Starting ingest for {}", unit_label);
 
+    let unit_filename = entry.url.split('/').last().unwrap_or("unknown");
+    let cache_key = match adapter.needs_zip_extraction() {
+        true => format!(
+            "{}/{}/{}.xml",
+            config.source_id,
+            source_version_id,
+            unit_filename.replace(".zip", "")
+        ),
+        false => format!(
+            "{}/{}/{}",
+            config.source_id, source_version_id, unit_filename
+        ),
+    };
+
     let extract_zip = adapter.needs_zip_extraction();
     let cache = match ensure_cached(
         client,
@@ -261,7 +275,7 @@ async fn ingest_unit(
         &config.callback_base,
         &config.callback_token,
         extract_zip,
-        None,
+        &cache_key,
     )
     .await?
     {

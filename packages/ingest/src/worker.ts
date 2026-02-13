@@ -534,15 +534,6 @@ app.post("/api/callback/progress", async (c) => {
 const CACHE_R2_PREFIX = "cache/";
 const R2_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 
-function getCacheKey(url: string, extractZip: boolean): string {
-	const urlObj = new URL(url);
-	const filename = urlObj.pathname.split("/").pop() ?? "unknown";
-	if (extractZip && filename.toLowerCase().endsWith(".zip")) {
-		return `${CACHE_R2_PREFIX}${filename.replace(/\.zip$/i, ".xml")}`;
-	}
-	return `${CACHE_R2_PREFIX}${filename}`;
-}
-
 function concatChunks(chunks: Uint8Array[], totalSize: number): Uint8Array {
 	const combined = new Uint8Array(totalSize);
 	let offset = 0;
@@ -605,14 +596,17 @@ app.post("/api/proxy/cache", async (c) => {
 		return c.json({ error: "Unauthorized" }, 401);
 	}
 
-	const { url, extractZip, customCacheKey } = await c.req.json<{
+	const { url, extractZip, cacheKey } = await c.req.json<{
 		url: string;
 		extractZip?: boolean;
-		customCacheKey?: string;
+		cacheKey: string;
 	}>();
-	const r2Key = customCacheKey
-		? `${CACHE_R2_PREFIX}${customCacheKey}`
-		: getCacheKey(url, extractZip ?? false);
+
+	if (!cacheKey) {
+		return c.json({ error: "Missing cacheKey" }, 400);
+	}
+
+	const r2Key = `${CACHE_R2_PREFIX}${cacheKey}`;
 
 	// Check if already cached
 	const head = await c.env.STORAGE.head(r2Key);
