@@ -295,7 +295,8 @@ fn build_skip_map(dom: &tl::VDom) -> Vec<bool> {
             // For catchln spans: mark only direct text children
             if tag.name() == "span" && classes.contains("catchln") {
                 // Mark only immediate children (text nodes inside the span)
-                for child in tag.children().top().iter().take(10) {  // Limit to first 10 to avoid siblings
+                for child in tag.children().top().iter().take(10) {
+                    // Limit to first 10 to avoid siblings
                     let child_index = child.get_inner() as usize;
                     // Only mark if it's immediately after this tag (likely a true child)
                     if child_index > index && child_index < index + 10 {

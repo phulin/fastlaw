@@ -267,4 +267,3 @@ fn resolve_section_parent_string_id(root_string_id: &str, parent_ref: &USCParent
         }
     }
 }
-

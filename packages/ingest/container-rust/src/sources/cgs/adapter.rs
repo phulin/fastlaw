@@ -34,8 +34,8 @@ impl SourceAdapter for CgsAdapter {
         match item.level_name.as_str() {
             "unit" | "title" => {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
-                let normalized_title_id = normalize_designator(Some(title_num))
-                    .unwrap_or_else(|| title_num.to_string());
+                let normalized_title_id =
+                    normalize_designator(Some(title_num)).unwrap_or_else(|| title_num.to_string());
 
                 let cache_key = format!("cgs/title_{normalized_title_id}.html");
                 let html = context.cache.fetch_cached(url, &cache_key).await?;
@@ -86,8 +86,8 @@ impl SourceAdapter for CgsAdapter {
             }
             "chapter" | "article" => {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
-                let normalized_title_id = normalize_designator(Some(title_num))
-                    .unwrap_or_else(|| title_num.to_string());
+                let normalized_title_id =
+                    normalize_designator(Some(title_num)).unwrap_or_else(|| title_num.to_string());
 
                 let chapter_id = metadata["chapter_id"]
                     .as_str()
