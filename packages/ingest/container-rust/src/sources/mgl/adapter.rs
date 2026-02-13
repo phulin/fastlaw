@@ -67,7 +67,7 @@ impl SourceAdapter for MglAdapter {
                         "/statutes/mgl/part/{}",
                         payload.title_num.to_lowercase()
                     )),
-                    readable_id: Some(format!("Part {}", payload.title_num)),
+                    readable_id: Some(payload.title_num.clone()),
                     heading_citation: Some(format!("Part {}", payload.title_num)),
                     source_url: Some(unit.url.clone()),
                     accessed_at: Some(context.build.accessed_at.to_string()),
@@ -120,7 +120,7 @@ impl SourceAdapter for MglAdapter {
                             payload.title_num.to_lowercase(),
                             parsed_chapter.chapter_code.to_lowercase()
                         )),
-                        readable_id: Some(format!("Chapter {}", parsed_chapter.chapter_code)),
+                        readable_id: Some(parsed_chapter.chapter_code.clone()),
                         heading_citation: Some(format!("Chapter {}", parsed_chapter.chapter_code)),
                         source_url: Some(chapter_url.clone()),
                         accessed_at: Some(context.build.accessed_at.to_string()),
@@ -137,9 +137,11 @@ impl SourceAdapter for MglAdapter {
             for (index, section_data) in sections.iter().enumerate() {
                 let section_code = normalize_designator(&section_data.Code);
                 let section_id = format!("{}/section-{}", chapter_id, section_code.to_lowercase());
+                let sort_order = index as i32;
 
                 // Get section text if available - normalize first, then inline cross-references
                 let mut raw_body = section_data.Text.clone().unwrap_or_default();
+                let mut section_name_opt = section_data.Name.clone();
 
                 // If body is empty, try to fetch from Details URL
                 if raw_body.trim().is_empty() {
@@ -162,6 +164,9 @@ impl SourceAdapter for MglAdapter {
                                     Ok(full_section) => {
                                         if let Some(text) = full_section.Text {
                                             raw_body = text;
+                                        }
+                                        if let Some(name) = full_section.Name {
+                                            section_name_opt = Some(name);
                                         }
                                     }
                                     Err(e) => {
@@ -210,10 +215,7 @@ impl SourceAdapter for MglAdapter {
                 let heading_citation =
                     format!("MGL c.{} §{}", parsed_chapter.chapter_code, section_code);
 
-                let section_name = section_data
-                    .Name
-                    .clone()
-                    .unwrap_or_else(|| section_code.clone());
+                let section_name = section_name_opt.unwrap_or_else(|| section_code.clone());
 
                 context
                     .nodes
@@ -224,7 +226,7 @@ impl SourceAdapter for MglAdapter {
                             parent_id: Some(chapter_id.clone()),
                             level_name: "section".to_string(),
                             level_index: SECTION_LEVEL_INDEX,
-                            sort_order: index as i32,
+                            sort_order,
                             name: Some(section_name),
                             path: Some(format!(
                                 "/statutes/mgl/part/{}/chapter/{}/section/{}",

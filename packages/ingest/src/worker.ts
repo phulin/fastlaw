@@ -605,11 +605,14 @@ app.post("/api/proxy/cache", async (c) => {
 		return c.json({ error: "Unauthorized" }, 401);
 	}
 
-	const { url, extractZip } = await c.req.json<{
+	const { url, extractZip, customCacheKey } = await c.req.json<{
 		url: string;
 		extractZip?: boolean;
+		customCacheKey?: string;
 	}>();
-	const r2Key = getCacheKey(url, extractZip ?? false);
+	const r2Key = customCacheKey
+		? `${CACHE_R2_PREFIX}${customCacheKey}`
+		: getCacheKey(url, extractZip ?? false);
 
 	// Check if already cached
 	const head = await c.env.STORAGE.head(r2Key);
