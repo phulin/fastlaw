@@ -17,13 +17,7 @@
 }
 
 html {
-	background: radial-gradient(
-		1200px 600px at 10% 0%,
-		#fff9f1 0%,
-		var(--bg) 60%,
-		var(--bg-2) 100%
-	);
-	background-attachment: fixed;
+	background: var(--bg);
 }
 
 body {
@@ -39,12 +33,28 @@ body {
 	padding: 32px 24px 64px;
 }
 
+.page-pdf {
+	width: 100%;
+	margin: 0;
+	padding: 0 0 64px;
+}
+
 .site-header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 16px;
 	padding: 12px 0 32px;
+}
+
+.page-pdf .site-header {
+	position: sticky;
+	top: 0;
+	padding: 32px 24px 32px;
+	background-color: var(--bg);
+	z-index: 1000;
+	width: 100vw;
+	border-bottom: 1px solid var(--ink-soft);
 }
 
 .logo {

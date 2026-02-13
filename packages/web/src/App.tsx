@@ -9,7 +9,6 @@ import { NodePage } from "~/pages/Node";
 import NotFoundPage from "~/pages/NotFound";
 import SearchPage from "~/pages/Search";
 
-
 export type PageData = PageDataType;
 
 interface AppProps {
