@@ -1,12 +1,17 @@
 import { MetaProvider, Title } from "@solidjs/meta";
 // Import types from pdfjs-dist
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createSignal, For, onMount, Show } from "solid-js";
 import { Header } from "./components/Header";
+import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
+import type { TextItem } from "pdfjs-dist/types/src/display/api";
+import { PdfParagraphExtractor } from "./lib/text-extract";
 
-const BATCH_SIZE = 5;
-const SCROLL_THRESHOLD = 200; // pixels from bottom to trigger next batch
+const HASH_PREFIX_LENGTH = 8;
+const INITIAL_RENDER_PAGE_COUNT = 5;
+
+const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
 // Persistence Helpers
 const openDB = () => {
@@ -58,11 +63,26 @@ const hashFile = async (file: File): Promise<string> => {
 	const buffer = await file.arrayBuffer();
 	const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
 	const hashArray = Array.from(new Uint8Array(hashBuffer));
-	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+	return normalizeHashKey(
+		hashArray.map((b) => b.toString(16).padStart(2, "0")).join(""),
+	);
 };
 
 export default function PdfApp() {
+	interface PageRowState {
+		pageNumber: number;
+		paragraphs: string[];
+	}
+
 	const [_file, setFile] = createSignal<File | null>(null);
+	const [pageRows, setPageRows] = createSignal<PageRowState[]>([]);
+	const [activeRunId, setActiveRunId] = createSignal(0);
+	const [_renderedInitialPageCount, setRenderedInitialPageCount] =
+		createSignal(0);
+	const [renderContext, setRenderContext] = createSignal<{
+		pdf: PDFDocumentProxy;
+		pdfjsLib: Awaited<typeof import("pdfjs-dist")>;
+	} | null>(null);
 	const [status, setStatus] = createSignal<
 		"idle" | "processing" | "rendering" | "rendered" | "error"
 	>("idle");
@@ -72,53 +92,30 @@ export default function PdfApp() {
 	// Refs and state for PDF rendering
 	let canvasContainer: HTMLDivElement | undefined;
 	let fileInput: HTMLInputElement | undefined;
+	let scrollContainer: HTMLDivElement | undefined;
 	let currentPdf: PDFDocumentProxy | null = null;
 	let pdfjsLib: Awaited<typeof import("pdfjs-dist")> | null = null;
-	let cleanupObserver: (() => void) | null = null;
-	let nextPageToRender = 1;
-	let isRenderingBatch = false;
-
-	const extractParagraphsFromTextLayer = (textLayerDiv: HTMLDivElement) => {
-		const spans = Array.from(textLayerDiv.querySelectorAll("span"));
-		const paragraphs: string[] = [];
-		let previousTop: number | null = null;
-		let currentLine: string[] = [];
-
-		for (const span of spans) {
-			const text = span.textContent?.trim();
-			if (!text) continue;
-
-			const top = Number.parseFloat(span.style.top || "0");
-			if (previousTop !== null && Math.abs(top - previousTop) > 0.5) {
-				const paragraph = currentLine.join(" ").trim();
-				if (paragraph) paragraphs.push(paragraph);
-				currentLine = [];
-			}
-
-			currentLine.push(text);
-			previousTop = top;
-		}
-
-		const paragraph = currentLine.join(" ").trim();
-		if (paragraph) paragraphs.push(paragraph);
-
-		return paragraphs;
-	};
+	let currentFileHash: string | null = null;
+	let currentRunId = 0;
+	let initialScrollTargetPage = 1;
+	let hasAppliedInitialScroll = false;
 
 	const reset = (keepHash = false) => {
 		setFile(null);
+		setPageRows([]);
+		setActiveRunId(0);
+		setRenderedInitialPageCount(0);
+		setRenderContext(null);
 		setStatus("idle");
 		setError(null);
 		setFileName("");
 		if (fileInput) fileInput.value = "";
-		if (canvasContainer) canvasContainer.innerHTML = "";
 		currentPdf = null;
-		nextPageToRender = 1;
-		isRenderingBatch = false;
-		if (cleanupObserver) {
-			cleanupObserver();
-			cleanupObserver = null;
-		}
+		scrollContainer = undefined;
+		currentFileHash = null;
+		initialScrollTargetPage = 1;
+		hasAppliedInitialScroll = false;
+		currentRunId += 1;
 		// Clear hash when resetting, unless requested to keep it (e.g. during initial load)
 		if (!keepHash && typeof window !== "undefined") {
 			history.pushState(
@@ -129,164 +126,131 @@ export default function PdfApp() {
 		}
 	};
 
-	onCleanup(() => {
-		if (cleanupObserver) cleanupObserver();
-	});
+	const parseHashState = () => {
+		const raw = window.location.hash.slice(1);
+		if (!raw) return null;
+
+		const params = new URLSearchParams(raw);
+		const hash = normalizeHashKey(params.get("hash") ?? raw);
+		if (!hash) return null;
+
+		const parsedPage = Number(params.get("page") ?? "1");
+		const page = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1;
+		return { hash, page };
+	};
+
+	const replaceLocationHash = (page: number) => {
+		if (!currentFileHash || typeof window === "undefined") return;
+		const params = new URLSearchParams();
+		params.set("page", String(page));
+		params.set("hash", currentFileHash);
+		history.replaceState(
+			"",
+			document.title,
+			`${window.location.pathname}${window.location.search}#${params.toString()}`,
+		);
+	};
+
+	const scrollToPage = (page: number) => {
+		if (!scrollContainer || !canvasContainer) return;
+		const target = canvasContainer.querySelector<HTMLElement>(
+			`[data-page-number="${page}"]`,
+		);
+		if (!target) return;
+		scrollContainer.scrollTo({ top: Math.max(0, target.offsetTop - 80) });
+	};
 
 	onMount(async () => {
-		if (typeof window !== "undefined" && window.location.hash) {
-			const hash = window.location.hash.slice(1); // remove #
-			if (hash) {
-				const file = await getFileFromDB(hash);
-				if (file) {
-					// Load file without persisting again
-					processFile(file, false);
-				}
-			}
-		}
+		if (typeof window === "undefined" || !window.location.hash) return;
+		const parsed = parseHashState();
+		if (!parsed) return;
+		const file = await getFileFromDB(parsed.hash);
+		if (!file) return;
+		// Load file without persisting again and restore target page.
+		processFile(file, false, parsed.hash, parsed.page);
 	});
 
-	const renderNextBatch = async () => {
-		if (
-			!currentPdf ||
-			isRenderingBatch ||
-			nextPageToRender > currentPdf.numPages
-		)
-			return;
+	const appendParagraphs = (
+		pageNumber: number,
+		paragraphs: { text: string }[],
+	) => {
+		if (paragraphs.length === 0) return;
+		setPageRows((previousRows) =>
+			previousRows.map((row) =>
+				row.pageNumber === pageNumber
+					? {
+							...row,
+							paragraphs: [...row.paragraphs, ...paragraphs.map((p) => p.text)],
+						}
+					: row,
+			),
+		);
+	};
 
-		isRenderingBatch = true;
-		setStatus("rendering");
+	const setupPageRows = () => {
+		if (!currentPdf) return;
+		setPageRows(
+			Array.from({ length: currentPdf.numPages }, (_, index) => ({
+				pageNumber: index + 1,
+				paragraphs: [],
+			})),
+		);
+	};
 
+	const startTextExtraction = async (
+		pdf: PDFDocumentProxy,
+		runId: number,
+	): Promise<void> => {
+		const extractor = new PdfParagraphExtractor();
 		try {
-			const endPage = Math.min(
-				nextPageToRender + BATCH_SIZE - 1,
-				currentPdf.numPages,
-			);
-
-			for (let pageNum = nextPageToRender; pageNum <= endPage; pageNum++) {
-				const page = await currentPdf.getPage(pageNum);
-				// Standard Letter size at 1.5 scale is roughly just right for reading
-				const pixelRatio = window.devicePixelRatio || 1;
-				const baseScale = 1.3;
-				const viewport = page.getViewport({ scale: baseScale * pixelRatio });
-				const textLayerViewport = page.getViewport({ scale: baseScale });
-
-				// Create a row for the page (PDF left, Text right)
-				const pageRow = document.createElement("div");
-				pageRow.className =
-					"grid grid-cols-2 min-h-screen border-b border-gray-200 last:border-0";
-				pageRow.style.width = "100%";
-
-				// --- Left Column: PDF ---
-				const pdfContainer = document.createElement("div");
-				pdfContainer.className =
-					"flex flex-col items-center bg-gray-100 p-8 border-r border-gray-200";
-
-				const wrapper = document.createElement("div");
-				wrapper.style.position = "relative";
-				wrapper.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)";
-				// Match the visual size (logical pixels)
-				wrapper.style.width = `${textLayerViewport.width}px`;
-				wrapper.style.height = `${textLayerViewport.height}px`;
-				wrapper.style.backgroundColor = "white";
-
-				const canvas = document.createElement("canvas");
-				const context = canvas.getContext("2d");
-
-				if (context && canvasContainer && pdfjsLib) {
-					canvas.height = viewport.height;
-					canvas.width = viewport.width;
-					// Responsive styling
-					canvas.style.width = "100%";
-					canvas.style.height = "100%";
-					canvas.style.display = "block";
-
-					wrapper.appendChild(canvas);
-
-					const textLayerDiv = document.createElement("div");
-					textLayerDiv.className = "textLayer";
-					textLayerDiv.style.width = "100%";
-					textLayerDiv.style.height = "100%";
-					textLayerDiv.style.position = "absolute";
-					textLayerDiv.style.left = "0";
-					textLayerDiv.style.top = "0";
-					// Define CSS variable for text layer scaling if needed by recent pdf.js versions
-					textLayerDiv.style.setProperty("--scale-factor", String(baseScale));
-					textLayerDiv.style.setProperty(
-						"--total-scale-factor",
-						String(baseScale),
-					);
-
-					wrapper.appendChild(textLayerDiv);
-					pdfContainer.appendChild(wrapper);
-					pageRow.appendChild(pdfContainer);
-
-					const textPanel = document.createElement("div");
-					textPanel.className =
-						"p-8 bg-white font-mono text-xs whitespace-pre-wrap overflow-auto";
-
-					pageRow.appendChild(textPanel);
-
-					// Append the row to the main container
-					canvasContainer.appendChild(pageRow);
-
-					const renderContext = {
-						canvasContext: context,
-						viewport: viewport,
-					};
-
-					// @ts-expect-error - PDF.js types mismatch
-					const renderTask = page.render(renderContext);
-
-					// @ts-expect-error - PDF.js types mismatch
-					const textContentSource = page.streamTextContent();
-
-					// @ts-expect-error - PDF.js types mismatch
-					const textLayer = new pdfjsLib.TextLayer({
-						textContentSource,
-						container: textLayerDiv,
-						viewport: textLayerViewport,
-					});
-					await Promise.all([textLayer.render(), renderTask.promise]);
-
-					const paragraphs = extractParagraphsFromTextLayer(textLayerDiv);
-					for (const paragraph of paragraphs) {
-						const p = document.createElement("p");
-						p.append(document.createTextNode(paragraph));
-						textPanel.appendChild(p);
-					}
-				}
+			for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+				if (runId !== currentRunId) return;
+				const page = await pdf.getPage(pageNum);
+				const textContent = await page.getTextContent();
+				extractor.ingestPage(pageNum, textContent.items as TextItem[]);
+				appendParagraphs(pageNum, extractor.drainClosedParagraphs());
 			}
-
-			nextPageToRender = endPage + 1;
-
-			if (nextPageToRender > currentPdf.numPages) {
-				setStatus("rendered");
-			} else {
-				setStatus("rendered");
-			}
+			appendParagraphs(pdf.numPages, extractor.finish());
 		} catch (err: unknown) {
-			console.error("Error rendering batch:", err);
+			if (runId !== currentRunId) return;
+			console.error("Error extracting text:", err);
 			setError(err instanceof Error ? err.message : String(err));
 			setStatus("error");
-		} finally {
-			isRenderingBatch = false;
 		}
 	};
 
-	const setupScrollObserver = (element: HTMLElement) => {
-		const handleScroll = () => {
-			const { scrollTop, scrollHeight, clientHeight } = element;
-			if (scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD) {
-				renderNextBatch();
-			}
-		};
+	const handlePageRenderSuccess = (pageNumber: number, runId: number) => {
+		if (runId !== currentRunId || !currentPdf) return;
+		if (!hasAppliedInitialScroll && pageNumber === initialScrollTargetPage) {
+			scrollToPage(pageNumber);
+			replaceLocationHash(pageNumber);
+			hasAppliedInitialScroll = true;
+		}
 
-		element.addEventListener("scroll", handleScroll);
-		return () => element.removeEventListener("scroll", handleScroll);
+		const pagesToRender = Math.min(
+			INITIAL_RENDER_PAGE_COUNT,
+			currentPdf.numPages,
+		);
+		setRenderedInitialPageCount((count) => {
+			const nextCount = count + 1;
+			if (nextCount >= pagesToRender) setStatus("rendered");
+			return nextCount;
+		});
 	};
 
-	const processFile = async (selectedFile: File, shouldPersist = true) => {
+	const handlePageRenderError = (err: unknown, runId: number) => {
+		if (runId !== currentRunId) return;
+		console.error("Error rendering page:", err);
+		setError(err instanceof Error ? err.message : String(err));
+		setStatus("error");
+	};
+
+	const processFile = async (
+		selectedFile: File,
+		shouldPersist = true,
+		existingHash?: string,
+		initialPage = 1,
+	) => {
 		reset(true); // clear previous state logic, but keep hash initially
 
 		setFile(selectedFile);
@@ -297,8 +261,11 @@ export default function PdfApp() {
 			if (shouldPersist) {
 				const hash = await hashFile(selectedFile);
 				await saveFileToDB(hash, selectedFile);
-				window.location.hash = hash;
+				currentFileHash = hash;
+			} else if (existingHash) {
+				currentFileHash = normalizeHashKey(existingHash);
 			}
+			replaceLocationHash(1);
 
 			// Dynamic import
 			pdfjsLib = await import("pdfjs-dist");
@@ -318,9 +285,24 @@ export default function PdfApp() {
 			const arrayBuffer = await selectedFile.arrayBuffer();
 			const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
 			currentPdf = await loadingTask.promise;
+			setRenderContext({ pdf: currentPdf, pdfjsLib });
+			const runId = currentRunId;
+			const targetPage = Math.min(
+				Math.max(1, Math.floor(initialPage)),
+				currentPdf.numPages,
+			);
+			const renderedTargetPage = Math.min(
+				targetPage,
+				Math.min(INITIAL_RENDER_PAGE_COUNT, currentPdf.numPages),
+			);
 
-			// Initial render
-			await renderNextBatch(); // Renders first batch
+			setRenderedInitialPageCount(0);
+			setActiveRunId(runId);
+			initialScrollTargetPage = renderedTargetPage;
+			hasAppliedInitialScroll = false;
+			setupPageRows();
+			void startTextExtraction(currentPdf, runId);
+			setStatus("rendering");
 		} catch (err: unknown) {
 			console.error(err);
 			setError(err instanceof Error ? err.message : String(err));
@@ -328,10 +310,9 @@ export default function PdfApp() {
 		}
 	};
 
-	// Separate ref handler for the scroll container to attach listener
+	// Separate ref handlers for the load-more trigger wiring
 	const scrollContainerRef = (el: HTMLDivElement) => {
-		// When element is mounted/created
-		cleanupObserver = setupScrollObserver(el);
+		scrollContainer = el;
 	};
 
 	const handleDrop = (e: DragEvent) => {
@@ -413,16 +394,26 @@ export default function PdfApp() {
 								<p class="text-red-500">Error processing PDF: {error()}</p>
 							</Show>
 
-							<div
-								ref={canvasContainer}
-								class="flex flex-col gap-5 items-center"
-							/>
-
-							<Show when={status() === "rendering"}>
-								<p class="text-center text-gray-500 py-4">
-									Loading more pages...
-								</p>
-							</Show>
+							<div ref={canvasContainer} class="flex flex-col w-full">
+								<Show when={renderContext()}>
+									{(ctx) => (
+										<For each={pageRows().slice(0, INITIAL_RENDER_PAGE_COUNT)}>
+											{(pageRow) => (
+												<PageRow
+													pageNumber={pageRow.pageNumber}
+													paragraphs={pageRow.paragraphs}
+													pdf={ctx().pdf}
+													pdfjsLib={ctx().pdfjsLib}
+													runId={activeRunId()}
+													isCurrentRun={(runId) => runId === currentRunId}
+													onRenderSuccess={handlePageRenderSuccess}
+													onRenderError={handlePageRenderError}
+												/>
+											)}
+										</For>
+									)}
+								</Show>
+							</div>
 						</div>
 					</Show>
 				</main>
