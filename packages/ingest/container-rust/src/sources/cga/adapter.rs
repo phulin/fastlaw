@@ -28,11 +28,11 @@ struct CgaUnitPayload {
 impl SourceAdapter for CgaAdapter {
     async fn discover(
         &self,
-        client: &reqwest::Client,
+        fetcher: &dyn crate::runtime::fetcher::Fetcher,
         _download_base: &str,
     ) -> Result<crate::types::DiscoveryResult, String> {
         crate::sources::cga::discover::discover_cga_root(
-            client,
+            fetcher,
             crate::sources::cga::discover::cga_titles_page_url(),
         )
         .await

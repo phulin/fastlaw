@@ -1,3 +1,4 @@
+use crate::common::load_fixture;
 use ingest::sources::cga::cross_references::{
     extract_section_cross_references, inline_section_cross_references,
 };
@@ -8,16 +9,6 @@ use ingest::sources::cga::parser::{
 };
 use std::fs;
 use std::path::Path;
-
-fn fixtures_dir() -> &'static str {
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
-}
-
-fn load_fixture(filename: &str) -> String {
-    let path = Path::new(fixtures_dir()).join(filename);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read fixture {}: {}", path.display(), e))
-}
 
 // ============================================================
 // Designator Formatting Tests
@@ -86,10 +77,7 @@ fn lowercases_letter_suffixes() {
 
 #[test]
 fn strips_leading_zeros_for_display() {
-    assert_eq!(
-        format_designator_display(Some("001")).as_deref(),
-        Some("1")
-    );
+    assert_eq!(format_designator_display(Some("001")).as_deref(), Some("1"));
     assert_eq!(
         format_designator_display(Some("042")).as_deref(),
         Some("42")
@@ -116,14 +104,8 @@ fn returns_none_for_none_display() {
 #[test]
 fn normalizes_designators_stripping_zeros_preserving_case() {
     assert_eq!(normalize_designator(Some("001")).as_deref(), Some("1"));
-    assert_eq!(
-        normalize_designator(Some("042A")).as_deref(),
-        Some("42A")
-    );
-    assert_eq!(
-        normalize_designator(Some("042a")).as_deref(),
-        Some("42a")
-    );
+    assert_eq!(normalize_designator(Some("042A")).as_deref(), Some("42A"));
+    assert_eq!(normalize_designator(Some("042a")).as_deref(), Some("42a"));
 }
 
 #[test]
@@ -186,14 +168,14 @@ fn returns_none_for_none_label() {
 
 #[test]
 fn extracts_chapter_title() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let title = extract_chapter_title_from_html(&html);
     assert_eq!(title.as_deref(), Some("Doulas"));
 }
 
 #[test]
 fn extracts_sections_from_html() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(
         &html,
         "377a",
@@ -205,7 +187,7 @@ fn extracts_sections_from_html() {
 
 #[test]
 fn extracts_section_string_id_correctly() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     assert_eq!(sections.sections[0].string_id, "cgs/section/20-86aa");
     assert_eq!(sections.sections[1].string_id, "cgs/section/20-86bb");
@@ -213,7 +195,7 @@ fn extracts_section_string_id_correctly() {
 
 #[test]
 fn extracts_section_name_from_toc() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     assert!(sections.sections[0]
         .name
@@ -224,14 +206,14 @@ fn extracts_section_name_from_toc() {
 
 #[test]
 fn sets_correct_parent_string_id() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     assert_eq!(sections.sections[0].parent_string_id, "cgs/chapter/377a");
 }
 
 #[test]
 fn sets_correct_sort_order() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     assert_eq!(sections.sections[0].sort_order, 0);
     assert_eq!(sections.sections[1].sort_order, 1);
@@ -239,7 +221,7 @@ fn sets_correct_sort_order() {
 
 #[test]
 fn excludes_nav_tbl_content_from_body() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     assert!(!sections.sections[0].body.contains("Return to Chapter"));
 }
@@ -250,7 +232,7 @@ fn excludes_nav_tbl_content_from_body() {
 
 #[test]
 fn extracts_reserved_sections() {
-    let html = load_fixture("cga_reserved_sections.htm");
+    let html = load_fixture("cga/cga_reserved_sections.htm");
     let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Chapter);
     let reserved_sections: Vec<_> = sections
         .sections
@@ -265,7 +247,7 @@ fn extracts_reserved_sections() {
 
 #[test]
 fn marks_reserved_sections_with_correct_string_id_pattern() {
-    let html = load_fixture("cga_reserved_sections.htm");
+    let html = load_fixture("cga/cga_reserved_sections.htm");
     let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Chapter);
     let reserved = sections
         .sections
@@ -280,7 +262,7 @@ fn marks_reserved_sections_with_correct_string_id_pattern() {
 
 #[test]
 fn extracts_transferred_sections() {
-    let html = load_fixture("cga_transferred_sections.htm");
+    let html = load_fixture("cga/cga_transferred_sections.htm");
     let sections = parse_cga_chapter_html(&html, "003", "", CgaUnitKind::Chapter);
     let transferred: Vec<_> = sections
         .sections
@@ -295,7 +277,7 @@ fn extracts_transferred_sections() {
 
 #[test]
 fn includes_transfer_destination_in_body() {
-    let html = load_fixture("cga_transferred_sections.htm");
+    let html = load_fixture("cga/cga_transferred_sections.htm");
     let sections = parse_cga_chapter_html(&html, "003", "", CgaUnitKind::Chapter);
     let sec115 = sections
         .sections
@@ -314,7 +296,7 @@ fn includes_transfer_destination_in_body() {
 
 #[test]
 fn includes_repealed_subsection_text_in_body() {
-    let html = load_fixture("cga_repealed_subsection.htm");
+    let html = load_fixture("cga/cga_repealed_subsection.htm");
     let sections = parse_cga_chapter_html(&html, "005", "", CgaUnitKind::Chapter);
     assert_eq!(sections.sections.len(), 1);
     assert!(sections.sections[0]
@@ -328,14 +310,14 @@ fn includes_repealed_subsection_text_in_body() {
 
 #[test]
 fn extracts_sections_containing_tables() {
-    let html = load_fixture("cga_tables_chapter.htm");
+    let html = load_fixture("cga/cga_tables_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
     assert_eq!(sections.sections.len(), 1);
 }
 
 #[test]
 fn converts_table_cells_with_pipe_separators() {
-    let html = load_fixture("cga_tables_chapter.htm");
+    let html = load_fixture("cga/cga_tables_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
     let body = &sections.sections[0].body;
     assert!(body.contains('|'), "Tables should have | separators");
@@ -343,7 +325,7 @@ fn converts_table_cells_with_pipe_separators() {
 
 #[test]
 fn preserves_table_content_like_tax_rates() {
-    let html = load_fixture("cga_tables_chapter.htm");
+    let html = load_fixture("cga/cga_tables_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
     let body = &sections.sections[0].body;
     assert!(body.contains("Connecticut Taxable Income"));
@@ -354,7 +336,7 @@ fn preserves_table_content_like_tax_rates() {
 
 #[test]
 fn preserves_multiple_tables_in_one_section() {
-    let html = load_fixture("cga_tables_chapter.htm");
+    let html = load_fixture("cga/cga_tables_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
     let body = &sections.sections[0].body;
     // Second table has $3,500 threshold
@@ -368,7 +350,7 @@ fn preserves_multiple_tables_in_one_section() {
 
 #[test]
 fn handles_chapter_designators_with_letter_suffixes() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     assert_eq!(sections.sections[0].parent_string_id, "cgs/chapter/377a");
 }
@@ -404,7 +386,7 @@ fn formats_nonstandard_designators_correctly_for_sorting() {
 
 #[test]
 fn extracts_sections_from_article_page() {
-    let html = load_fixture("cga_art_001.htm");
+    let html = load_fixture("cga/cga_art_001.htm");
     let sections = parse_cga_chapter_html(
         &html,
         "001",
@@ -416,7 +398,7 @@ fn extracts_sections_from_article_page() {
 
 #[test]
 fn extracts_correct_string_id_for_42a_sections() {
-    let html = load_fixture("cga_art_001.htm");
+    let html = load_fixture("cga/cga_art_001.htm");
     let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Article);
     // Section IDs should preserve the 42a- prefix
     assert_eq!(sections.sections[0].string_id, "cgs/section/42a-1-101");
@@ -425,7 +407,7 @@ fn extracts_correct_string_id_for_42a_sections() {
 
 #[test]
 fn extracts_section_name_from_toc_for_42a_sections() {
-    let html = load_fixture("cga_art_001.htm");
+    let html = load_fixture("cga/cga_art_001.htm");
     let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Article);
     assert!(sections.sections[0]
         .name
@@ -441,7 +423,7 @@ fn extracts_section_name_from_toc_for_42a_sections() {
 
 #[test]
 fn sets_correct_parent_string_id_for_articles() {
-    let html = load_fixture("cga_art_001.htm");
+    let html = load_fixture("cga/cga_art_001.htm");
     let sections = parse_cga_chapter_html(&html, "1", "", CgaUnitKind::Article);
     // For articles, parentStringId should reference cgs/article/...
     assert_eq!(sections.sections[0].parent_string_id, "cgs/article/1");
@@ -449,7 +431,7 @@ fn sets_correct_parent_string_id_for_articles() {
 
 #[test]
 fn sets_correct_parent_string_id_for_chapters_default() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     // For chapters, parentStringId should reference cgs/chapter/...
     assert_eq!(sections.sections[0].parent_string_id, "cgs/chapter/377a");
@@ -461,13 +443,9 @@ fn sets_correct_parent_string_id_for_chapters_default() {
 
 #[test]
 fn parsed_section_has_required_fields() {
-    let html = load_fixture("cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(
-        &html,
-        "377a",
-        "http://example.com",
-        CgaUnitKind::Chapter,
-    );
+    let html = load_fixture("cga/cga_basic_chapter.htm");
+    let sections =
+        parse_cga_chapter_html(&html, "377a", "http://example.com", CgaUnitKind::Chapter);
     let section = &sections.sections[0];
 
     // Required fields for DB insertion
@@ -481,24 +459,15 @@ fn parsed_section_has_required_fields() {
     assert!(!section.parent_string_id.is_empty());
     assert!(section.sort_order >= 0);
     assert!(!section.source_url.is_empty());
-
-    // Optional metadata fields exist (may be None)
-    let _ = &section.history_short;
-    let _ = &section.history_long;
-    let _ = &section.citations;
-    let _ = &section.see_also;
 }
 
 #[test]
 fn section_level_index_is_consistent() {
-    let html = load_fixture("cga_basic_chapter.htm");
+    let html = load_fixture("cga/cga_basic_chapter.htm");
     let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
     // All sections should have levelIndex 2 (after root=0, title/chapter=1)
     for section in &sections.sections {
-        assert_eq!(
-            section.level_index, 2,
-            "Section level_index should be 2"
-        );
+        assert_eq!(section.level_index, 2, "Section level_index should be 2");
     }
 }
 
@@ -591,119 +560,10 @@ fn parses_complex_mirror_chapter_003() {
 
 #[test]
 fn extracts_toc_ids_for_title_42a_page() {
-    let html = load_fixture("cga_title_42a.htm");
+    let html = load_fixture("cga/cga_title_42a.htm");
     let toc_ids = extract_section_ids_from_toc(&html);
     assert!(
         toc_ids.is_empty(),
         "Title pages should not parse chapter TOC sections"
     );
-}
-#[test]
-fn debug_catchln_processing() {
-    use std::path::Path;
-    
-    let html = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/cga_basic_chapter.htm")
-    ).unwrap();
-
-    let dom = tl::parse(&html, tl::ParserOptions::default()).unwrap();
-    let parser = dom.parser();
-    
-    // Count how many catchln spans are NOT in skip_map
-    let mut catchln_count = 0;
-    for (index, node) in dom.nodes().iter().enumerate() {
-        if let Some(tag) = node.as_tag() {
-            let class_str = tag.attributes().class()
-                .map(|c| c.as_utf8_str().to_string())
-                .unwrap_or_default();
-            let classes: std::collections::HashSet<String> = class_str
-                .split_whitespace()
-                .map(ToString::to_string)
-                .collect();
-            
-            if tag.name() == "span" && classes.contains("catchln") {
-                catchln_count += 1;
-                eprintln!("Found catchln at index {}", index);
-            }
-        }
-    }
-    
-    eprintln!("Total catchln spans: {}", catchln_count);
-    assert_eq!(catchln_count, 2);
-}
-
-#[test]
-fn debug_skip_map_content() {
-    use ingest::sources::cga::parser::parse_cga_chapter_html;
-    use std::collections::HashSet;
-    
-    let html = load_fixture("cga_basic_chapter.htm");
-    let dom = tl::parse(&html, tl::ParserOptions::default()).unwrap();
-    
-    // Find catchln indices
-    let mut catchln_indices = Vec::new();
-    for (index, node) in dom.nodes().iter().enumerate() {
-        if let Some(tag) = node.as_tag() {
-            let class_str = tag.attributes().class()
-                .map(|c| c.as_utf8_str().to_string())
-                .unwrap_or_default();
-            let classes: HashSet<String> = class_str.split_whitespace().map(String::from).collect();
-            
-            if tag.name() == "span" && classes.contains("catchln") {
-                eprintln!("Found catchln at index {}", index);
-                eprintln!("  Children via .top(): {}", tag.children().top().iter().count());
-                
-                // List all child indices
-                for child in tag.children().top().iter() {
-                    eprintln!("    Child at index: {}", child.get_inner());
-                }
-                
-                catchln_indices.push(index);
-            }
-        }
-    }
-    
-    eprintln!("\nTotal catchln spans found: {}", catchln_indices.len());
-    assert_eq!(catchln_indices.len(), 2);
-}
-
-#[test]
-fn debug_nav_tbl_descendants() {
-    use std::collections::HashSet;
-    
-    let html = load_fixture("cga_basic_chapter.htm");
-    let dom = tl::parse(&html, tl::ParserOptions::default()).unwrap();
-    let parser = dom.parser();
-    
-    // Find nav_tbl
-    for (index, node) in dom.nodes().iter().enumerate() {
-        if let Some(tag) = node.as_tag() {
-            let class_str = tag.attributes().class()
-                .map(|c| c.as_utf8_str().to_string())
-                .unwrap_or_default();
-            let classes: HashSet<String> = class_str.split_whitespace().map(String::from).collect();
-            
-            if tag.name() == "table" && classes.contains("nav_tbl") {
-                eprintln!("Found nav_tbl at index {}", index);
-                eprintln!("  Direct children via .top(): {}", tag.children().top().iter().count());
-                
-                // List all descendant indices recursively
-                let mut to_process: Vec<_> = tag.children().top().iter().copied().collect();
-                let mut all_descendants = Vec::new();
-                
-                while let Some(child_handle) = to_process.pop() {
-                    all_descendants.push(child_handle.get_inner());
-                    
-                    if let Some(child_node) = child_handle.get(parser) {
-                        if let Some(child_tag) = child_node.as_tag() {
-                            to_process.extend(child_tag.children().top().iter().copied());
-                        }
-                    }
-                }
-                
-                eprintln!("  All descendants: {:?}", all_descendants);
-            }
-        }
-    }
 }

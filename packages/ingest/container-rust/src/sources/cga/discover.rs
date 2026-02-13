@@ -1,7 +1,6 @@
 use crate::sources::cga::parser::{designator_sort_order, normalize_designator};
 use crate::types::{DiscoveryResult, NodeMeta, UscUnitRoot};
 use regex::Regex;
-use reqwest::Client;
 use std::sync::LazyLock;
 
 const CGA_TITLES_PAGE_URL: &str = "https://www.cga.ct.gov/current/pub/titles.htm";
@@ -21,10 +20,10 @@ static VERSION_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 });
 
 pub async fn discover_cga_root(
-    client: &Client,
+    fetcher: &dyn crate::runtime::fetcher::Fetcher,
     start_url: &str,
 ) -> Result<DiscoveryResult, String> {
-    let html = fetch_titles_page(client, start_url).await?;
+    let html = fetcher.fetch(start_url).await?;
     let version_id = extract_version_id(&html);
     let title_urls = extract_title_urls(&html, start_url)?;
 
@@ -75,24 +74,7 @@ pub async fn discover_cga_root(
     })
 }
 
-async fn fetch_titles_page(client: &Client, start_url: &str) -> Result<String, String> {
-    let response = client
-        .get(start_url)
-        .header("User-Agent", "fastlaw-ingest/1.0")
-        .header("Accept", "text/html,application/xhtml+xml")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch CGA titles page: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("CGA titles page returned {}", response.status()));
-    }
-
-    response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read CGA titles page body: {e}"))
-}
+// fetch_titles_page removed as it is replaced by Fetcher trait usage
 
 fn extract_version_id(html: &str) -> String {
     for pattern in VERSION_PATTERNS.iter() {

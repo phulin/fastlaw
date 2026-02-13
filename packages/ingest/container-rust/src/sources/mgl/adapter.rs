@@ -25,10 +25,10 @@ struct MglUnitPayload {
 impl SourceAdapter for MglAdapter {
     async fn discover(
         &self,
-        client: &reqwest::Client,
+        fetcher: &dyn crate::runtime::fetcher::Fetcher,
         download_base: &str,
     ) -> Result<crate::types::DiscoveryResult, String> {
-        crate::sources::mgl::discover::discover_mgl_root(client, download_base).await
+        crate::sources::mgl::discover::discover_mgl_root(fetcher, download_base).await
     }
 
     async fn process_unit(

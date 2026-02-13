@@ -10,7 +10,7 @@ pub mod usc;
 pub trait SourceAdapter: Send + Sync {
     async fn discover(
         &self,
-        client: &reqwest::Client,
+        fetcher: &dyn crate::runtime::fetcher::Fetcher,
         download_base: &str,
     ) -> Result<crate::types::DiscoveryResult, String>;
 

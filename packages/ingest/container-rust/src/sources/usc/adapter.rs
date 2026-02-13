@@ -24,10 +24,10 @@ struct UscUnitPayload {
 impl SourceAdapter for UscAdapter {
     async fn discover(
         &self,
-        client: &reqwest::Client,
+        fetcher: &dyn crate::runtime::fetcher::Fetcher,
         download_base: &str,
     ) -> Result<crate::types::DiscoveryResult, String> {
-        crate::sources::usc::discover::discover_usc_root(client, download_base).await
+        crate::sources::usc::discover::discover_usc_root(fetcher, download_base).await
     }
 
     async fn process_unit(

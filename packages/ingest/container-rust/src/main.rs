@@ -71,9 +71,10 @@ async fn handle_discover(
     let usc_download_base = "https://uscode.house.gov/download/download.shtml";
     let cga_titles_page = ingest::sources::cga::discover::cga_titles_page_url();
 
+    let fetcher = ingest::runtime::fetcher::HttpFetcher::new(client.clone());
     match params.source.as_str() {
         "usc" => {
-            match ingest::sources::usc::discover::discover_usc_root(&client, usc_download_base)
+            match ingest::sources::usc::discover::discover_usc_root(&fetcher, usc_download_base)
                 .await
             {
                 Ok(result) => (StatusCode::OK, Json(json!(result))),
@@ -83,7 +84,7 @@ async fn handle_discover(
                 ),
             }
         }
-        "cga" => match ingest::sources::cga::discover::discover_cga_root(&client, cga_titles_page)
+        "cga" => match ingest::sources::cga::discover::discover_cga_root(&fetcher, cga_titles_page)
             .await
         {
             Ok(result) => (StatusCode::OK, Json(json!(result))),

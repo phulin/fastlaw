@@ -139,8 +139,9 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     } else {
         // Discovery mode
         tracing::info!("[Container] Exploring source...");
+        let fetcher = crate::runtime::fetcher::HttpFetcher::new(client.clone());
         let discovery = match adapter
-            .discover(&client, "https://uscode.house.gov/download/download.shtml")
+            .discover(&fetcher, "https://uscode.house.gov/download/download.shtml")
             .await
         {
             Ok(discovery) => discovery,

@@ -1,6 +1,6 @@
 # Scraper Specification
 
-This document defines how to implement a new statute scraper in `packages/ingest` using the current ingestion architecture (Rust running in a container, callbacking batched nodes into the Worker).
+You are implementing a new statute scraper in `packages/ingest` using the current ingestion architecture (Rust running in a container, callbacking batched nodes into the Worker). Awesome!
 
 The goal is simple: produce a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
 
@@ -10,10 +10,12 @@ DO NOT return success without a fully compliant scraper. Keep iterating until al
 
 When adding a scraper for a new jurisdiction, follow this sequence:
 
-1. Mirror existing source-adapter patterns first.
-2. Keep parsing and callback flow bounded for container and Worker limits.
-3. Build comprehensive edge-case tests early.
-4. Iterate until all required tests and quality checks pass.
+1. Create a specification for the input: how do we access the data? how do we extract the relevant information?
+2. Then write tests to confirm that the implementation corresponds to the specification.
+3. You can look at existing source-adapter patterns.
+4. Keep parsing and callback flow bounded for container and Worker limits.
+5. Build comprehensive edge-case tests early.
+6. Iterate until all required tests and quality checks pass.
 
 ### 0.1 Build order
 
@@ -53,6 +55,10 @@ A new scraper is not complete until all of the following pass:
 4. Runtime sanity checks:
    - callback batching is happening (multiple `insertNodeBatch` callbacks)
    - no unbounded memory growth over a medium-size unit
+5. Workflow integration tests:
+   - create a mock insertNodeBatch callback
+   - create fixtures representing a set of nodes
+   - check the nodes resulting from this callback
 
 ### 0.4 Politeness rules
 

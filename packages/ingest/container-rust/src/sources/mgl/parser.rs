@@ -26,24 +26,22 @@ pub struct MglApiChapterSummary {
     pub Details: String,
 }
 
+/// Section data from API (used for both summary in chapter list and full details)
 #[derive(Debug, Clone, Deserialize)]
 #[allow(non_snake_case)]
-pub struct MglApiSectionSummary {
+pub struct MglApiSection {
     pub Code: String,
-    pub ChapterCode: String,
-    pub Details: String,
-}
-
-/// Full section data from API (includes Text field)
-#[derive(Debug, Clone, Deserialize)]
-#[allow(non_snake_case)]
-pub struct MglApiSectionFull {
-    pub Code: String,
-    pub ChapterCode: String,
+    #[serde(default)]
+    pub ChapterCode: Option<String>,
+    #[serde(default)]
+    #[serde(alias = "name")]
     pub Name: Option<String>,
     #[serde(default)]
     pub IsRepealed: bool,
+    #[serde(default)]
+    #[serde(alias = "text")]
     pub Text: Option<String>,
+    #[serde(default)]
     pub Details: Option<String>,
 }
 
@@ -65,21 +63,7 @@ pub struct MglApiChapter {
     #[serde(default)]
     pub IsRepealed: bool,
     pub StrickenText: Option<String>,
-    pub Sections: Vec<MglApiSectionFull>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[allow(non_snake_case)]
-pub struct MglApiSection {
-    pub Code: String,
-    #[serde(default)]
-    pub ChapterCode: Option<String>,
-    #[serde(default)]
-    pub Name: Option<String>,
-    #[serde(default)]
-    pub IsRepealed: bool,
-    pub Text: Option<String>,
-    pub Details: Option<String>,
+    pub Sections: Vec<MglApiSection>,
 }
 
 // Parsed types
@@ -146,9 +130,9 @@ pub fn parse_chapter_detail(input: &MglApiChapter, api_url: &str) -> MglChapter 
     }
 }
 
-pub fn parse_section_summary(input: &MglApiSectionSummary, api_url: &str) -> MglSection {
+pub fn parse_section_summary(input: &MglApiSection, api_url: &str) -> MglSection {
     let section_code = normalize_designator(&input.Code);
-    let chapter_code = normalize_designator(&input.ChapterCode);
+    let chapter_code = normalize_designator(input.ChapterCode.as_deref().unwrap_or(""));
     MglSection {
         section_code: section_code.clone(),
         chapter_code,

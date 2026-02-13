@@ -1,7 +1,6 @@
 use crate::sources::mgl::parser::{parse_part_detail, MglApiPart, MglApiPartSummary};
 use crate::types::{DiscoveryResult, NodeMeta, UscUnitRoot};
 use regex::Regex;
-use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -38,16 +37,18 @@ static COPYRIGHT_YEAR_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 pub async fn discover_mgl_root(
-    client: &Client,
+    fetcher: &dyn crate::runtime::fetcher::Fetcher,
     download_base: &str,
 ) -> Result<DiscoveryResult, String> {
     let start_url = format!("{}{}", MGL_BASE_URL, MGL_START_PATH);
-    let root_html = fetch_landing_html(client, &start_url).await?;
+    let root_html = fetcher.fetch(&start_url).await?;
     let version_id = extract_version_id_from_landing_html(&root_html);
 
     // Fetch parts list from API
     let parts_url = format!("{}/api/Parts", MGL_BASE_URL);
-    let parts: Vec<MglApiPartSummary> = fetch_json(client, &parts_url).await?;
+    let parts_json = fetcher.fetch(&parts_url).await?;
+    let parts: Vec<MglApiPartSummary> = serde_json::from_str(&parts_json)
+        .map_err(|e| format!("Failed to parse MGL parts list: {e}"))?;
 
     let mut unit_roots: Vec<UscUnitRoot> = Vec::new();
 
@@ -60,7 +61,9 @@ pub async fn discover_mgl_root(
         );
 
         // Fetch part detail to get proper name
-        let part_detail: MglApiPart = fetch_json(client, &part_url).await?;
+        let part_json = fetcher.fetch(&part_url).await?;
+        let part_detail: MglApiPart = serde_json::from_str(&part_json)
+            .map_err(|e| format!("Failed to parse MGL part detail from {part_url}: {e}"))?;
         let parsed = parse_part_detail(&part_detail, &part_url);
 
         unit_roots.push(UscUnitRoot {
@@ -109,44 +112,7 @@ fn roman_sort_key(value: &str) -> i32 {
     }
 }
 
-async fn fetch_landing_html(client: &Client, url: &str) -> Result<String, String> {
-    let res = client
-        .get(url)
-        .header("User-Agent", "fastlaw-ingest/1.0")
-        .header("Accept", "text/html,application/xhtml+xml")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch MGL landing page: {}", e))?;
-
-    if !res.status().is_success() {
-        return Err(format!("MGL landing page returned {}", res.status()));
-    }
-
-    res.text()
-        .await
-        .map_err(|e| format!("Failed to read MGL landing page body: {}", e))
-}
-
-async fn fetch_json<T: serde::de::DeserializeOwned>(
-    client: &Client,
-    url: &str,
-) -> Result<T, String> {
-    let res = client
-        .get(url)
-        .header("User-Agent", "fastlaw-ingest/1.0")
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch {}: {}", url, e))?;
-
-    if !res.status().is_success() {
-        return Err(format!("{} returned {}", url, res.status()));
-    }
-
-    res.json::<T>()
-        .await
-        .map_err(|e| format!("Failed to parse JSON from {}: {}", url, e))
-}
+// Helper functions removed as they are replaced by Fetcher trait usage
 
 pub fn extract_version_id_from_landing_html(html: &str) -> String {
     // Try to extract amendment date

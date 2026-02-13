@@ -123,26 +123,11 @@ export interface SectionCrossReference {
 
 // Generic node content stored in R2 blobs
 export interface NodeContent {
-	version: 1 | 2;
-	node_id?: string;
-	string_id?: string;
-	doc_type?: "statute" | "regulation" | "case";
 	blocks: ContentBlock[];
 	metadata?: {
-		citations?: string[];
-		parties?: string[];
-		court?: string;
-		docket?: string;
-		decision_date?: string;
-		agency?: string;
-		source?: string;
 		cross_references?: SectionCrossReference[];
 	};
 }
-
-// Legacy aliases for backwards compatibility
-export type SectionContent = NodeContent;
-export type DocumentContent = NodeContent;
 
 // Cloudflare Environment
 

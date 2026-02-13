@@ -1,7 +1,6 @@
 use crate::sources::usc::parser::title_sort_key;
 use crate::types::{DiscoveryResult, NodeMeta, UscUnitRoot};
 use regex::Regex;
-use reqwest::Client;
 use std::collections::HashMap;
 
 const USC_DOWNLOAD_PAGE_URL: &str = "https://uscode.house.gov/download/download.shtml";
@@ -9,10 +8,10 @@ const SOURCE_CODE: &str = "usc";
 const SOURCE_NAME: &str = "United States Code";
 
 pub async fn discover_usc_root(
-    client: &Client,
+    fetcher: &dyn crate::runtime::fetcher::Fetcher,
     download_base: &str,
 ) -> Result<DiscoveryResult, String> {
-    let html = fetch_download_page(client).await?;
+    let html = fetcher.fetch(USC_DOWNLOAD_PAGE_URL).await?;
     let hrefs = extract_href_links(&html);
 
     let xml_link_re = Regex::new(r"(?i)xml_usc(\d{2}[a-z]?)@")
@@ -106,24 +105,7 @@ pub async fn discover_usc_root(
     })
 }
 
-async fn fetch_download_page(client: &Client) -> Result<String, String> {
-    let res = client
-        .get(USC_DOWNLOAD_PAGE_URL)
-        .header("User-Agent", "fastlaw-ingest/1.0")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch USC download page: {}", e))?;
-
-    if !res.status().is_success() {
-        return Err(format!("USC download page returned {}", res.status()));
-    }
-
-    let text = res
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read USC download page body: {}", e))?;
-    Ok(text)
-}
+// fetch_download_page removed as it is replaced by Fetcher trait usage
 
 fn extract_href_links(html: &str) -> Vec<String> {
     let mut links = Vec::new();

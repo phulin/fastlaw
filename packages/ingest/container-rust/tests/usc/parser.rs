@@ -1,28 +1,17 @@
+use crate::common::load_fixture;
 use ingest::sources::usc::parser::usc_level_index;
 use ingest::sources::usc::parser::{parse_usc_xml, USCParentRef};
-use std::fs;
-use std::path::Path;
-
-fn fixtures_dir() -> &'static str {
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures")
-}
-
-fn load_fixture(filename: &str) -> String {
-    let path = Path::new(fixtures_dir()).join(filename);
-    fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read fixture {}: {}", path.display(), e))
-}
 
 #[test]
 fn extracts_correct_title_number() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     assert_eq!(result.title_num, "1");
 }
 
 #[test]
 fn extracts_title_name() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     assert_eq!(result.title_name, "GENERAL PROVISIONS");
 }
@@ -288,7 +277,7 @@ fn parses_note_paragraphs_as_markdown_paragraphs() {
 
 #[test]
 fn extracts_chapters_as_organizational_levels() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     assert!(!result.levels.is_empty());
     let chapters: Vec<_> = result
@@ -301,7 +290,7 @@ fn extracts_chapters_as_organizational_levels() {
 
 #[test]
 fn assigns_correct_level_indices() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     for level in &result.levels {
         assert_eq!(
@@ -315,7 +304,7 @@ fn assigns_correct_level_indices() {
 
 #[test]
 fn extracts_sections() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     assert!(!result.sections.is_empty());
     // Title 1 has around 39 sections
@@ -328,7 +317,7 @@ fn extracts_sections() {
 
 #[test]
 fn extracts_section_numbers_correctly() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     let section_nums: Vec<&str> = result
         .sections
@@ -342,7 +331,7 @@ fn extracts_section_numbers_correctly() {
 
 #[test]
 fn extracts_section_1_with_correct_structure() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     let section1 = result
         .sections
@@ -378,7 +367,7 @@ fn extracts_section_1_with_correct_structure() {
 
 #[test]
 fn extracts_section_201_heading() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     let section201 = result
         .sections
@@ -407,7 +396,7 @@ fn extracts_section_201_heading() {
 
 #[test]
 fn extracts_source_credit_as_history_short() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     let sections_with_history: Vec<_> = result
         .sections
@@ -422,7 +411,7 @@ fn extracts_source_credit_as_history_short() {
 
 #[test]
 fn extracts_amendments_and_notes() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     let section201 = result
         .sections
@@ -450,7 +439,7 @@ fn extracts_amendments_and_notes() {
 
 #[test]
 fn sets_chapter_identifiers_correctly() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     let chapter1 = result
         .levels
@@ -463,7 +452,7 @@ fn sets_chapter_identifiers_correctly() {
 
 #[test]
 fn links_chapters_to_title_as_parent() {
-    let xml = load_fixture("usc_title_1.xml");
+    let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     for level in &result.levels {
         if level.level_type == "chapter" {
@@ -498,7 +487,7 @@ fn handles_xml_with_no_sections() {
 
 #[test]
 fn drops_trailing_bracket_on_repealed_chapter_heading() {
-    let xml = load_fixture("usc03.xml");
+    let xml = load_fixture("usc/usc03.xml");
     let result = parse_usc_xml(&xml, "3", "https://uscode.house.gov/");
     let chapter3 = result
         .levels
@@ -510,7 +499,7 @@ fn drops_trailing_bracket_on_repealed_chapter_heading() {
 
 #[test]
 fn drops_trailing_bracket_on_repealed_section_heading() {
-    let xml = load_fixture("usc03.xml");
+    let xml = load_fixture("usc/usc03.xml");
     let result = parse_usc_xml(&xml, "3", "https://uscode.house.gov/");
     let section2 = result
         .sections
@@ -525,6 +514,7 @@ fn drops_trailing_bracket_on_repealed_section_heading() {
         "Repealed. Pub. L. 117\u{2013}328, div. P, title I, \u{a7} 102(a), Dec. 29, 2022, 136 Stat. 5233"
     );
 }
+
 #[test]
 fn handles_nested_sections_and_dashes_and_newlines() {
     let xml = r#"<?xml version="1.0"?>
@@ -573,16 +563,6 @@ fn handles_nested_sections_and_dashes_and_newlines() {
         .unwrap();
     assert_eq!(s1.heading, "Main Heading");
 
-    // 2. Verify newlines: (a) and "Subpara text" should be in the same block (no extra \n\n)
-    // Actually, the current logic for `subsection` with `num` and `content` tags:
-    // `handle_start` for `subsection`: pushes nothing if no text.
-    // `num` in body: pushes `**`.
-    // text in `num` (a): pushes `(a)`.
-    // `num` end: pushes `**`.
-    // `content` start: pushes nothing (removed from SECTION_BODY_TAGS).
-    // text in `content`: pushes `Subpara text`.
-    // `subsection` end: trims and pushes to `body_parts`.
-    // 2. Verify newlines: (a) and "Subpara text" should be in the same block (no extra \n\n)
     assert!(s1.body.contains("**(a)** Subpara text"));
     assert!(!s1.body.contains("**(a)**\n\nSubpara text"));
 
@@ -625,7 +605,7 @@ fn test_url_collision_overlapping_parts() {
             </main>
         </uscDoc>"#;
 
-    let result = ingest::sources::usc::parser::parse_usc_xml(xml, "10", "");
+    let result = parse_usc_xml(xml, "10", "");
 
     let parts: Vec<_> = result
         .levels
