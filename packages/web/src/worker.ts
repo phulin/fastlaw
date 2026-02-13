@@ -89,6 +89,32 @@ app.post("/api/ingest/jobs/:jobId/abort", async (c) => {
 	}
 });
 
+app.get("/pdf", async (c) => {
+	const assets = c.env.ASSETS;
+	if (!assets) return c.text("Assets not available", 500);
+
+	// Fetch the template
+	const url = new URL(c.req.url);
+	url.pathname = "/pdf.html";
+	const templateResponse = await assets.fetch(url.toString());
+
+	if (!templateResponse.ok || !templateResponse.body) {
+		return c.text("PDF viewer template not found", 404);
+	}
+	const template = await templateResponse.text();
+
+	// SSR
+	const { render } = await import("./entry-server-pdf");
+	const rendered = render();
+	const ssrScript = "<script>window.__SSR__=true</script>";
+
+	const html = template
+		.replace("<!--app-head-->", `${rendered.head ?? ""}${ssrScript}`)
+		.replace("<!--app-html-->", rendered.html ?? "");
+
+	return c.html(html, 200);
+});
+
 app.get("*", async (c) => {
 	const url = new URL(c.req.url);
 	if (isAssetRequest(url.pathname) && c.env.ASSETS) {

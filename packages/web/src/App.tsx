@@ -9,6 +9,7 @@ import { NodePage } from "~/pages/Node";
 import NotFoundPage from "~/pages/NotFound";
 import SearchPage from "~/pages/Search";
 
+
 export type PageData = PageDataType;
 
 interface AppProps {
@@ -39,6 +40,7 @@ export default function App(props: AppProps) {
 				<Match when={jobId}>
 					{(resolvedJobId) => <IngestJobPage jobId={resolvedJobId()} />}
 				</Match>
+
 				<Match when={isFoundDocument}>
 					<NodePage
 						data={props.pageData as Extract<PageData, { status: "found" }>}

@@ -14,4 +14,12 @@ export default defineConfig({
 		target: "webworker",
 		noExternal: ["solid-js", "solid-js/web"],
 	},
+	build: {
+		rollupOptions: {
+			input: {
+				main: path.resolve(__dirname, "index.html"),
+				pdf: path.resolve(__dirname, "pdf.html"),
+			},
+		},
+	},
 });
