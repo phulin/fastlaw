@@ -1,0 +1,14 @@
+{
+  "Code": "1",
+  "Name": "Jurisdiction of commonwealth in general",
+  "IsRepealed": false,
+  "Text": "Section 1. The jurisdiction of the commonwealth shall extend to all places within its territory, except as otherwise provided by the constitution and laws of the United States.\n\n",
+  "Chapter": {
+    "Code": "1",
+    "Details": "http://malegislature.gov/api/Chapters/1"
+  },
+  "Part": {
+    "Code": "I",
+    "Details": "http://malegislature.gov/api/Parts/I"
+  }
+}

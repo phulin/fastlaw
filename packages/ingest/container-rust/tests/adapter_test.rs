@@ -39,6 +39,15 @@ impl BlobStore for MockBlobStore {
     }
 }
 
+struct MockCache;
+use ingest::runtime::types::Cache;
+#[async_trait]
+impl Cache for MockCache {
+    async fn fetch_cached(&self, url: &str, _key: Option<&str>) -> Result<String, String> {
+        Err(format!("MockCache cannot fetch: {}", url))
+    }
+}
+
 async fn run_adapter_test(xml: &str, title_num: &str) -> Vec<NodePayload> {
     let adapter = UscAdapter;
     let unit = UnitEntry {
@@ -61,6 +70,7 @@ async fn run_adapter_test(xml: &str, title_num: &str) -> Vec<NodePayload> {
         build: build_ctx,
         nodes: Box::new(node_store.clone()),
         blobs: Box::new(blob_store),
+        cache: Box::new(MockCache),
     };
 
     adapter

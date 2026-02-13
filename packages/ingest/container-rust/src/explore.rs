@@ -1,6 +1,7 @@
 use async_trait::async_trait;
-use ingest::runtime::types::{BlobStore, BuildContext, IngestContext, NodeStore};
+use ingest::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore};
 use ingest::sources::cga::adapter::CGA_ADAPTER;
+use ingest::sources::mgl::adapter::MGL_ADAPTER;
 use ingest::sources::usc::adapter::USC_ADAPTER;
 use ingest::sources::SourceAdapter;
 use ingest::types::{NodePayload, SectionContent, UnitEntry};
@@ -14,6 +15,7 @@ type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 enum SourceArg {
     Usc,
     Cga,
+    Mgl,
 }
 
 impl SourceArg {
@@ -21,6 +23,7 @@ impl SourceArg {
         match value {
             "usc" => Some(Self::Usc),
             "cga" => Some(Self::Cga),
+            "mgl" => Some(Self::Mgl),
             _ => None,
         }
     }
@@ -30,11 +33,11 @@ impl SourceArg {
 async fn main() -> Result<(), DynError> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() != 3 {
-        eprintln!("Usage: explore <usc|cga> <file> <needle>");
+        eprintln!("Usage: explore <usc|cga|mgl> <file> <needle>");
         std::process::exit(2);
     }
 
-    let source = SourceArg::parse(&args[0]).ok_or("first argument must be usc or cga")?;
+    let source = SourceArg::parse(&args[0]).ok_or("first argument must be usc, cga, or mgl")?;
     let file_path = args[1].clone();
     let needle = args[2].clone();
     let input = std::fs::read_to_string(&file_path)?;
@@ -49,6 +52,7 @@ async fn main() -> Result<(), DynError> {
         },
         nodes: Box::new(node_store.clone()),
         blobs: Box::new(NoopBlobStore),
+        cache: Box::new(NoopCache),
     };
 
     let unit = build_unit(source, &file_path);
@@ -61,6 +65,10 @@ async fn main() -> Result<(), DynError> {
             .process_unit(&unit, &mut ctx, &input)
             .await
             .map_err(|e| format!("CGA adapter process failed: {e}"))?,
+        SourceArg::Mgl => MGL_ADAPTER
+            .process_unit(&unit, &mut ctx, &input)
+            .await
+            .map_err(|e| format!("MGL adapter process failed: {e}"))?,
     }
 
     let nodes = node_store.nodes();
@@ -136,6 +144,20 @@ fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
                 }),
             }
         }
+        SourceArg::Mgl => {
+            // MGL uses JSON files with chapter data
+            let chapter_num = infer_chapter_num(&file_name).unwrap_or_else(|| "1".to_string());
+            UnitEntry {
+                unit_id: format!("mgl-chapter-{chapter_num}"),
+                url: file_path.to_string(),
+                sort_order: 0,
+                payload: json!({
+                    "partCode": "I",
+                    "partName": "Administration of the Government",
+                    "partApiUrl": null,
+                }),
+            }
+        }
     }
 }
 
@@ -159,6 +181,18 @@ fn infer_chapter_id(file_name: &str) -> Option<String> {
     }
     if let Some(value) = file_name.strip_prefix("art_") {
         return value.strip_suffix(".htm").map(ToString::to_string);
+    }
+    None
+}
+
+fn infer_chapter_num(file_name: &str) -> Option<String> {
+    // MGL fixture files are named like "mgl_chapter_1.json"
+    if let Some(value) = file_name.strip_prefix("mgl_chapter_") {
+        return value.strip_suffix(".json").map(ToString::to_string);
+    }
+    // Also try "mgl_section_7a.json" for section files
+    if let Some(value) = file_name.strip_prefix("mgl_section_") {
+        return value.strip_suffix(".json").map(ToString::to_string);
     }
     None
 }
@@ -209,6 +243,15 @@ struct NoopBlobStore;
 impl BlobStore for NoopBlobStore {
     async fn store_blob(&self, id: &str, _content: &[u8]) -> Result<String, String> {
         Ok(id.to_string())
+    }
+}
+
+struct NoopCache;
+
+#[async_trait]
+impl Cache for NoopCache {
+    async fn fetch_cached(&self, url: &str, _key: Option<&str>) -> Result<String, String> {
+        Err(format!("NoopCache cannot fetch: {}", url))
     }
 }
 

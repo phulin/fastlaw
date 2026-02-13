@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum SourceKind {
     Usc,
     Cga,
+    Mgl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -35,9 +35,19 @@ impl NodeStore for MockNodeStore {
 struct MockBlobStore;
 
 #[async_trait]
+#[async_trait]
 impl BlobStore for MockBlobStore {
     async fn store_blob(&self, _id: &str, _content: &[u8]) -> Result<String, String> {
         Ok("blob_id".to_string())
+    }
+}
+
+struct MockCache;
+use ingest::runtime::types::Cache;
+#[async_trait]
+impl Cache for MockCache {
+    async fn fetch_cached(&self, url: &str, _key: Option<&str>) -> Result<String, String> {
+        Err(format!("MockCache cannot fetch: {}", url))
     }
 }
 
@@ -70,6 +80,7 @@ async fn run_adapter_test(html: &str, payload: serde_json::Value, url: &str) -> 
         },
         nodes: Box::new(node_store.clone()),
         blobs: Box::new(MockBlobStore),
+        cache: Box::new(MockCache),
     };
 
     adapter

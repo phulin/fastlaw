@@ -1,0 +1,23 @@
+{
+  "Code": "1",
+  "Name": "JURISDICTION",
+  "IsRepealed": false,
+  "StrickenText": null,
+  "Sections": [
+    {
+      "Code": "1",
+      "ChapterCode": "1",
+      "Details": "https://malegislature.gov/api/Chapters/1/Sections/1"
+    },
+    {
+      "Code": "2",
+      "ChapterCode": "1",
+      "Details": "https://malegislature.gov/api/Chapters/1/Sections/2"
+    },
+    {
+      "Code": "7A",
+      "ChapterCode": "1",
+      "Details": "https://malegislature.gov/api/Chapters/1/Sections/7A"
+    }
+  ]
+}

@@ -6,6 +6,6 @@
 			"~/*": ["./src/*"]
 		}
 	},
-	"include": ["src/**/*", "sources.yml"],
+	"include": ["src/**/*", "sources.json"],
 	"exclude": ["node_modules", "dist"]
 }

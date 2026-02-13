@@ -7,11 +7,13 @@ pub struct CacheResponse {
     pub r2_key: String,
 }
 
-pub async fn ensure_cached_xml(
+pub async fn ensure_cached(
     client: &Client,
     url: &str,
     callback_base: &str,
     callback_token: &str,
+    extract_zip: bool,
+    custom_key: Option<&str>,
 ) -> Result<Option<CacheResponse>, String> {
     let cache_res = callback_fetch(
         client,
@@ -19,7 +21,7 @@ pub async fn ensure_cached_xml(
         callback_token,
         "/api/proxy/cache",
         reqwest::Method::POST,
-        Some(serde_json::json!({ "url": url, "extractZip": true })),
+        Some(serde_json::json!({ "url": url, "extractZip": extract_zip, "customCacheKey": custom_key })),
     )
     .await?;
 
@@ -51,7 +53,7 @@ pub async fn ensure_cached_xml(
     Ok(Some(cache_info))
 }
 
-pub async fn read_cached_xml(
+pub async fn read_cached_file(
     client: &Client,
     cache: &CacheResponse,
     callback_base: &str,
@@ -75,10 +77,11 @@ pub async fn read_cached_xml(
         return Err(format!("R2 read failed: {}", res.status()));
     }
 
-    let xml_bytes = res
+    let file_bytes = res
         .bytes()
         .await
-        .map_err(|e| format!("Failed to read XML bytes: {e}"))?;
+        .map_err(|e| format!("Failed to read file bytes: {e}"))?;
 
-    String::from_utf8(xml_bytes.to_vec()).map_err(|e| format!("XML bytes are not valid UTF-8: {e}"))
+    String::from_utf8(file_bytes.to_vec())
+        .map_err(|e| format!("File bytes are not valid UTF-8: {e}"))
 }

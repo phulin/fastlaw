@@ -1,0 +1,16 @@
+{
+  "Code": "1",
+  "Name": "JURISDICTION",
+  "IsRepealed": false,
+  "StrickenText": null,
+  "Sections": [
+    {
+      "Code": "1",
+      "ChapterCode": "1",
+      "Name": "Jurisdiction of commonwealth in general",
+      "IsRepealed": false,
+      "Text": null,
+      "Details": "https://malegislature.gov/api/Chapters/1/Sections/1"
+    }
+  ]
+}

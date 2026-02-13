@@ -19,10 +19,16 @@ pub trait BlobStore: Send + Sync {
     async fn store_blob(&self, id: &str, content: &[u8]) -> Result<String, String>;
 }
 
+#[async_trait]
+pub trait Cache: Send + Sync {
+    async fn fetch_cached(&self, url: &str, key: Option<&str>) -> Result<String, String>;
+}
+
 pub struct IngestContext<'a> {
     pub build: BuildContext<'a>,
     pub nodes: Box<dyn NodeStore>,
     pub blobs: Box<dyn BlobStore>,
+    pub cache: Box<dyn Cache>,
 }
 
 pub enum UnitStatus {

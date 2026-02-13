@@ -1,4 +1,4 @@
-import sourceData from "../../sources.yml";
+import sourceData from "../../sources.json";
 
 export interface SourceConfig {
 	name: string;

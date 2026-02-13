@@ -1,8 +1,8 @@
-use crate::runtime::cache::{ensure_cached_xml, read_cached_xml};
+use crate::runtime::cache::{ensure_cached, read_cached_file};
 use crate::runtime::callbacks::{
     post_ensure_source_version, post_node_batch, post_unit_progress, post_unit_start,
 };
-use crate::runtime::types::{BlobStore, BuildContext, IngestContext, NodeStore, UnitStatus};
+use crate::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore, UnitStatus};
 use crate::sources::adapter_for;
 use crate::types::{IngestConfig, NodePayload, UnitEntry};
 use async_trait::async_trait;
@@ -77,6 +77,42 @@ impl BlobStore for DummyBlobStore {
     async fn store_blob(&self, _id: &str, _content: &[u8]) -> Result<String, String> {
         // Placeholder implementation
         Ok("dummy-blob-id".to_string())
+    }
+}
+
+struct HttpCache {
+    client: Client,
+    callback_base: String,
+    callback_token: String,
+}
+
+#[async_trait]
+impl Cache for HttpCache {
+    async fn fetch_cached(&self, url: &str, key: Option<&str>) -> Result<String, String> {
+        let cache_result = ensure_cached(
+            &self.client,
+            url,
+            &self.callback_base,
+            &self.callback_token,
+            false,
+            key,
+        )
+        .await?;
+
+        let cache_info = cache_result.ok_or_else(|| {
+            format!(
+                "Cache proxy returned 422 for URL (likely HTML response): {}",
+                url
+            )
+        })?;
+
+        read_cached_file(
+            &self.client,
+            &cache_info,
+            &self.callback_base,
+            &self.callback_token,
+        )
+        .await
     }
 }
 
@@ -218,11 +254,14 @@ async fn ingest_unit(
 
     tracing::info!("[Container] Starting ingest for {}", unit_label);
 
-    let cache = match ensure_cached_xml(
+    let extract_zip = adapter.needs_zip_extraction();
+    let cache = match ensure_cached(
         client,
         &entry.url,
         &config.callback_base,
         &config.callback_token,
+        extract_zip,
+        None,
     )
     .await?
     {
@@ -233,7 +272,7 @@ async fn ingest_unit(
         }
     };
 
-    let xml = read_cached_xml(
+    let xml = read_cached_file(
         client,
         &cache,
         &config.callback_base,
@@ -258,10 +297,17 @@ async fn ingest_unit(
 
     let blob_store = DummyBlobStore;
 
+    let cache_store = HttpCache {
+        client: client.clone(),
+        callback_base: config.callback_base.clone(),
+        callback_token: config.callback_token.clone(),
+    };
+
     let mut context = IngestContext {
         build: build_context,
         nodes: Box::new(node_store),
         blobs: Box::new(blob_store),
+        cache: Box::new(cache_store),
     };
 
     // We don't know the total nodes anymore, so we pass 0 for now.

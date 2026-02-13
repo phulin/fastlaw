@@ -1,0 +1,15 @@
+{
+  "Code": "I",
+  "Name": "ADMINISTRATION OF THE GOVERNMENT",
+  "FirstChapter": 1,
+  "LastChapter": 13,
+  "Chapters": [
+    {
+      "Code": "1",
+      "ChapterNum": 1,
+      "Name": "JURISDICTION",
+      "IsRepealed": false,
+      "Details": "http://malegislature.gov/api/Chapters/1"
+    }
+  ]
+}
