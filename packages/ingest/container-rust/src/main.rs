@@ -68,15 +68,26 @@ async fn handle_discover(
     Json(params): Json<DiscoverParams>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let client = reqwest::Client::new();
-    let usc_download_base = "https://uscode.house.gov/download/download.shtml";
-    let cga_titles_page = ingest::sources::cga::discover::cga_titles_page_url();
+    let sources_json_path =
+        std::env::var("SOURCES_JSON_PATH").unwrap_or_else(|_| "../../sources.json".to_string());
+
+    let config = match ingest::sources::configs::SourcesConfig::load_from_file(&sources_json_path) {
+        Ok(c) => c,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to load sources.json: {err}") })),
+            )
+        }
+    };
 
     let fetcher = ingest::runtime::fetcher::HttpFetcher::new(client.clone());
     match params.source.as_str() {
         "usc" => {
-            match ingest::sources::usc::discover::discover_usc_root(&fetcher, usc_download_base)
-                .await
-            {
+            let root_url = config
+                .get_root_url(ingest::types::SourceKind::Usc)
+                .unwrap_or("https://uscode.house.gov/download/download.shtml");
+            match ingest::sources::usc::discover::discover_usc_root(&fetcher, root_url).await {
                 Ok(result) => (StatusCode::OK, Json(json!(result))),
                 Err(err) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -84,15 +95,30 @@ async fn handle_discover(
                 ),
             }
         }
-        "cga" => match ingest::sources::cga::discover::discover_cga_root(&fetcher, cga_titles_page)
-            .await
-        {
-            Ok(result) => (StatusCode::OK, Json(json!(result))),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": err })),
-            ),
-        },
+        "cgs" | "cga" => {
+            let root_url = config
+                .get_root_url(ingest::types::SourceKind::Cgs)
+                .unwrap_or("https://www.cga.ct.gov/current/pub/titles.htm");
+            match ingest::sources::cgs::discover::discover_cgs_root(&fetcher, root_url).await {
+                Ok(result) => (StatusCode::OK, Json(json!(result))),
+                Err(err) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": err })),
+                ),
+            }
+        }
+        "mgl" => {
+            let root_url = config
+                .get_root_url(ingest::types::SourceKind::Mgl)
+                .unwrap_or("https://malegislature.gov/Laws/GeneralLaws");
+            match ingest::sources::mgl::discover::discover_mgl_root(&fetcher, root_url).await {
+                Ok(result) => (StatusCode::OK, Json(json!(result))),
+                Err(err) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": err })),
+                ),
+            }
+        }
         _ => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("Unknown source: {}", params.source) })),

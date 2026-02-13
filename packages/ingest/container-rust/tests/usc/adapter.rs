@@ -33,7 +33,8 @@ async fn test_adapter_extracts_levels_and_sections() {
         payload: serde_json::json!({ "titleNum": "1" }),
     };
 
-    t.run_unit(&unit, xml).await;
+    t.add_fixture(&unit.url, xml);
+    t.run_url(&unit).await;
 
     t.expect_node("root/t1/root")
         .level("title")
@@ -62,7 +63,8 @@ async fn test_adapter_matches_42_usc_302_nodepayload() {
         payload: serde_json::json!({ "titleNum": "42" }),
     };
 
-    t.run_unit(&unit, &xml).await;
+    t.add_fixture(&unit.url, &xml);
+    t.run_url(&unit).await;
 
     let section = t
         .expect_node("root/t42/ch7/schI/section-302")

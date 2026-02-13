@@ -1,11 +1,11 @@
 use crate::common::load_fixture;
-use ingest::sources::cga::cross_references::{
+use ingest::sources::cgs::cross_references::{
     extract_section_cross_references, inline_section_cross_references,
 };
-use ingest::sources::cga::parser::{
+use ingest::sources::cgs::parser::{
     extract_chapter_title_from_html, extract_section_ids_from_toc, format_designator_display,
-    format_designator_padded, normalize_designator, parse_cga_chapter_html, parse_label,
-    CgaUnitKind,
+    format_designator_padded, normalize_designator, parse_cgs_chapter_html, parse_label,
+    CgsUnitKind,
 };
 use std::fs;
 use std::path::Path;
@@ -168,35 +168,35 @@ fn returns_none_for_none_label() {
 
 #[test]
 fn extracts_chapter_title() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
     let title = extract_chapter_title_from_html(&html);
     assert_eq!(title.as_deref(), Some("Doulas"));
 }
 
 #[test]
 fn extracts_sections_from_html() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(
         &html,
         "377a",
-        "https://www.cga.ct.gov/current/pub/chap_377a.htm",
-        CgaUnitKind::Chapter,
+        "https://www.cgs.ct.gov/current/pub/chap_377a.htm",
+        CgsUnitKind::Chapter,
     );
     assert_eq!(sections.sections.len(), 2);
 }
 
 #[test]
 fn extracts_section_string_id_correctly() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     assert_eq!(sections.sections[0].string_id, "cgs/section/20-86aa");
     assert_eq!(sections.sections[1].string_id, "cgs/section/20-86bb");
 }
 
 #[test]
 fn extracts_section_name_from_toc() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     assert!(sections.sections[0]
         .name
         .as_ref()
@@ -206,23 +206,23 @@ fn extracts_section_name_from_toc() {
 
 #[test]
 fn sets_correct_parent_string_id() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     assert_eq!(sections.sections[0].parent_string_id, "cgs/chapter/377a");
 }
 
 #[test]
 fn sets_correct_sort_order() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     assert_eq!(sections.sections[0].sort_order, 0);
     assert_eq!(sections.sections[1].sort_order, 1);
 }
 
 #[test]
 fn excludes_nav_tbl_content_from_body() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     assert!(!sections.sections[0].body.contains("Return to Chapter"));
 }
 
@@ -232,8 +232,8 @@ fn excludes_nav_tbl_content_from_body() {
 
 #[test]
 fn extracts_reserved_sections() {
-    let html = load_fixture("cga/cga_reserved_sections.htm");
-    let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_reserved_sections.htm");
+    let sections = parse_cgs_chapter_html(&html, "001", "", CgsUnitKind::Chapter);
     let reserved_sections: Vec<_> = sections
         .sections
         .iter()
@@ -247,8 +247,8 @@ fn extracts_reserved_sections() {
 
 #[test]
 fn marks_reserved_sections_with_correct_string_id_pattern() {
-    let html = load_fixture("cga/cga_reserved_sections.htm");
-    let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_reserved_sections.htm");
+    let sections = parse_cgs_chapter_html(&html, "001", "", CgsUnitKind::Chapter);
     let reserved = sections
         .sections
         .iter()
@@ -262,8 +262,8 @@ fn marks_reserved_sections_with_correct_string_id_pattern() {
 
 #[test]
 fn extracts_transferred_sections() {
-    let html = load_fixture("cga/cga_transferred_sections.htm");
-    let sections = parse_cga_chapter_html(&html, "003", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_transferred_sections.htm");
+    let sections = parse_cgs_chapter_html(&html, "003", "", CgsUnitKind::Chapter);
     let transferred: Vec<_> = sections
         .sections
         .iter()
@@ -277,8 +277,8 @@ fn extracts_transferred_sections() {
 
 #[test]
 fn includes_transfer_destination_in_body() {
-    let html = load_fixture("cga/cga_transferred_sections.htm");
-    let sections = parse_cga_chapter_html(&html, "003", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_transferred_sections.htm");
+    let sections = parse_cgs_chapter_html(&html, "003", "", CgsUnitKind::Chapter);
     let sec115 = sections
         .sections
         .iter()
@@ -296,8 +296,8 @@ fn includes_transfer_destination_in_body() {
 
 #[test]
 fn includes_repealed_subsection_text_in_body() {
-    let html = load_fixture("cga/cga_repealed_subsection.htm");
-    let sections = parse_cga_chapter_html(&html, "005", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_repealed_subsection.htm");
+    let sections = parse_cgs_chapter_html(&html, "005", "", CgsUnitKind::Chapter);
     assert_eq!(sections.sections.len(), 1);
     assert!(sections.sections[0]
         .body
@@ -310,23 +310,23 @@ fn includes_repealed_subsection_text_in_body() {
 
 #[test]
 fn extracts_sections_containing_tables() {
-    let html = load_fixture("cga/cga_tables_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_tables_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "229", "", CgsUnitKind::Chapter);
     assert_eq!(sections.sections.len(), 1);
 }
 
 #[test]
 fn converts_table_cells_with_pipe_separators() {
-    let html = load_fixture("cga/cga_tables_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_tables_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "229", "", CgsUnitKind::Chapter);
     let body = &sections.sections[0].body;
     assert!(body.contains('|'), "Tables should have | separators");
 }
 
 #[test]
 fn preserves_table_content_like_tax_rates() {
-    let html = load_fixture("cga/cga_tables_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_tables_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "229", "", CgsUnitKind::Chapter);
     let body = &sections.sections[0].body;
     assert!(body.contains("Connecticut Taxable Income"));
     assert!(body.contains("Rate of Tax"));
@@ -336,8 +336,8 @@ fn preserves_table_content_like_tax_rates() {
 
 #[test]
 fn preserves_multiple_tables_in_one_section() {
-    let html = load_fixture("cga/cga_tables_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "229", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_tables_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "229", "", CgsUnitKind::Chapter);
     let body = &sections.sections[0].body;
     // Second table has $3,500 threshold
     assert!(body.contains("$3,500"));
@@ -350,8 +350,8 @@ fn preserves_multiple_tables_in_one_section() {
 
 #[test]
 fn handles_chapter_designators_with_letter_suffixes() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     assert_eq!(sections.sections[0].parent_string_id, "cgs/chapter/377a");
 }
 
@@ -386,20 +386,20 @@ fn formats_nonstandard_designators_correctly_for_sorting() {
 
 #[test]
 fn extracts_sections_from_article_page() {
-    let html = load_fixture("cga/cga_art_001.htm");
-    let sections = parse_cga_chapter_html(
+    let html = load_fixture("cgs/cgs_art_001.htm");
+    let sections = parse_cgs_chapter_html(
         &html,
         "001",
-        "https://www.cga.ct.gov/current/pub/art_001.htm",
-        CgaUnitKind::Article,
+        "https://www.cgs.ct.gov/current/pub/art_001.htm",
+        CgsUnitKind::Article,
     );
     assert_eq!(sections.sections.len(), 2);
 }
 
 #[test]
 fn extracts_correct_string_id_for_42a_sections() {
-    let html = load_fixture("cga/cga_art_001.htm");
-    let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Article);
+    let html = load_fixture("cgs/cgs_art_001.htm");
+    let sections = parse_cgs_chapter_html(&html, "001", "", CgsUnitKind::Article);
     // Section IDs should preserve the 42a- prefix
     assert_eq!(sections.sections[0].string_id, "cgs/section/42a-1-101");
     assert_eq!(sections.sections[1].string_id, "cgs/section/42a-1-102");
@@ -407,8 +407,8 @@ fn extracts_correct_string_id_for_42a_sections() {
 
 #[test]
 fn extracts_section_name_from_toc_for_42a_sections() {
-    let html = load_fixture("cga/cga_art_001.htm");
-    let sections = parse_cga_chapter_html(&html, "001", "", CgaUnitKind::Article);
+    let html = load_fixture("cgs/cgs_art_001.htm");
+    let sections = parse_cgs_chapter_html(&html, "001", "", CgsUnitKind::Article);
     assert!(sections.sections[0]
         .name
         .as_ref()
@@ -423,16 +423,16 @@ fn extracts_section_name_from_toc_for_42a_sections() {
 
 #[test]
 fn sets_correct_parent_string_id_for_articles() {
-    let html = load_fixture("cga/cga_art_001.htm");
-    let sections = parse_cga_chapter_html(&html, "1", "", CgaUnitKind::Article);
+    let html = load_fixture("cgs/cgs_art_001.htm");
+    let sections = parse_cgs_chapter_html(&html, "1", "", CgsUnitKind::Article);
     // For articles, parentStringId should reference cgs/article/...
     assert_eq!(sections.sections[0].parent_string_id, "cgs/article/1");
 }
 
 #[test]
 fn sets_correct_parent_string_id_for_chapters_default() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     // For chapters, parentStringId should reference cgs/chapter/...
     assert_eq!(sections.sections[0].parent_string_id, "cgs/chapter/377a");
 }
@@ -443,9 +443,9 @@ fn sets_correct_parent_string_id_for_chapters_default() {
 
 #[test]
 fn parsed_section_has_required_fields() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
     let sections =
-        parse_cga_chapter_html(&html, "377a", "http://example.com", CgaUnitKind::Chapter);
+        parse_cgs_chapter_html(&html, "377a", "http://example.com", CgsUnitKind::Chapter);
     let section = &sections.sections[0];
 
     // Required fields for DB insertion
@@ -463,8 +463,8 @@ fn parsed_section_has_required_fields() {
 
 #[test]
 fn section_level_index_is_consistent() {
-    let html = load_fixture("cga/cga_basic_chapter.htm");
-    let sections = parse_cga_chapter_html(&html, "377a", "", CgaUnitKind::Chapter);
+    let html = load_fixture("cgs/cgs_basic_chapter.htm");
+    let sections = parse_cgs_chapter_html(&html, "377a", "", CgsUnitKind::Chapter);
     // All sections should have levelIndex 2 (after root=0, title/chapter=1)
     for section in &sections.sections {
         assert_eq!(section.level_index, 2, "Section level_index should be 2");
@@ -483,7 +483,7 @@ fn extracts_section_cross_references() {
 }
 
 #[test]
-fn inlines_cga_cross_references() {
+fn inlines_cgs_cross_references() {
     let text = "See section 1-1 and sections 1-2 to 1-3, inclusive.";
     let inlined = inline_section_cross_references(text);
     assert!(inlined.contains("[1-1](/statutes/cgs/section/1-1)"));
@@ -499,14 +499,14 @@ fn inlines_cga_cross_references() {
 fn parses_complex_mirror_chapter_001() {
     let chap_001 = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../data/cga_mirror/current/pub/chap_001.htm"),
+            .join("../../../data/cgs_mirror/current/pub/chap_001.htm"),
     )
     .expect("chapter 001 mirror should exist");
-    let parsed_001 = parse_cga_chapter_html(
+    let parsed_001 = parse_cgs_chapter_html(
         &chap_001,
         "001",
-        "https://www.cga.ct.gov/current/pub/chap_001.htm",
-        CgaUnitKind::Chapter,
+        "https://www.cgs.ct.gov/current/pub/chap_001.htm",
+        CgsUnitKind::Chapter,
     );
     assert!(
         parsed_001.sections.len() > 20,
@@ -518,14 +518,14 @@ fn parses_complex_mirror_chapter_001() {
 fn parses_complex_mirror_chapter_229() {
     let chap_229 = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../data/cga_mirror/current/pub/chap_229.htm"),
+            .join("../../../data/cgs_mirror/current/pub/chap_229.htm"),
     )
     .expect("chapter 229 mirror should exist");
-    let parsed_229 = parse_cga_chapter_html(
+    let parsed_229 = parse_cgs_chapter_html(
         &chap_229,
         "229",
-        "https://www.cga.ct.gov/current/pub/chap_229.htm",
-        CgaUnitKind::Chapter,
+        "https://www.cgs.ct.gov/current/pub/chap_229.htm",
+        CgsUnitKind::Chapter,
     );
     assert!(
         parsed_229
@@ -540,14 +540,14 @@ fn parses_complex_mirror_chapter_229() {
 fn parses_complex_mirror_chapter_003() {
     let chap_003 = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../data/cga_mirror/current/pub/chap_003.htm"),
+            .join("../../../data/cgs_mirror/current/pub/chap_003.htm"),
     )
     .expect("chapter 003 mirror should exist");
-    let parsed_003 = parse_cga_chapter_html(
+    let parsed_003 = parse_cgs_chapter_html(
         &chap_003,
         "003",
-        "https://www.cga.ct.gov/current/pub/chap_003.htm",
-        CgaUnitKind::Chapter,
+        "https://www.cgs.ct.gov/current/pub/chap_003.htm",
+        CgsUnitKind::Chapter,
     );
     assert!(
         parsed_003
@@ -560,7 +560,7 @@ fn parses_complex_mirror_chapter_003() {
 
 #[test]
 fn extracts_toc_ids_for_title_42a_page() {
-    let html = load_fixture("cga/cga_title_42a.htm");
+    let html = load_fixture("cgs/cgs_title_42a.htm");
     let toc_ids = extract_section_ids_from_toc(&html);
     assert!(
         toc_ids.is_empty(),

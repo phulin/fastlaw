@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     Usc,
-    Cga,
+    Cgs,
     Mgl,
 }
 
@@ -31,17 +31,18 @@ pub struct NodePayload {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UscUnitRoot {
+pub struct UnitRoot {
     pub id: String,
     pub title_num: String,
     pub url: String,
+    pub payload: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DiscoveryResult {
     pub version_id: String,
     pub root_node: NodeMeta,
-    pub unit_roots: Vec<UscUnitRoot>,
+    pub unit_roots: Vec<UnitRoot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

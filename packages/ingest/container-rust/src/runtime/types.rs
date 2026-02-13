@@ -1,5 +1,7 @@
 use crate::types::NodePayload;
 use async_trait::async_trait;
+use serde_json::Value;
+use std::sync::Arc;
 
 pub struct BuildContext<'a> {
     pub source_version_id: &'a str,
@@ -24,11 +26,16 @@ pub trait Cache: Send + Sync {
     async fn fetch_cached(&self, url: &str, key: &str) -> Result<String, String>;
 }
 
+pub trait UrlQueue: Send + Sync {
+    fn enqueue(&self, url: String, metadata: Value);
+}
+
 pub struct IngestContext<'a> {
     pub build: BuildContext<'a>,
     pub nodes: Box<dyn NodeStore>,
-    pub blobs: Box<dyn BlobStore>,
-    pub cache: Box<dyn Cache>,
+    pub blobs: Arc<dyn BlobStore>,
+    pub cache: Arc<dyn Cache>,
+    pub queue: Arc<dyn UrlQueue>,
 }
 
 pub enum UnitStatus {

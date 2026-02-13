@@ -33,7 +33,8 @@ async fn test_adapter_extracts_part_chapter_and_sections() {
         payload: serde_json::json!({ "titleNum": "I" }),
     };
 
-    t.run_unit(&unit, &part_json).await;
+    t.add_fixture(&unit.url, &part_json);
+    t.run_url(&unit).await;
 
     t.expect_node("mgl/v1/root/part-i")
         .level("part")
@@ -84,7 +85,8 @@ async fn test_adapter_mock_integration() {
         payload: serde_json::json!({ "titleNum": "I" }),
     };
 
-    t.run_unit(&unit, &part_json).await;
+    t.add_fixture(&unit.url, &part_json);
+    t.run_url(&unit).await;
 
     assert_eq!(t.get_nodes().len(), 3); // Part, Chapter, Section
 
@@ -136,7 +138,8 @@ async fn test_adapter_mock_integration_multiple_sections() {
         payload: serde_json::json!({ "titleNum": "I" }),
     };
 
-    t.run_unit(&unit, &part_json).await;
+    t.add_fixture(&unit.url, &part_json);
+    t.run_url(&unit).await;
 
     assert_eq!(t.get_nodes().len(), 4);
 
@@ -200,7 +203,8 @@ async fn test_adapter_section_body_matches_expected_markdown() {
         payload: serde_json::json!({ "titleNum": "I" }),
     };
 
-    t.run_unit(&unit, &part_json).await;
+    t.add_fixture(&unit.url, &part_json);
+    t.run_url(&unit).await;
 
     let section_7a = t.expect_node("mgl/v1/root/part-i/chapter-1/section-7a");
 
@@ -252,7 +256,8 @@ async fn test_adapter_fetches_individual_section_when_text_missing() {
         payload: serde_json::json!({ "titleNum": "I" }),
     };
 
-    t.run_unit(&unit, &part_json).await;
+    t.add_fixture(&unit.url, &part_json);
+    t.run_url(&unit).await;
 
     t.expect_node("mgl/v1/root/part-i/chapter-1/section-1")
         .content_contains("All persons who are citizens of the United States");

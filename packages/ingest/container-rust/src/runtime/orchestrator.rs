@@ -2,12 +2,15 @@ use crate::runtime::cache::{ensure_cached, read_cached_file};
 use crate::runtime::callbacks::{
     post_ensure_source_version, post_node_batch, post_unit_progress, post_unit_start,
 };
-use crate::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore, UnitStatus};
+use crate::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore, UrlQueue};
 use crate::sources::adapter_for;
-use crate::types::{IngestConfig, NodePayload, UnitEntry};
+use crate::sources::configs::SourcesConfig;
+use crate::types::{IngestConfig, NodePayload, SourceKind};
 use async_trait::async_trait;
 use reqwest::Client;
-use std::sync::Mutex;
+use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const BATCH_SIZE: usize = 200;
@@ -116,6 +119,30 @@ impl Cache for HttpCache {
     }
 }
 
+pub struct SimpleUrlQueue {
+    items: Mutex<VecDeque<(String, Value)>>,
+}
+
+impl SimpleUrlQueue {
+    pub fn new() -> Self {
+        Self {
+            items: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    pub fn pop(&self) -> Option<(String, Value)> {
+        let mut items = self.items.lock().unwrap();
+        items.pop_front()
+    }
+}
+
+impl UrlQueue for SimpleUrlQueue {
+    fn enqueue(&self, url: String, metadata: Value) {
+        let mut items = self.items.lock().unwrap();
+        items.push_back((url, metadata));
+    }
+}
+
 pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -124,222 +151,194 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
         .map_err(|err| format!("Failed to build HTTP client: {err}"))?;
     let adapter = adapter_for(config.source);
 
-    // Determines the units to process and the version context
-    let (units, source_version_id, root_node_id) = if let Some(units) = &config.units {
-        // Pre-configured mode (legacy or direct unit targeting)
-        let svid = config
-            .source_version_id
-            .clone()
-            .ok_or("Missing source_version_id in config with units")?;
-        let rnid = config
-            .root_node_id
-            .clone()
-            .ok_or("Missing root_node_id in config with units")?;
-        (units.clone(), svid, rnid)
-    } else {
-        // Discovery mode
-        tracing::info!("[Container] Exploring source...");
-        let fetcher = crate::runtime::fetcher::HttpFetcher::new(client.clone());
-        let discovery = match adapter
-            .discover(&fetcher, "https://uscode.house.gov/download/download.shtml")
-            .await
-        {
-            Ok(discovery) => discovery,
-            Err(err) => return Err(err),
-        };
+    let queue = Arc::new(SimpleUrlQueue::new());
+    let blob_store = Arc::new(DummyBlobStore);
+    let cache_store = Arc::new(HttpCache {
+        client: client.clone(),
+        callback_base: config.callback_base.clone(),
+        callback_token: config.callback_token.clone(),
+    });
 
-        let source_version_id = format!("{}-{}", config.source_id, discovery.version_id);
-        let root_node_id = discovery.root_node.id.clone();
-
-        tracing::info!(
-            "[Container] Discovered version: {}, root: {}",
-            source_version_id,
-            root_node_id
-        );
-
-        // Filter units based on selectors
-        let filtered_roots: Vec<crate::types::UscUnitRoot> =
-            if let Some(selectors) = &config.selectors {
-                if selectors.is_empty() {
-                    discovery.unit_roots
-                } else {
-                    discovery
-                        .unit_roots
-                        .into_iter()
-                        .filter(|u| selectors.contains(&u.title_num))
-                        .collect()
-                }
-            } else {
-                discovery.unit_roots
-            };
-        // Ensure source version exists in backend
-        post_ensure_source_version(
-            &client,
-            &config.callback_base,
-            &config.callback_token,
-            &config.source_id,
-            &source_version_id,
-            &discovery.root_node,
-            &filtered_roots,
-        )
-        .await?;
-
-        // Convert to UnitEntry
-        let mut units = Vec::new();
-        for (i, root) in filtered_roots.into_iter().enumerate() {
-            units.push(UnitEntry {
-                unit_id: root.id,
-                url: root.url,
-                sort_order: i as i32,
-                payload: serde_json::json!({ "titleNum": root.title_num }),
-            });
+    // Initial seeding
+    if let Some(units) = &config.units {
+        for unit in units {
+            queue.enqueue(
+                unit.url.clone(),
+                json!({
+                    "type": "unit",
+                    "unit_id": unit.unit_id,
+                    "payload": unit.payload,
+                    "sort_order": unit.sort_order
+                }),
+            );
         }
-        (units, source_version_id, root_node_id)
-    };
-
-    tracing::info!("[Container] Starting ingest for {} units", units.len());
-
-    for entry in &units {
-        let unit_label = adapter.unit_label(entry);
-        let result = ingest_unit(
-            &client,
-            &config,
-            entry,
-            adapter,
-            &source_version_id,
-            &root_node_id,
-        )
-        .await;
-
-        match result {
-            Ok(status) => {
-                post_unit_progress(
-                    &client,
-                    &config.callback_base,
-                    &config.callback_token,
-                    &entry.unit_id,
-                    status.as_str(),
-                    None,
-                )
-                .await;
-            }
+    } else {
+        let sources_json_path =
+            std::env::var("SOURCES_JSON_PATH").unwrap_or_else(|_| "../../sources.json".to_string());
+        let root_url = match SourcesConfig::load_from_file(&sources_json_path) {
+            Ok(config_data) => config_data
+                .get_root_url(config.source)
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| match config.source {
+                    SourceKind::Usc => {
+                        "https://uscode.house.gov/download/download.shtml".to_string()
+                    }
+                    SourceKind::Cgs => "https://www.cga.ct.gov/current/pub/titles.htm".to_string(),
+                    SourceKind::Mgl => "https://malegislature.gov/Laws/GeneralLaws".to_string(),
+                }),
             Err(err) => {
-                tracing::error!("[Container] {} failed: {}", unit_label, err);
-                post_unit_progress(
+                tracing::warn!("Failed to load sources.json: {}. Using fallbacks.", err);
+                match config.source {
+                    SourceKind::Usc => {
+                        "https://uscode.house.gov/download/download.shtml".to_string()
+                    }
+                    SourceKind::Cgs => "https://www.cga.ct.gov/current/pub/titles.htm".to_string(),
+                    SourceKind::Mgl => "https://malegislature.gov/Laws/GeneralLaws".to_string(),
+                }
+            }
+        };
+        queue.enqueue(root_url, json!({ "type": "discovery" }));
+    }
+
+    let accessed_at = chrono::Utc::now().to_rfc3339();
+    let mut source_version_id: Option<String> = config.source_version_id.clone();
+    let mut root_node_id: Option<String> = config.root_node_id.clone();
+
+    // Loop
+    while let Some((url, metadata)) = queue.pop() {
+        let task_type = metadata["type"].as_str().unwrap_or("unknown");
+
+        if task_type == "discovery_result" {
+            // Backend synchronization
+            let version_id = metadata["version_id"].as_str().unwrap_or_default();
+            let root_node: crate::types::NodeMeta =
+                serde_json::from_value(metadata["root_node"].clone()).unwrap();
+
+            let full_version_id = format!("{}-{}", config.source_id, version_id);
+            source_version_id = Some(full_version_id.clone());
+            root_node_id = Some(root_node.id.clone());
+
+            // For discovery mode, we might need to filter enqueued units based on selectors
+            // ... (selectors logic could be here if enqueued items are buffered)
+            // But for now, let's just emit knowledge.
+
+            post_ensure_source_version(
+                &client,
+                &config.callback_base,
+                &config.callback_token,
+                &config.source_id,
+                &full_version_id,
+                &root_node,
+                &[], // unit_roots not strictly needed if we are processing enqueued units
+            )
+            .await?;
+            continue;
+        }
+
+        let unit_id = metadata["unit_id"].as_str().unwrap_or("root");
+        let unit_label = adapter.unit_label(&metadata);
+
+        tracing::info!("[Orchestrator] Processing: {}", unit_label);
+
+        if let (Some(svid), Some(rnid)) = (&source_version_id, &root_node_id) {
+            let build_context = BuildContext {
+                source_version_id: svid,
+                root_node_id: rnid,
+                accessed_at: &accessed_at,
+                unit_sort_order: metadata["sort_order"].as_i64().unwrap_or(0) as i32,
+            };
+
+            let node_store = HttpNodeStore {
+                client: client.clone(),
+                callback_base: config.callback_base.clone(),
+                callback_token: config.callback_token.clone(),
+                unit_id: unit_id.to_string(),
+                buffer: Mutex::new(Vec::with_capacity(BATCH_SIZE)),
+            };
+
+            let mut context = IngestContext {
+                build: build_context,
+                nodes: Box::new(node_store),
+                blobs: blob_store.clone(),
+                cache: cache_store.clone(),
+                queue: queue.clone(),
+            };
+
+            // Only report start for unit-level tasks
+            if task_type == "unit" || task_type == "part" {
+                post_unit_start(
                     &client,
                     &config.callback_base,
                     &config.callback_token,
-                    &entry.unit_id,
-                    "error",
-                    Some(&err),
+                    unit_id,
+                    0,
                 )
-                .await;
+                .await?;
             }
+
+            let result = adapter
+                .process_url(&mut context, &url, metadata.clone())
+                .await;
+
+            match result {
+                Ok(_) => {
+                    context.nodes.flush().await?;
+                    if task_type == "unit" || task_type == "part" {
+                        post_unit_progress(
+                            &client,
+                            &config.callback_base,
+                            &config.callback_token,
+                            unit_id,
+                            "completed",
+                            None,
+                        )
+                        .await;
+                    }
+                }
+                Err(err) => {
+                    tracing::error!("[Orchestrator] {} failed: {}", unit_label, err);
+                    if task_type == "unit" || task_type == "part" {
+                        post_unit_progress(
+                            &client,
+                            &config.callback_base,
+                            &config.callback_token,
+                            unit_id,
+                            "error",
+                            Some(&err),
+                        )
+                        .await;
+                    }
+                }
+            }
+        } else if task_type == "discovery" {
+            // Special case for discovery task when version is not yet known
+            let build_context = BuildContext {
+                source_version_id: "pending",
+                root_node_id: "pending",
+                accessed_at: &accessed_at,
+                unit_sort_order: 0,
+            };
+
+            let node_store = HttpNodeStore {
+                client: client.clone(),
+                callback_base: config.callback_base.clone(),
+                callback_token: config.callback_token.clone(),
+                unit_id: "discovery".to_string(),
+                buffer: Mutex::new(Vec::with_capacity(BATCH_SIZE)),
+            };
+
+            let mut context = IngestContext {
+                build: build_context,
+                nodes: Box::new(node_store),
+                blobs: blob_store.clone(),
+                cache: cache_store.clone(),
+                queue: queue.clone(),
+            };
+
+            adapter.process_url(&mut context, &url, metadata).await?;
         }
     }
 
-    tracing::info!("[Container] All units complete");
+    tracing::info!("[Orchestrator] Queue drained. All tasks complete.");
     Ok(())
-}
-
-async fn ingest_unit(
-    client: &Client,
-    config: &IngestConfig,
-    entry: &crate::types::UnitEntry,
-    adapter: &'static (dyn crate::sources::SourceAdapter + Send + Sync),
-    source_version_id: &str,
-    root_node_id: &str,
-) -> Result<UnitStatus, String> {
-    let accessed_at = chrono::Utc::now().to_rfc3339();
-    let unit_label = adapter.unit_label(entry);
-
-    tracing::info!("[Container] Starting ingest for {}", unit_label);
-
-    let unit_filename = entry.url.split('/').last().unwrap_or("unknown");
-    let cache_key = match adapter.needs_zip_extraction() {
-        true => format!(
-            "{}/{}/{}.xml",
-            config.source_id,
-            source_version_id,
-            unit_filename.replace(".zip", "")
-        ),
-        false => format!(
-            "{}/{}/{}",
-            config.source_id, source_version_id, unit_filename
-        ),
-    };
-
-    let extract_zip = adapter.needs_zip_extraction();
-    let cache = match ensure_cached(
-        client,
-        &entry.url,
-        &config.callback_base,
-        &config.callback_token,
-        extract_zip,
-        &cache_key,
-    )
-    .await?
-    {
-        Some(cache) => cache,
-        None => {
-            tracing::info!("[Container] {}: skipped (HTML response)", unit_label);
-            return Ok(UnitStatus::Skipped);
-        }
-    };
-
-    let xml = read_cached_file(
-        client,
-        &cache,
-        &config.callback_base,
-        &config.callback_token,
-    )
-    .await?;
-
-    let build_context = BuildContext {
-        source_version_id,
-        root_node_id,
-        accessed_at: &accessed_at,
-        unit_sort_order: entry.sort_order,
-    };
-
-    let node_store = HttpNodeStore {
-        client: client.clone(),
-        callback_base: config.callback_base.clone(),
-        callback_token: config.callback_token.clone(),
-        unit_id: entry.unit_id.clone(),
-        buffer: Mutex::new(Vec::with_capacity(BATCH_SIZE)),
-    };
-
-    let blob_store = DummyBlobStore;
-
-    let cache_store = HttpCache {
-        client: client.clone(),
-        callback_base: config.callback_base.clone(),
-        callback_token: config.callback_token.clone(),
-    };
-
-    let mut context = IngestContext {
-        build: build_context,
-        nodes: Box::new(node_store),
-        blobs: Box::new(blob_store),
-        cache: Box::new(cache_store),
-    };
-
-    // We don't know the total nodes anymore, so we pass 0 for now.
-    // The backend might need to be updated if it strictly uses this.
-    post_unit_start(
-        client,
-        &config.callback_base,
-        &config.callback_token,
-        &entry.unit_id,
-        0,
-    )
-    .await?;
-
-    adapter.process_unit(entry, &mut context, &xml).await?;
-
-    context.nodes.flush().await?;
-
-    tracing::info!("[Container] {}: done", unit_label);
-    Ok(UnitStatus::Completed)
 }

@@ -5,21 +5,24 @@
 			"jurisdiction": "federal",
 			"region": "US",
 			"doc_type": "statute",
-			"description": "Federal statutory law of the United States"
+			"description": "Federal statutory law of the United States",
+			"root_url": "https://uscode.house.gov/download/download.shtml"
 		},
 		"cgs": {
 			"name": "Connecticut General Statutes",
 			"jurisdiction": "state",
 			"region": "CT",
 			"doc_type": "statute",
-			"description": "Connecticut state statutory law"
+			"description": "Connecticut state statutory law",
+			"root_url": "https://www.cga.ct.gov/current/pub/titles.htm"
 		},
 		"mgl": {
 			"name": "Massachusetts General Laws",
 			"jurisdiction": "state",
 			"region": "MA",
 			"doc_type": "statute",
-			"description": "Massachusetts state statutory law"
+			"description": "Massachusetts state statutory law",
+			"root_url": "https://malegislature.gov/Laws/GeneralLaws"
 		}
 	}
 }

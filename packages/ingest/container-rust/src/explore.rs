@@ -1,11 +1,12 @@
 use async_trait::async_trait;
-use ingest::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore};
-use ingest::sources::cga::adapter::CGA_ADAPTER;
+use ingest::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore, UrlQueue};
+use ingest::sources::cgs::adapter::CGS_ADAPTER;
 use ingest::sources::mgl::adapter::MGL_ADAPTER;
 use ingest::sources::usc::adapter::USC_ADAPTER;
 use ingest::sources::SourceAdapter;
 use ingest::types::{NodePayload, SectionContent, UnitEntry};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +15,7 @@ type DynError = Box<dyn std::error::Error + Send + Sync + 'static>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceArg {
     Usc,
-    Cga,
+    Cgs,
     Mgl,
 }
 
@@ -22,7 +23,7 @@ impl SourceArg {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "usc" => Some(Self::Usc),
-            "cga" => Some(Self::Cga),
+            "cgs" => Some(Self::Cgs),
             "mgl" => Some(Self::Mgl),
             _ => None,
         }
@@ -33,16 +34,17 @@ impl SourceArg {
 async fn main() -> Result<(), DynError> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() != 3 {
-        eprintln!("Usage: explore <usc|cga|mgl> <file> <needle>");
+        eprintln!("Usage: explore <usc|cgs|mgl> <file> <needle>");
         std::process::exit(2);
     }
 
-    let source = SourceArg::parse(&args[0]).ok_or("first argument must be usc, cga, or mgl")?;
+    let source = SourceArg::parse(&args[0]).ok_or("first argument must be usc, cgs, or mgl")?;
     let file_path = args[1].clone();
     let needle = args[2].clone();
     let input = std::fs::read_to_string(&file_path)?;
 
     let node_store = CaptureNodeStore::new();
+    let queue = Arc::new(SimpleUrlQueue::new());
     let mut ctx = IngestContext {
         build: BuildContext {
             source_version_id: "explore",
@@ -51,22 +53,30 @@ async fn main() -> Result<(), DynError> {
             unit_sort_order: 0,
         },
         nodes: Box::new(node_store.clone()),
-        blobs: Box::new(NoopBlobStore),
-        cache: Box::new(NoopCache),
+        blobs: Arc::new(NoopBlobStore),
+        cache: Arc::new(NoopCache::new(&file_path, &input)),
+        queue: queue.clone(),
     };
 
     let unit = build_unit(source, &file_path);
+    let metadata = json!({
+        "type": "unit",
+        "unit_id": unit.unit_id,
+        "payload": unit.payload,
+        "sort_order": unit.sort_order
+    });
+
     match source {
         SourceArg::Usc => USC_ADAPTER
-            .process_unit(&unit, &mut ctx, &input)
+            .process_url(&mut ctx, &file_path, metadata)
             .await
             .map_err(|e| format!("USC adapter process failed: {e}"))?,
-        SourceArg::Cga => CGA_ADAPTER
-            .process_unit(&unit, &mut ctx, &input)
+        SourceArg::Cgs => CGS_ADAPTER
+            .process_url(&mut ctx, &file_path, metadata)
             .await
-            .map_err(|e| format!("CGA adapter process failed: {e}"))?,
+            .map_err(|e| format!("CGS adapter process failed: {e}"))?,
         SourceArg::Mgl => MGL_ADAPTER
-            .process_unit(&unit, &mut ctx, &input)
+            .process_url(&mut ctx, &file_path, metadata)
             .await
             .map_err(|e| format!("MGL adapter process failed: {e}"))?,
     }
@@ -119,7 +129,7 @@ fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
                 payload: json!({ "titleNum": title_num }),
             }
         }
-        SourceArg::Cga => {
+        SourceArg::Cgs => {
             let title_id =
                 infer_title_id_from_text(&std::fs::read_to_string(file_path).unwrap_or_default())
                     .unwrap_or_else(|| "1".to_string());
@@ -130,7 +140,7 @@ fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
                 "chapter"
             };
             UnitEntry {
-                unit_id: format!("cga-{unit_kind}-{chapter_id}"),
+                unit_id: format!("cgs-{unit_kind}-{chapter_id}"),
                 url: file_path.to_string(),
                 sort_order: 0,
                 payload: json!({
@@ -145,7 +155,6 @@ fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
             }
         }
         SourceArg::Mgl => {
-            // MGL uses JSON files with chapter data
             let chapter_num = infer_chapter_num(&file_name).unwrap_or_else(|| "1".to_string());
             UnitEntry {
                 unit_id: format!("mgl-chapter-{chapter_num}"),
@@ -155,6 +164,7 @@ fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
                     "partCode": "I",
                     "partName": "Administration of the Government",
                     "partApiUrl": null,
+                    "titleNum": "I"
                 }),
             }
         }
@@ -186,11 +196,9 @@ fn infer_chapter_id(file_name: &str) -> Option<String> {
 }
 
 fn infer_chapter_num(file_name: &str) -> Option<String> {
-    // MGL fixture files are named like "mgl_chapter_1.json"
     if let Some(value) = file_name.strip_prefix("mgl_chapter_") {
         return value.strip_suffix(".json").map(ToString::to_string);
     }
-    // Also try "mgl_section_7a.json" for section files
     if let Some(value) = file_name.strip_prefix("mgl_section_") {
         return value.strip_suffix(".json").map(ToString::to_string);
     }
@@ -237,6 +245,24 @@ impl NodeStore for CaptureNodeStore {
     }
 }
 
+struct SimpleUrlQueue {
+    items: Mutex<VecDeque<(String, Value)>>,
+}
+
+impl SimpleUrlQueue {
+    fn new() -> Self {
+        Self {
+            items: Mutex::new(VecDeque::new()),
+        }
+    }
+}
+
+impl UrlQueue for SimpleUrlQueue {
+    fn enqueue(&self, url: String, metadata: Value) {
+        self.items.lock().unwrap().push_back((url, metadata));
+    }
+}
+
 struct NoopBlobStore;
 
 #[async_trait]
@@ -246,12 +272,28 @@ impl BlobStore for NoopBlobStore {
     }
 }
 
-struct NoopCache;
+struct NoopCache {
+    file_path: String,
+    content: String,
+}
+
+impl NoopCache {
+    fn new(file_path: &str, content: &str) -> Self {
+        Self {
+            file_path: file_path.to_string(),
+            content: content.to_string(),
+        }
+    }
+}
 
 #[async_trait]
 impl Cache for NoopCache {
     async fn fetch_cached(&self, url: &str, _key: &str) -> Result<String, String> {
-        Err(format!("NoopCache cannot fetch: {}", url))
+        if url == self.file_path {
+            Ok(self.content.clone())
+        } else {
+            Err(format!("NoopCache cannot fetch: {}", url))
+        }
     }
 }
 

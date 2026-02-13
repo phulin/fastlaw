@@ -1,5 +1,5 @@
 use crate::sources::mgl::parser::{parse_part_detail, MglApiPart, MglApiPartSummary};
-use crate::types::{DiscoveryResult, NodeMeta, UscUnitRoot};
+use crate::types::{DiscoveryResult, NodeMeta, UnitRoot};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -50,7 +50,7 @@ pub async fn discover_mgl_root(
     let parts: Vec<MglApiPartSummary> = serde_json::from_str(&parts_json)
         .map_err(|e| format!("Failed to parse MGL parts list: {e}"))?;
 
-    let mut unit_roots: Vec<UscUnitRoot> = Vec::new();
+    let mut unit_roots: Vec<UnitRoot> = Vec::new();
 
     for part_summary in parts {
         let part_code = part_summary.Code.clone();
@@ -66,10 +66,11 @@ pub async fn discover_mgl_root(
             .map_err(|e| format!("Failed to parse MGL part detail from {part_url}: {e}"))?;
         let parsed = parse_part_detail(&part_detail, &part_url);
 
-        unit_roots.push(UscUnitRoot {
+        unit_roots.push(UnitRoot {
             id: format!("part-{}", parsed.part_code.to_lowercase()),
             title_num: parsed.part_code.clone(),
             url: parsed.part_api_url,
+            payload: None,
         });
     }
 
@@ -140,23 +141,4 @@ pub fn mgl_base_url() -> &'static str {
 
 pub fn mgl_start_path() -> &'static str {
     MGL_START_PATH
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_version_id_from_amendment_date() {
-        let html = "This site includes all amendments to the General Laws passed before <strong>January 10</strong><strong>, 2025</strong>, for laws enacted since that time";
-        let version = extract_version_id_from_landing_html(html);
-        assert_eq!(version, "2025-01-10");
-    }
-
-    #[test]
-    fn test_extract_version_id_from_copyright() {
-        let html = "Copyright &copy; 2024 Commonwealth of Massachusetts";
-        let version = extract_version_id_from_landing_html(html);
-        assert_eq!(version, "2024-01-01");
-    }
 }

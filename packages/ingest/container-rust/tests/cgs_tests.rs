@@ -1,2 +1,2 @@
-mod cga;
+mod cgs;
 mod common;

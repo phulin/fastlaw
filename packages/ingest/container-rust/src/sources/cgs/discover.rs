@@ -1,9 +1,9 @@
-use crate::sources::cga::parser::{designator_sort_order, normalize_designator};
-use crate::types::{DiscoveryResult, NodeMeta, UscUnitRoot};
+use crate::sources::cgs::parser::{designator_sort_order, normalize_designator};
+use crate::types::{DiscoveryResult, NodeMeta, UnitRoot};
 use regex::Regex;
 use std::sync::LazyLock;
 
-const CGA_TITLES_PAGE_URL: &str = "https://www.cga.ct.gov/current/pub/titles.htm";
+const CGS_TITLES_PAGE_URL: &str = "https://www.cgs.ct.gov/current/pub/titles.htm";
 const SOURCE_CODE: &str = "cgs";
 const SOURCE_NAME: &str = "Connecticut General Statutes";
 
@@ -19,7 +19,7 @@ static VERSION_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     ]
 });
 
-pub async fn discover_cga_root(
+pub async fn discover_cgs_root(
     fetcher: &dyn crate::runtime::fetcher::Fetcher,
     start_url: &str,
 ) -> Result<DiscoveryResult, String> {
@@ -28,7 +28,7 @@ pub async fn discover_cga_root(
     let title_urls = extract_title_urls(&html, start_url)?;
 
     if title_urls.is_empty() {
-        return Err("Found no CGA title pages on titles index.".to_string());
+        return Err("Found no CGS title pages on titles index.".to_string());
     }
 
     let mut titles = Vec::with_capacity(title_urls.len());
@@ -39,15 +39,16 @@ pub async fn discover_cga_root(
         let raw_title_id = captures[1].to_ascii_lowercase();
         let normalized_title_id =
             normalize_designator(Some(&raw_title_id)).unwrap_or(raw_title_id.clone());
-        titles.push(UscUnitRoot {
+        titles.push(UnitRoot {
             id: format!("title-{normalized_title_id}"),
             title_num: normalized_title_id,
             url: title_url,
+            payload: None,
         });
     }
 
     if titles.is_empty() {
-        return Err("Failed to parse any title identifiers from CGA title URLs.".to_string());
+        return Err("Failed to parse any title identifiers from CGS title URLs.".to_string());
     }
 
     titles.sort_by_key(|title| designator_sort_order(&title.title_num));
@@ -76,7 +77,7 @@ pub async fn discover_cga_root(
 
 // fetch_titles_page removed as it is replaced by Fetcher trait usage
 
-fn extract_version_id(html: &str) -> String {
+pub fn extract_version_id(html: &str) -> String {
     for pattern in VERSION_PATTERNS.iter() {
         if let Some(captures) = pattern.captures(html) {
             return captures[1].to_string();
@@ -85,16 +86,16 @@ fn extract_version_id(html: &str) -> String {
     chrono::Utc::now().format("%Y").to_string()
 }
 
-fn extract_title_urls(html: &str, base_url: &str) -> Result<Vec<String>, String> {
+pub fn extract_title_urls(html: &str, base_url: &str) -> Result<Vec<String>, String> {
     let base = reqwest::Url::parse(base_url)
-        .map_err(|e| format!("Invalid CGA base URL `{base_url}`: {e}"))?;
+        .map_err(|e| format!("Invalid CGS base URL `{base_url}`: {e}"))?;
 
     let mut urls = Vec::new();
     for captures in TITLE_HREF_RE.captures_iter(html) {
         let href = &captures[1];
         let absolute = base
             .join(href)
-            .map_err(|e| format!("Failed to resolve CGA title URL `{href}`: {e}"))?
+            .map_err(|e| format!("Failed to resolve CGS title URL `{href}`: {e}"))?
             .to_string();
         if !urls.contains(&absolute) {
             urls.push(absolute);
@@ -103,51 +104,6 @@ fn extract_title_urls(html: &str, base_url: &str) -> Result<Vec<String>, String>
     Ok(urls)
 }
 
-pub fn cga_titles_page_url() -> &'static str {
-    CGA_TITLES_PAGE_URL
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{extract_title_urls, extract_version_id};
-    use std::fs;
-    use std::path::Path;
-
-    fn load_titles_fixture() -> String {
-        fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../data/cga_mirror/current/pub/titles.htm"),
-        )
-        .expect("titles.htm fixture should exist")
-    }
-
-    #[test]
-    fn extracts_version_from_titles_html() {
-        let html = load_titles_fixture();
-        assert_eq!(extract_version_id(&html), "2025");
-    }
-
-    #[test]
-    fn extracts_unique_absolute_title_urls() {
-        let html = load_titles_fixture();
-        let title_urls = extract_title_urls(&html, "https://www.cga.ct.gov/current/pub/titles.htm")
-            .expect("extract_title_urls should succeed");
-
-        assert!(!title_urls.is_empty());
-        assert_eq!(
-            title_urls[0],
-            "https://www.cga.ct.gov/current/pub/title_01.htm"
-        );
-        assert!(title_urls
-            .iter()
-            .all(|url| url.starts_with("https://www.cga.ct.gov/current/pub/title_")));
-        assert_eq!(
-            title_urls.len(),
-            title_urls
-                .iter()
-                .cloned()
-                .collect::<std::collections::HashSet<_>>()
-                .len()
-        );
-    }
+pub fn cgs_titles_page_url() -> &'static str {
+    CGS_TITLES_PAGE_URL
 }

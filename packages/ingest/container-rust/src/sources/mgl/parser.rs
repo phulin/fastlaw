@@ -31,17 +31,11 @@ pub struct MglApiChapterSummary {
 #[allow(non_snake_case)]
 pub struct MglApiSection {
     pub Code: String,
-    #[serde(default)]
     pub ChapterCode: Option<String>,
-    #[serde(default)]
-    #[serde(alias = "name")]
     pub Name: Option<String>,
     #[serde(default)]
     pub IsRepealed: bool,
-    #[serde(default)]
-    #[serde(alias = "text")]
     pub Text: Option<String>,
-    #[serde(default)]
     pub Details: Option<String>,
 }
 
@@ -211,41 +205,4 @@ pub fn normalize_body_text(value: &str) -> String {
 
 pub fn section_level_index() -> i32 {
     SECTION_LEVEL_INDEX
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_designator_sort_order() {
-        assert!(designator_sort_order("2A") > designator_sort_order("2"));
-        assert!(designator_sort_order("10") > designator_sort_order("2A"));
-    }
-
-    #[test]
-    fn test_normalize_designator() {
-        assert_eq!(normalize_designator("  7a  "), "7A");
-        assert_eq!(normalize_designator("7A"), "7A");
-    }
-
-    #[test]
-    fn test_roman_to_int() {
-        assert_eq!(roman_to_int("I"), 1);
-        assert_eq!(roman_to_int("II"), 2);
-        assert_eq!(roman_to_int("III"), 3);
-        assert_eq!(roman_to_int("IV"), 4);
-        assert_eq!(roman_to_int("V"), 5);
-        assert_eq!(roman_to_int("VI"), i32::MAX);
-    }
-
-    #[test]
-    fn test_normalize_body_text() {
-        let input = "Section 7A. The governor may accept retrocession.\r\n\r\nA copy of the notice shall be filed.";
-        let output = normalize_body_text(input);
-        // The "Section 7A." prefix should be stripped
-        assert!(!output.starts_with("Section 7A."));
-        assert!(output.starts_with("The governor may accept retrocession."));
-        assert!(output.contains("A copy of the notice shall be filed."));
-    }
 }

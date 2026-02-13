@@ -1,27 +1,22 @@
 use crate::runtime::types::IngestContext;
-use crate::types::{SourceKind, UnitEntry};
+use crate::types::SourceKind;
 use async_trait::async_trait;
 
-pub mod cga;
+pub mod cgs;
+pub mod configs;
 pub mod mgl;
 pub mod usc;
 
 #[async_trait]
 pub trait SourceAdapter: Send + Sync {
-    async fn discover(
+    async fn process_url(
         &self,
-        fetcher: &dyn crate::runtime::fetcher::Fetcher,
-        download_base: &str,
-    ) -> Result<crate::types::DiscoveryResult, String>;
-
-    async fn process_unit(
-        &self,
-        unit: &UnitEntry,
         context: &mut IngestContext<'_>,
-        xml: &str,
+        url: &str,
+        metadata: serde_json::Value,
     ) -> Result<(), String>;
 
-    fn unit_label(&self, unit: &UnitEntry) -> String;
+    fn unit_label(&self, metadata: &serde_json::Value) -> String;
 
     /// Whether this source requires ZIP extraction when caching.
     /// USC and CGA download ZIP files from gov websites.
@@ -34,7 +29,7 @@ pub trait SourceAdapter: Send + Sync {
 pub fn adapter_for(source: SourceKind) -> &'static (dyn SourceAdapter + Send + Sync) {
     match source {
         SourceKind::Usc => &usc::adapter::USC_ADAPTER,
-        SourceKind::Cga => &cga::adapter::CGA_ADAPTER,
+        SourceKind::Cgs => &cgs::adapter::CGS_ADAPTER,
         SourceKind::Mgl => &mgl::adapter::MGL_ADAPTER,
     }
 }

@@ -145,7 +145,7 @@ pub async fn post_ensure_source_version(
     source_id: &str,
     source_version_id: &str,
     root_node: &crate::types::NodeMeta,
-    units: &[crate::types::UscUnitRoot],
+    units: &[crate::types::UnitRoot],
 ) -> Result<(), String> {
     let res = callback_fetch(
         client,

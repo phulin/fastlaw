@@ -1,5 +1,5 @@
 use crate::sources::usc::parser::title_sort_key;
-use crate::types::{DiscoveryResult, NodeMeta, UscUnitRoot};
+use crate::types::{DiscoveryResult, NodeMeta, UnitRoot};
 use regex::Regex;
 use std::collections::HashMap;
 
@@ -74,12 +74,13 @@ pub async fn discover_usc_root(
         key_a.partial_cmp(&key_b).unwrap()
     });
 
-    let unit_roots: Vec<UscUnitRoot> = titles
+    let unit_roots: Vec<UnitRoot> = titles
         .into_iter()
-        .map(|(title_num, url)| UscUnitRoot {
+        .map(|(title_num, url)| UnitRoot {
             id: format!("title-{}", title_num),
             title_num,
             url,
+            payload: None,
         })
         .collect();
 

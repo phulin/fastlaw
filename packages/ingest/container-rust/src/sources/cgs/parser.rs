@@ -17,12 +17,12 @@ static UPPERCASE_HEADING_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Z][A-Z\s\-,&]+$").unwrap());
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CgaUnitKind {
+pub enum CgsUnitKind {
     Chapter,
     Article,
 }
 
-impl CgaUnitKind {
+impl CgsUnitKind {
     pub fn from_url(url: &str) -> Self {
         if url.to_ascii_lowercase().contains("/art_") {
             Self::Article
@@ -40,7 +40,7 @@ impl CgaUnitKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct CgaParsedSection {
+pub struct CgsParsedSection {
     pub string_id: String,
     pub level_name: String,
     pub level_index: i32,
@@ -58,10 +58,10 @@ pub struct CgaParsedSection {
 }
 
 #[derive(Debug, Clone)]
-pub struct CgaChapterParseResult {
+pub struct CgsChapterParseResult {
     pub chapter_title: Option<String>,
     pub chapter_number: Option<String>,
-    pub sections: Vec<CgaParsedSection>,
+    pub sections: Vec<CgsParsedSection>,
 }
 
 #[derive(Debug, Clone)]
@@ -177,12 +177,12 @@ impl ParseState {
     }
 }
 
-pub fn parse_cga_chapter_html(
+pub fn parse_cgs_chapter_html(
     html: &str,
     chapter_id: &str,
     source_url: &str,
-    unit_kind: CgaUnitKind,
-) -> CgaChapterParseResult {
+    unit_kind: CgsUnitKind,
+) -> CgsChapterParseResult {
     let dom = tl::parse(html, tl::ParserOptions::default()).unwrap();
     let toc_map = extract_toc_map(&dom);
     let chapter_title = extract_chapter_title(&dom);
@@ -268,7 +268,7 @@ pub fn parse_cga_chapter_html(
         }
     }
 
-    CgaChapterParseResult {
+    CgsChapterParseResult {
         chapter_title,
         chapter_number,
         sections: build_sections_from_parsed_data(
@@ -492,8 +492,8 @@ fn build_sections_from_parsed_data(
     sections: Vec<SectionData>,
     chapter_id: &str,
     source_url: &str,
-    unit_kind: CgaUnitKind,
-) -> Vec<CgaParsedSection> {
+    unit_kind: CgsUnitKind,
+) -> Vec<CgsParsedSection> {
     let mut results = Vec::new();
 
     for (index, section) in sections.into_iter().enumerate() {
@@ -543,7 +543,7 @@ fn build_sections_from_parsed_data(
             .join("_");
 
         let readable_id = normalized_number.replace('_', " ");
-        results.push(CgaParsedSection {
+        results.push(CgsParsedSection {
             string_id: format!("cgs/section/{normalized_number}"),
             level_name: "section".to_string(),
             level_index: 2,

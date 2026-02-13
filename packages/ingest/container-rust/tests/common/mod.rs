@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use ingest::runtime::fetcher::Fetcher;
 use ingest::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore};
 use ingest::types::NodePayload;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -106,9 +106,28 @@ impl Fetcher for MockFetcher {
     }
 }
 
+pub struct MockUrlQueue {
+    pub enqueued: Arc<Mutex<VecDeque<(String, serde_json::Value)>>>,
+}
+
+impl MockUrlQueue {
+    pub fn new() -> Self {
+        Self {
+            enqueued: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
+}
+
+impl ingest::runtime::types::UrlQueue for MockUrlQueue {
+    fn enqueue(&self, url: String, metadata: serde_json::Value) {
+        self.enqueued.lock().unwrap().push_back((url, metadata));
+    }
+}
+
 pub fn create_test_context<'a>(
     node_store: MockNodeStore,
     cache: MockCache,
+    queue: MockUrlQueue,
     source_version_id: &'a str,
     root_node_id: &'a str,
 ) -> IngestContext<'a> {
@@ -120,8 +139,9 @@ pub fn create_test_context<'a>(
             unit_sort_order: 1,
         },
         nodes: Box::new(node_store),
-        blobs: Box::new(MockBlobStore),
-        cache: Box::new(cache),
+        blobs: Arc::new(MockBlobStore),
+        cache: Arc::new(cache),
+        queue: Arc::new(queue),
     }
 }
 
@@ -132,6 +152,7 @@ pub struct AdapterTestContext<'a, A: SourceAdapter> {
     pub adapter: A,
     pub node_store: MockNodeStore,
     pub cache: MockCache,
+    pub queue: MockUrlQueue,
     pub source_version_id: String,
     pub root_node_id: String,
     pub _marker: std::marker::PhantomData<&'a ()>,
@@ -143,6 +164,7 @@ impl<'a, A: SourceAdapter> AdapterTestContext<'a, A> {
             adapter,
             node_store: MockNodeStore::new(),
             cache: MockCache::new(),
+            queue: MockUrlQueue::new(),
             source_version_id: "v1".to_string(),
             root_node_id: root_node_id.to_string(),
             _marker: std::marker::PhantomData,
@@ -153,20 +175,55 @@ impl<'a, A: SourceAdapter> AdapterTestContext<'a, A> {
         self.cache.add_fixture(url, content);
     }
 
-    pub async fn run_unit(&mut self, unit: &UnitEntry, html: &str) {
+    pub async fn run_url(&mut self, unit: &UnitEntry) {
+        // Shared state for the queue
+        let queue_items = self.queue.enqueued.clone();
+
         let mut ctx = create_test_context(
             self.node_store.clone(),
             MockCache {
                 fixtures: self.cache.fixtures.clone(),
             },
+            MockUrlQueue {
+                enqueued: queue_items.clone(),
+            },
             &self.source_version_id,
             &self.root_node_id,
         );
 
-        self.adapter
-            .process_unit(unit, &mut ctx, html)
-            .await
-            .expect("process_unit failed");
+        // Initial enqueue
+        let metadata = serde_json::json!({
+            "type": "unit",
+            "unit_id": unit.unit_id,
+            "title_num": unit.payload.get("titleNum").and_then(|v| v.as_str()).unwrap_or_default(),
+            "payload": unit.payload,
+            "sort_order": unit.sort_order
+        });
+
+        // Enqueue the initial unit
+        queue_items
+            .lock()
+            .unwrap()
+            .push_back((unit.url.clone(), metadata));
+
+        // Processing loop mimicking the orchestrator
+        loop {
+            // Pop the next item
+            let item = {
+                let mut q = queue_items.lock().unwrap();
+                q.pop_front()
+            };
+
+            match item {
+                Some((url, meta)) => {
+                    self.adapter
+                        .process_url(&mut ctx, &url, meta)
+                        .await
+                        .expect("process_url failed");
+                }
+                None => break, // Queue is empty
+            }
+        }
     }
 
     pub fn expect_node(&self, id: &str) -> NodeMatcher {
