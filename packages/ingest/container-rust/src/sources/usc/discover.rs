@@ -80,7 +80,8 @@ pub async fn discover_usc_root(
             id: format!("title-{}", title_num),
             title_num,
             url,
-            payload: None,
+            level_name: "title".to_string(),
+            level_index: 0,
         })
         .collect();
 

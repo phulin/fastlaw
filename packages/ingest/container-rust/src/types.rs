@@ -35,7 +35,8 @@ pub struct UnitRoot {
     pub id: String,
     pub title_num: String,
     pub url: String,
-    pub payload: Option<serde_json::Value>,
+    pub level_name: String,
+    pub level_index: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,7 +65,6 @@ pub struct UnitEntry {
     pub unit_id: String,
     pub url: String,
     pub sort_order: i32,
-    pub payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

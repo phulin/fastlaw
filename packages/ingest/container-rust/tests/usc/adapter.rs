@@ -1,6 +1,7 @@
 use crate::common::{load_fixture, AdapterTestContext};
+use ingest::runtime::types::QueueItem;
 use ingest::sources::usc::adapter::UscAdapter;
-use ingest::types::{SectionContent, UnitEntry};
+use ingest::types::SectionContent;
 
 #[tokio::test]
 async fn test_adapter_extracts_levels_and_sections() {
@@ -26,15 +27,16 @@ async fn test_adapter_extracts_levels_and_sections() {
             </main>
         </uscDoc>"#;
 
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "http://example.com".to_string(),
-        sort_order: 1,
-        payload: serde_json::json!({ "titleNum": "1" }),
+        parent_id: "root".to_string(),
+        level_name: "title".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "1" }),
     };
 
-    t.add_fixture(&unit.url, xml);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, xml);
+    t.run_item(item).await;
 
     t.expect_node("root/t1/root")
         .level("title")
@@ -56,15 +58,16 @@ async fn test_adapter_matches_42_usc_302_nodepayload() {
     let mut t = AdapterTestContext::new(UscAdapter, "root");
 
     let xml = load_fixture("usc/usc42_s302.xml");
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "http://example.com".to_string(),
-        sort_order: 2,
-        payload: serde_json::json!({ "titleNum": "42" }),
+        parent_id: "root".to_string(),
+        level_name: "title".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "42" }),
     };
 
-    t.add_fixture(&unit.url, &xml);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &xml);
+    t.run_item(item).await;
 
     let section = t
         .expect_node("root/t42/ch7/schI/section-302")

@@ -1,1 +1,11 @@
-{"Code":"2","Name":"Sovereignty and jurisdiction of commonwealth","IsRepealed":false,"Text":"Section 2. The sovereignty and jurisdiction of the commonwealth shall extend to all places within its boundaries subject to the concurrent jurisdiction granted over places ceded to or acquired by the United States.   \r\n\r\n","Chapter":{"Code":"1","Details":"http://malegislature.gov/api/Chapters/1"},"Part":{"Code":"I","Details":"http://malegislature.gov/api/Parts/I"}}
+{
+	"Code": "2",
+	"Name": "Sovereignty and jurisdiction of commonwealth",
+	"IsRepealed": false,
+	"Text": "Section 2. The sovereignty and jurisdiction of the commonwealth shall extend to all places within its boundaries subject to the concurrent jurisdiction granted over places ceded to or acquired by the United States.   \r\n\r\n",
+	"Chapter": {
+		"Code": "1",
+		"Details": "http://malegislature.gov/api/Chapters/1"
+	},
+	"Part": { "Code": "I", "Details": "http://malegislature.gov/api/Parts/I" }
+}

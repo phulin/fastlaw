@@ -10,7 +10,7 @@
 		"build": "yarn build:container && wrangler deploy --env production --dry-run --outdir=dist",
 		"deploy": "yarn build:container && wrangler deploy --env production",
 		"typecheck": "../../node_modules/.bin/tsc --noEmit && cd container-rust && cargo check",
-		"test": "vitest run",
+		"test": "vitest run && cd container-rust && cargo test",
 		"test:watch": "vitest"
 	},
 	"dependencies": {

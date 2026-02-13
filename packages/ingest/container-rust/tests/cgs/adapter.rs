@@ -1,6 +1,7 @@
 use crate::common::{self, load_fixture, AdapterTestContext};
+use ingest::runtime::types::QueueItem;
 use ingest::sources::cgs::adapter::CgsAdapter;
-use ingest::types::{SectionContent, UnitEntry};
+use ingest::types::SectionContent;
 use std::fs;
 use std::path::Path;
 
@@ -9,27 +10,20 @@ async fn adapter_emits_title_chapter_and_sections() {
     let mut t = AdapterTestContext::new(CgsAdapter, "root");
 
     let html = load_fixture("cgs/cgs_basic_chapter.htm");
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://www.cgs.ct.gov/current/pub/chap_377a.htm".to_string(),
-        sort_order: 1,
-        payload: serde_json::json!({
-            "titleId": "20",
-            "titleName": "Professional and Occupational Licensing, Certification",
-            "chapterId": "377a",
-            "chapterName": "Doulas",
-            "unitKind": "chapter",
-            "titleSortOrder": 20,
-            "chapterSortOrder": 37700001,
+        parent_id: "root/title-20".to_string(),
+        level_name: "chapter".to_string(),
+        level_index: 1,
+        metadata: serde_json::json!({
+            "title_num": "20",
+            "chapter_id": "377a",
+            "unit_id": "test"
         }),
     };
 
-    t.add_fixture(&unit.url, &html);
-    t.run_url(&unit).await;
-
-    t.expect_node("root/title-20")
-        .level("title")
-        .path("/statutes/cgs/title/20");
+    t.add_fixture(&item.url, &html);
+    t.run_item(item).await;
 
     t.expect_node("root/title-20/chapter-377a")
         .level("chapter")
@@ -83,21 +77,20 @@ async fn adapter_inlines_cross_references_in_body_markdown() {
     )
     .expect("chapter 001 mirror should exist");
 
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://www.cgs.ct.gov/current/pub/chap_001.htm".to_string(),
-        sort_order: 1,
-        payload: serde_json::json!({
-            "titleId": "1",
-            "titleName": "General Provisions",
-            "chapterId": "001",
-            "chapterName": "Construction of Statutes",
-            "unitKind": "chapter",
+        parent_id: "root/title-1".to_string(),
+        level_name: "chapter".to_string(),
+        level_index: 1,
+        metadata: serde_json::json!({
+            "title_num": "1",
+            "chapter_id": "001",
+            "unit_id": "test"
         }),
     };
 
-    t.add_fixture(&unit.url, &html);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &html);
+    t.run_item(item).await;
 
     t.expect_node("root/title-1/chapter-001/section-1-1a")
         .path("/statutes/cgs/section/1-1a")
@@ -110,21 +103,20 @@ async fn adapter_handles_article_units() {
     let mut t = AdapterTestContext::new(CgsAdapter, "root");
 
     let html = load_fixture("cgs/cgs_art_001.htm");
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://www.cgs.ct.gov/current/pub/art_001.htm".to_string(),
-        sort_order: 1,
-        payload: serde_json::json!({
-            "titleId": "42a",
-            "titleName": "Uniform Commercial Code",
-            "chapterId": "1",
-            "chapterName": "General Provisions",
-            "unitKind": "article",
+        parent_id: "root/title-42a".to_string(),
+        level_name: "article".to_string(),
+        level_index: 1,
+        metadata: serde_json::json!({
+            "title_num": "42a",
+            "chapter_id": "1",
+            "unit_id": "test"
         }),
     };
 
-    t.add_fixture(&unit.url, &html);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &html);
+    t.run_item(item).await;
 
     t.expect_node("root/title-42a/article-1").level("article");
 

@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 use async_trait::async_trait;
 use ingest::runtime::fetcher::Fetcher;
-use ingest::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore};
+use ingest::runtime::types::{
+    BlobStore, BuildContext, Cache, IngestContext, NodeStore, QueueItem, UrlQueue,
+};
 use ingest::types::NodePayload;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
@@ -107,7 +109,7 @@ impl Fetcher for MockFetcher {
 }
 
 pub struct MockUrlQueue {
-    pub enqueued: Arc<Mutex<VecDeque<(String, serde_json::Value)>>>,
+    pub enqueued: Arc<Mutex<VecDeque<QueueItem>>>,
 }
 
 impl MockUrlQueue {
@@ -118,9 +120,9 @@ impl MockUrlQueue {
     }
 }
 
-impl ingest::runtime::types::UrlQueue for MockUrlQueue {
-    fn enqueue(&self, url: String, metadata: serde_json::Value) {
-        self.enqueued.lock().unwrap().push_back((url, metadata));
+impl UrlQueue for MockUrlQueue {
+    fn enqueue(&self, item: QueueItem) {
+        self.enqueued.lock().unwrap().push_back(item);
     }
 }
 
@@ -146,7 +148,6 @@ pub fn create_test_context<'a>(
 }
 
 use ingest::sources::SourceAdapter;
-use ingest::types::UnitEntry;
 
 pub struct AdapterTestContext<'a, A: SourceAdapter> {
     pub adapter: A,
@@ -175,8 +176,7 @@ impl<'a, A: SourceAdapter> AdapterTestContext<'a, A> {
         self.cache.add_fixture(url, content);
     }
 
-    pub async fn run_url(&mut self, unit: &UnitEntry) {
-        // Shared state for the queue
+    pub async fn run_item(&mut self, initial_item: QueueItem) {
         let queue_items = self.queue.enqueued.clone();
 
         let mut ctx = create_test_context(
@@ -191,37 +191,24 @@ impl<'a, A: SourceAdapter> AdapterTestContext<'a, A> {
             &self.root_node_id,
         );
 
-        // Initial enqueue
-        let metadata = serde_json::json!({
-            "type": "unit",
-            "unit_id": unit.unit_id,
-            "title_num": unit.payload.get("titleNum").and_then(|v| v.as_str()).unwrap_or_default(),
-            "payload": unit.payload,
-            "sort_order": unit.sort_order
-        });
-
-        // Enqueue the initial unit
-        queue_items
-            .lock()
-            .unwrap()
-            .push_back((unit.url.clone(), metadata));
+        // Enqueue the initial item
+        queue_items.lock().unwrap().push_back(initial_item);
 
         // Processing loop mimicking the orchestrator
         loop {
-            // Pop the next item
             let item = {
                 let mut q = queue_items.lock().unwrap();
                 q.pop_front()
             };
 
             match item {
-                Some((url, meta)) => {
+                Some(item) => {
                     self.adapter
-                        .process_url(&mut ctx, &url, meta)
+                        .process_url(&mut ctx, &item)
                         .await
                         .expect("process_url failed");
                 }
-                None => break, // Queue is empty
+                None => break,
             }
         }
     }

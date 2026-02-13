@@ -23,7 +23,7 @@ async fn test_discover_mgl_root_with_mock_fetcher() {
         r#"{"Code":"I","Name":"ADMINISTRATION OF THE GOVERNMENT","FirstChapter":1,"LastChapter":2,"Chapters":[]}"#
     );
 
-    let result = discover_mgl_root(&fetcher, "https://example.com/download")
+    let result = discover_mgl_root(&fetcher, "https://malegislature.gov/api/Parts")
         .await
         .expect("Discovery failed");
 

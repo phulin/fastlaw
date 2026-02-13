@@ -26,8 +26,17 @@ pub trait Cache: Send + Sync {
     async fn fetch_cached(&self, url: &str, key: &str) -> Result<String, String>;
 }
 
+#[derive(Debug, Clone)]
+pub struct QueueItem {
+    pub url: String,
+    pub parent_id: String,
+    pub level_name: String,
+    pub level_index: i32,
+    pub metadata: Value,
+}
+
 pub trait UrlQueue: Send + Sync {
-    fn enqueue(&self, url: String, metadata: Value);
+    fn enqueue(&self, item: QueueItem);
 }
 
 pub struct IngestContext<'a> {

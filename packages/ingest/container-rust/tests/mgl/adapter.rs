@@ -1,7 +1,8 @@
 use crate::common::{load_fixture, AdapterTestContext};
 use crate::mgl::{prune_chapter_json, prune_part_json};
+use ingest::runtime::types::QueueItem;
 use ingest::sources::mgl::adapter::MglAdapter;
-use ingest::types::{SectionContent, UnitEntry};
+use ingest::types::SectionContent;
 
 #[tokio::test]
 async fn test_adapter_extracts_part_chapter_and_sections() {
@@ -26,15 +27,16 @@ async fn test_adapter_extracts_part_chapter_and_sections() {
         &section_7a_json,
     );
 
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://malegislature.gov/api/Parts/I".to_string(),
-        sort_order: 1,
-        payload: serde_json::json!({ "titleNum": "I" }),
+        parent_id: "mgl/v1/root".to_string(),
+        level_name: "part".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "I" }),
     };
 
-    t.add_fixture(&unit.url, &part_json);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &part_json);
+    t.run_item(item).await;
 
     t.expect_node("mgl/v1/root/part-i")
         .level("part")
@@ -78,15 +80,16 @@ async fn test_adapter_mock_integration() {
     t.add_fixture("https://fake.gov/api/Chapters/1", &chapter_json);
     t.add_fixture("https://fake.gov/api/Chapters/1/Sections/1/", &section_json);
 
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://fake.gov/api/Parts/I".to_string(),
-        sort_order: 2,
-        payload: serde_json::json!({ "titleNum": "I" }),
+        parent_id: "mgl/v1/root".to_string(),
+        level_name: "part".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "I" }),
     };
 
-    t.add_fixture(&unit.url, &part_json);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &part_json);
+    t.run_item(item).await;
 
     assert_eq!(t.get_nodes().len(), 3); // Part, Chapter, Section
 
@@ -131,15 +134,16 @@ async fn test_adapter_mock_integration_multiple_sections() {
         &section_2_json,
     );
 
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://fake.gov/api/Parts/I".to_string(),
-        sort_order: 3,
-        payload: serde_json::json!({ "titleNum": "I" }),
+        parent_id: "mgl/v1/root".to_string(),
+        level_name: "part".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "I" }),
     };
 
-    t.add_fixture(&unit.url, &part_json);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &part_json);
+    t.run_item(item).await;
 
     assert_eq!(t.get_nodes().len(), 4);
 
@@ -196,15 +200,16 @@ async fn test_adapter_section_body_matches_expected_markdown() {
         &section_7a_json,
     );
 
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://malegislature.gov/api/Parts/I".to_string(),
-        sort_order: 4,
-        payload: serde_json::json!({ "titleNum": "I" }),
+        parent_id: "mgl/v1/root".to_string(),
+        level_name: "part".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "I" }),
     };
 
-    t.add_fixture(&unit.url, &part_json);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &part_json);
+    t.run_item(item).await;
 
     let section_7a = t.expect_node("mgl/v1/root/part-i/chapter-1/section-7a");
 
@@ -249,15 +254,16 @@ async fn test_adapter_fetches_individual_section_when_text_missing() {
         &section_1_json,
     );
 
-    let unit = UnitEntry {
-        unit_id: "test".to_string(),
+    let item = QueueItem {
         url: "https://malegislature.gov/api/Parts/I".to_string(),
-        sort_order: 5,
-        payload: serde_json::json!({ "titleNum": "I" }),
+        parent_id: "mgl/v1/root".to_string(),
+        level_name: "part".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "I" }),
     };
 
-    t.add_fixture(&unit.url, &part_json);
-    t.run_url(&unit).await;
+    t.add_fixture(&item.url, &part_json);
+    t.run_item(item).await;
 
     t.expect_node("mgl/v1/root/part-i/chapter-1/section-1")
         .content_contains("All persons who are citizens of the United States");

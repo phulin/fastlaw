@@ -1,13 +1,12 @@
-use crate::sources::mgl::parser::{parse_part_detail, MglApiPart, MglApiPartSummary};
+use crate::sources::mgl::parser::MglApiPartSummary;
 use crate::types::{DiscoveryResult, NodeMeta, UnitRoot};
+use chrono::Datelike;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 const MGL_BASE_URL: &str = "https://malegislature.gov";
 const MGL_START_PATH: &str = "/Laws/GeneralLaws";
-const SOURCE_CODE: &str = "mgl";
-const SOURCE_NAME: &str = "Massachusetts General Laws";
 
 static MONTH_INDEX: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut map = HashMap::new();
@@ -38,14 +37,13 @@ static COPYRIGHT_YEAR_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 pub async fn discover_mgl_root(
     fetcher: &dyn crate::runtime::fetcher::Fetcher,
-    download_base: &str,
+    parts_url: &str,
 ) -> Result<DiscoveryResult, String> {
     let start_url = format!("{}{}", MGL_BASE_URL, MGL_START_PATH);
     let root_html = fetcher.fetch(&start_url).await?;
     let version_id = extract_version_id_from_landing_html(&root_html);
 
     // Fetch parts list from API
-    let parts_url = format!("{}/api/Parts", MGL_BASE_URL);
     let parts_json = fetcher.fetch(&parts_url).await?;
     let parts: Vec<MglApiPartSummary> = serde_json::from_str(&parts_json)
         .map_err(|e| format!("Failed to parse MGL parts list: {e}"))?;
@@ -53,45 +51,27 @@ pub async fn discover_mgl_root(
     let mut unit_roots: Vec<UnitRoot> = Vec::new();
 
     for part_summary in parts {
-        let part_code = part_summary.Code.clone();
-        let part_url = format!(
-            "{}/api/Parts/{}",
-            MGL_BASE_URL,
-            urlencoding::encode(&part_code)
-        );
-
-        // Fetch part detail to get proper name
-        let part_json = fetcher.fetch(&part_url).await?;
-        let part_detail: MglApiPart = serde_json::from_str(&part_json)
-            .map_err(|e| format!("Failed to parse MGL part detail from {part_url}: {e}"))?;
-        let parsed = parse_part_detail(&part_detail, &part_url);
-
         unit_roots.push(UnitRoot {
-            id: format!("part-{}", parsed.part_code.to_lowercase()),
-            title_num: parsed.part_code.clone(),
-            url: parsed.part_api_url,
-            payload: None,
+            id: format!("part-{}", part_summary.Code.to_lowercase()),
+            title_num: part_summary.Code,
+            url: part_summary.Details,
+            level_name: "part".to_string(),
+            level_index: 0,
         });
     }
 
-    // Sort by part code (Roman numeral order)
-    unit_roots.sort_by_key(|unit| {
-        let part_code = unit.title_num.clone();
-        roman_sort_key(&part_code)
-    });
-
     let root_node = NodeMeta {
-        id: format!("{}/{}/root", SOURCE_CODE, version_id),
+        id: format!("mgl/{}/root", version_id),
         source_version_id: String::new(),
         parent_id: None,
         level_name: "root".to_string(),
         level_index: -1,
         sort_order: 0,
-        name: Some(SOURCE_NAME.to_string()),
+        name: Some("Massachusetts General Laws".to_string()),
         path: Some("/statutes/mgl".to_string()),
         readable_id: Some("MGL".to_string()),
         heading_citation: Some("MGL".to_string()),
-        source_url: Some(download_base.to_string()),
+        source_url: Some(parts_url.to_string()),
         accessed_at: Some(chrono::Utc::now().to_rfc3339()),
     };
 
@@ -102,25 +82,16 @@ pub async fn discover_mgl_root(
     })
 }
 
-fn roman_sort_key(value: &str) -> i32 {
-    match value.to_uppercase().as_str() {
-        "I" => 1,
-        "II" => 2,
-        "III" => 3,
-        "IV" => 4,
-        "V" => 5,
-        _ => i32::MAX,
-    }
-}
-
 // Helper functions removed as they are replaced by Fetcher trait usage
 
 pub fn extract_version_id_from_landing_html(html: &str) -> String {
+    let today = chrono::Utc::now();
+
     // Try to extract amendment date
     if let Some(caps) = AMENDMENT_DATE_RE.captures(html) {
         let month_name = caps[1].to_lowercase();
-        let day = caps[2].parse::<u32>().unwrap_or(1);
-        let year = caps[3].parse::<u32>().unwrap_or(2025);
+        let day = caps[2].parse::<u32>().unwrap_or(today.month());
+        let year = caps[3].parse::<u32>().unwrap_or(today.year_ce().1);
         let month = MONTH_INDEX.get(month_name.as_str()).unwrap_or(&"01");
         return format!("{}-{}-{:02}", year, month, day);
     }
@@ -132,13 +103,5 @@ pub fn extract_version_id_from_landing_html(html: &str) -> String {
     }
 
     // Final fallback: current date
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
-}
-
-pub fn mgl_base_url() -> &'static str {
-    MGL_BASE_URL
-}
-
-pub fn mgl_start_path() -> &'static str {
-    MGL_START_PATH
+    today.format("%Y-%m-%d").to_string()
 }

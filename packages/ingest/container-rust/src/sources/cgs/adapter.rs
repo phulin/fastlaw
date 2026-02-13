@@ -1,86 +1,49 @@
-use crate::runtime::types::IngestContext;
+use crate::runtime::fetcher::Fetcher;
+use crate::runtime::types::{IngestContext, QueueItem};
 use crate::sources::cgs::cross_references::inline_section_cross_references;
+use crate::sources::cgs::discover::{
+    extract_chapter_urls, extract_title_name_from_html, parse_chapter_id_from_url,
+};
 use crate::sources::cgs::parser::{
     designator_sort_order, normalize_designator, parse_cgs_chapter_html, CgsUnitKind,
 };
+use crate::sources::common::{body_block, capitalize_first, push_block};
 use crate::sources::SourceAdapter;
-use crate::types::{ContentBlock, NodeMeta, NodePayload, SectionContent};
+use crate::types::{DiscoveryResult, NodeMeta, NodePayload, SectionContent};
 use async_trait::async_trait;
-use serde::Deserialize;
 use serde_json::json;
 
 pub struct CgsAdapter;
 
 pub const CGS_ADAPTER: CgsAdapter = CgsAdapter;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CgsUnitPayload {
-    title_id: String,
-    title_name: Option<String>,
-    chapter_id: String,
-    chapter_name: Option<String>,
-    unit_kind: Option<String>,
-    title_sort_order: Option<i32>,
-    chapter_sort_order: Option<i32>,
-}
-
 #[async_trait]
 impl SourceAdapter for CgsAdapter {
+    async fn discover(&self, fetcher: &dyn Fetcher, url: &str) -> Result<DiscoveryResult, String> {
+        crate::sources::cgs::discover::discover_cgs_root(fetcher, url).await
+    }
+
     async fn process_url(
         &self,
         context: &mut IngestContext<'_>,
-        url: &str,
-        metadata: serde_json::Value,
+        item: &QueueItem,
     ) -> Result<(), String> {
-        let task_type = metadata["type"].as_str().unwrap_or("unit");
+        let url = &item.url;
+        let metadata = &item.metadata;
 
-        match task_type {
-            "discovery" => {
-                let fetcher = crate::runtime::fetcher::HttpFetcher::new(reqwest::Client::new());
-                let discovery =
-                    crate::sources::cgs::discover::discover_cgs_root(&fetcher, url).await?;
+        match item.level_name.as_str() {
+            "unit" | "title" => {
+                let title_num = metadata["title_num"].as_str().unwrap_or_default();
+                let normalized_title_id = normalize_designator(Some(title_num))
+                    .unwrap_or_else(|| title_num.to_string());
 
-                for (i, root) in discovery.unit_roots.into_iter().enumerate() {
-                    context.queue.enqueue(
-                        root.url,
-                        json!({
-                            "type": "unit",
-                            "unit_id": root.id,
-                            "title_num": root.title_num, // title_id actually
-                            "payload": root.payload,
-                            "sort_order": i as i32
-                        }),
-                    );
-                }
-
-                context.queue.enqueue(
-                    "discovery-result".to_string(),
-                    json!({
-                        "type": "discovery_result",
-                        "version_id": discovery.version_id,
-                        "root_node": discovery.root_node,
-                    }),
-                );
-            }
-            "unit" => {
-                let payload: CgsUnitPayload =
-                    serde_json::from_value(metadata["payload"].clone())
-                        .map_err(|err| format!("Invalid CGS unit payload: {err}"))?;
-
-                let cache_key = format!("cgs/{}.html", payload.chapter_id);
+                let cache_key = format!("cgs/title_{normalized_title_id}.html");
                 let html = context.cache.fetch_cached(url, &cache_key).await?;
 
-                let normalized_title_id = normalize_designator(Some(&payload.title_id))
-                    .unwrap_or_else(|| payload.title_id.clone());
-                let unit_kind = match payload.unit_kind.as_deref() {
-                    Some("article") => CgsUnitKind::Article,
-                    Some("chapter") => CgsUnitKind::Chapter,
-                    _ => CgsUnitKind::from_url(url),
-                };
+                let title_name = extract_title_name_from_html(&html)
+                    .unwrap_or_else(|| format!("Title {normalized_title_id}"));
 
-                let parsed = parse_cgs_chapter_html(&html, &payload.chapter_id, url, unit_kind);
-
+                // Emit title node
                 let title_id =
                     format!("{}/title-{normalized_title_id}", context.build.root_node_id);
                 context
@@ -92,13 +55,8 @@ impl SourceAdapter for CgsAdapter {
                             parent_id: Some(context.build.root_node_id.to_string()),
                             level_name: "title".to_string(),
                             level_index: 0,
-                            sort_order: payload
-                                .title_sort_order
-                                .unwrap_or_else(|| designator_sort_order(&normalized_title_id)),
-                            name: payload
-                                .title_name
-                                .clone()
-                                .or_else(|| Some(format!("Title {normalized_title_id}"))),
+                            sort_order: designator_sort_order(&normalized_title_id),
+                            name: Some(title_name),
                             path: Some(format!("/statutes/cgs/title/{normalized_title_id}")),
                             readable_id: Some(normalized_title_id.clone()),
                             heading_citation: Some(format!("Title {normalized_title_id}")),
@@ -109,11 +67,47 @@ impl SourceAdapter for CgsAdapter {
                     })
                     .await?;
 
+                // Extract chapter URLs and enqueue them
+                let chapter_urls = extract_chapter_urls(&html, url)?;
+                for (i, chapter) in chapter_urls.into_iter().enumerate() {
+                    context.queue.enqueue(QueueItem {
+                        url: chapter.url,
+                        parent_id: title_id.clone(),
+                        level_name: chapter.unit_kind.as_str().to_string(),
+                        level_index: 1,
+                        metadata: json!({
+                            "title_num": normalized_title_id,
+                            "chapter_id": chapter.chapter_id,
+                            "unit_id": metadata["unit_id"],
+                            "sort_order": i as i32
+                        }),
+                    });
+                }
+            }
+            "chapter" | "article" => {
+                let title_num = metadata["title_num"].as_str().unwrap_or_default();
+                let normalized_title_id = normalize_designator(Some(title_num))
+                    .unwrap_or_else(|| title_num.to_string());
+
+                let chapter_id = metadata["chapter_id"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| parse_chapter_id_from_url(url))
+                    .unwrap_or_default();
+
+                let unit_kind = CgsUnitKind::from_url(url);
+
+                let cache_key = format!("cgs/{}.html", chapter_id);
+                let html = context.cache.fetch_cached(url, &cache_key).await?;
+
+                let parsed = parse_cgs_chapter_html(&html, &chapter_id, url, unit_kind);
+
+                // Emit chapter node
                 let chapter_string_id = format!(
                     "{}/{kind}-{id}",
-                    title_id,
+                    item.parent_id,
                     kind = unit_kind.as_str(),
-                    id = payload.chapter_id
+                    id = chapter_id
                 );
                 context
                     .nodes
@@ -121,27 +115,22 @@ impl SourceAdapter for CgsAdapter {
                         meta: NodeMeta {
                             id: chapter_string_id.clone(),
                             source_version_id: context.build.source_version_id.to_string(),
-                            parent_id: Some(title_id.clone()),
+                            parent_id: Some(item.parent_id.clone()),
                             level_name: unit_kind.as_str().to_string(),
                             level_index: 1,
-                            sort_order: payload
-                                .chapter_sort_order
-                                .unwrap_or_else(|| designator_sort_order(&payload.chapter_id)),
-                            name: payload
-                                .chapter_name
-                                .clone()
-                                .or(parsed.chapter_title.clone()),
+                            sort_order: designator_sort_order(&chapter_id),
+                            name: parsed.chapter_title.clone(),
                             path: Some(format!(
                                 "/statutes/cgs/{}/{}/{}",
                                 unit_kind.as_str(),
                                 normalized_title_id,
-                                payload.chapter_id
+                                chapter_id
                             )),
-                            readable_id: Some(payload.chapter_id.clone()),
+                            readable_id: Some(chapter_id.clone()),
                             heading_citation: Some(format!(
                                 "{} {}",
                                 capitalize_first(unit_kind.as_str()),
-                                payload.chapter_id
+                                chapter_id
                             )),
                             source_url: Some(url.to_string()),
                             accessed_at: Some(context.build.accessed_at.to_string()),
@@ -152,38 +141,37 @@ impl SourceAdapter for CgsAdapter {
 
                 for section in parsed.sections {
                     let body = inline_section_cross_references(&section.body);
-                    let mut blocks = vec![ContentBlock {
-                        type_: "body".to_string(),
-                        label: None,
-                        content: if body.trim().is_empty() {
-                            None
-                        } else {
-                            Some(body)
-                        },
-                    }];
+                    let mut blocks = vec![body_block(&body)];
 
+                    let inline_refs = |s: &str| inline_section_cross_references(s);
                     push_block(
                         &mut blocks,
                         "history_short",
                         "Short History",
                         section.history_short,
-                        false,
+                        None,
                     );
                     push_block(
                         &mut blocks,
                         "history_long",
                         "Long History",
                         section.history_long,
-                        false,
+                        None,
                     );
                     push_block(
                         &mut blocks,
                         "citations",
                         "Citations",
                         section.citations,
-                        false,
+                        None,
                     );
-                    push_block(&mut blocks, "see_also", "See Also", section.see_also, true);
+                    push_block(
+                        &mut blocks,
+                        "see_also",
+                        "See Also",
+                        section.see_also,
+                        Some(&inline_refs),
+                    );
 
                     let content = SectionContent {
                         blocks,
@@ -218,53 +206,24 @@ impl SourceAdapter for CgsAdapter {
                         .await?;
                 }
             }
-            _ => return Err(format!("Unknown CGS task type: {task_type}")),
+            other => return Err(format!("Unknown CGS level: {other}")),
         }
 
         Ok(())
     }
 
-    fn unit_label(&self, metadata: &serde_json::Value) -> String {
-        let payload: Result<CgsUnitPayload, _> =
-            serde_json::from_value(metadata["payload"].clone());
-        match payload {
-            Ok(p) => format!(
-                "{} {}",
-                p.unit_kind.unwrap_or_else(|| "chapter".to_string()),
-                p.chapter_id
+    fn unit_label(&self, item: &QueueItem) -> String {
+        match item.level_name.as_str() {
+            "unit" | "title" => format!(
+                "Title {}",
+                item.metadata["title_num"].as_str().unwrap_or("?")
             ),
-            Err(_) => "CGS Task".to_string(),
+            "chapter" | "article" => format!(
+                "{} {}",
+                capitalize_first(&item.level_name),
+                item.metadata["chapter_id"].as_str().unwrap_or("?")
+            ),
+            other => other.to_string(),
         }
-    }
-}
-
-fn push_block(
-    blocks: &mut Vec<ContentBlock>,
-    type_: &str,
-    label: &str,
-    value: Option<String>,
-    inline_refs: bool,
-) {
-    if let Some(content) = value {
-        let rendered = if inline_refs {
-            inline_section_cross_references(&content)
-        } else {
-            content
-        };
-        if !rendered.trim().is_empty() {
-            blocks.push(ContentBlock {
-                type_: type_.to_string(),
-                label: Some(label.to_string()),
-                content: Some(rendered),
-            });
-        }
-    }
-}
-
-fn capitalize_first(value: &str) -> String {
-    let mut chars = value.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
     }
 }

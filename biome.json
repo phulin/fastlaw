@@ -8,7 +8,8 @@
 			"!**/fixtures",
 			"!**/.wrangler",
 			"!**/dist",
-			"!**/node_modules"
+			"!**/node_modules",
+			"!**/target"
 		]
 	}
 }

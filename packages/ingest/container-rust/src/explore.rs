@@ -1,10 +1,12 @@
 use async_trait::async_trait;
-use ingest::runtime::types::{BlobStore, BuildContext, Cache, IngestContext, NodeStore, UrlQueue};
+use ingest::runtime::types::{
+    BlobStore, BuildContext, Cache, IngestContext, NodeStore, QueueItem, UrlQueue,
+};
 use ingest::sources::cgs::adapter::CGS_ADAPTER;
 use ingest::sources::mgl::adapter::MGL_ADAPTER;
 use ingest::sources::usc::adapter::USC_ADAPTER;
 use ingest::sources::SourceAdapter;
-use ingest::types::{NodePayload, SectionContent, UnitEntry};
+use ingest::types::{NodePayload, SectionContent};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::path::Path;
@@ -58,25 +60,19 @@ async fn main() -> Result<(), DynError> {
         queue: queue.clone(),
     };
 
-    let unit = build_unit(source, &file_path);
-    let metadata = json!({
-        "type": "unit",
-        "unit_id": unit.unit_id,
-        "payload": unit.payload,
-        "sort_order": unit.sort_order
-    });
+    let item = build_queue_item(source, &file_path);
 
     match source {
         SourceArg::Usc => USC_ADAPTER
-            .process_url(&mut ctx, &file_path, metadata)
+            .process_url(&mut ctx, &item)
             .await
             .map_err(|e| format!("USC adapter process failed: {e}"))?,
         SourceArg::Cgs => CGS_ADAPTER
-            .process_url(&mut ctx, &file_path, metadata)
+            .process_url(&mut ctx, &item)
             .await
             .map_err(|e| format!("CGS adapter process failed: {e}"))?,
         SourceArg::Mgl => MGL_ADAPTER
-            .process_url(&mut ctx, &file_path, metadata)
+            .process_url(&mut ctx, &item)
             .await
             .map_err(|e| format!("MGL adapter process failed: {e}"))?,
     }
@@ -112,7 +108,7 @@ async fn main() -> Result<(), DynError> {
     Ok(())
 }
 
-fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
+fn build_queue_item(source: SourceArg, file_path: &str) -> QueueItem {
     let file_name = Path::new(file_path)
         .file_name()
         .and_then(|value| value.to_str())
@@ -122,11 +118,16 @@ fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
     match source {
         SourceArg::Usc => {
             let title_num = infer_digits(&file_name).unwrap_or_else(|| "42".to_string());
-            UnitEntry {
-                unit_id: format!("usc-{title_num}"),
+            QueueItem {
                 url: file_path.to_string(),
-                sort_order: 0,
-                payload: json!({ "titleNum": title_num }),
+                parent_id: "root".to_string(),
+                level_name: "unit".to_string(),
+                level_index: 0,
+                metadata: json!({
+                    "unit_id": format!("usc-{title_num}"),
+                    "title_num": title_num,
+                    "sort_order": 0
+                }),
             }
         }
         SourceArg::Cgs => {
@@ -139,32 +140,30 @@ fn build_unit(source: SourceArg, file_path: &str) -> UnitEntry {
             } else {
                 "chapter"
             };
-            UnitEntry {
-                unit_id: format!("cgs-{unit_kind}-{chapter_id}"),
+            QueueItem {
                 url: file_path.to_string(),
-                sort_order: 0,
-                payload: json!({
-                    "titleId": title_id,
-                    "titleName": null,
-                    "chapterId": chapter_id,
-                    "chapterName": null,
-                    "unitKind": unit_kind,
-                    "titleSortOrder": 0,
-                    "chapterSortOrder": 0,
+                parent_id: "root/title-1".to_string(),
+                level_name: unit_kind.to_string(),
+                level_index: 1,
+                metadata: json!({
+                    "unit_id": format!("cgs-{unit_kind}-{chapter_id}"),
+                    "title_num": title_id,
+                    "chapter_id": chapter_id,
+                    "sort_order": 0
                 }),
             }
         }
         SourceArg::Mgl => {
             let chapter_num = infer_chapter_num(&file_name).unwrap_or_else(|| "1".to_string());
-            UnitEntry {
-                unit_id: format!("mgl-chapter-{chapter_num}"),
+            QueueItem {
                 url: file_path.to_string(),
-                sort_order: 0,
-                payload: json!({
-                    "partCode": "I",
-                    "partName": "Administration of the Government",
-                    "partApiUrl": null,
-                    "titleNum": "I"
+                parent_id: "root".to_string(),
+                level_name: "unit".to_string(),
+                level_index: 0,
+                metadata: json!({
+                    "unit_id": format!("mgl-chapter-{chapter_num}"),
+                    "title_num": "I",
+                    "sort_order": 0
                 }),
             }
         }
@@ -246,7 +245,7 @@ impl NodeStore for CaptureNodeStore {
 }
 
 struct SimpleUrlQueue {
-    items: Mutex<VecDeque<(String, Value)>>,
+    items: Mutex<VecDeque<QueueItem>>,
 }
 
 impl SimpleUrlQueue {
@@ -258,8 +257,8 @@ impl SimpleUrlQueue {
 }
 
 impl UrlQueue for SimpleUrlQueue {
-    fn enqueue(&self, url: String, metadata: Value) {
-        self.items.lock().unwrap().push_back((url, metadata));
+    fn enqueue(&self, item: QueueItem) {
+        self.items.lock().unwrap().push_back(item);
     }
 }
 

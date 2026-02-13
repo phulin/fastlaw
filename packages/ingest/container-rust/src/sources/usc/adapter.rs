@@ -1,8 +1,9 @@
-use crate::runtime::types::IngestContext;
+use crate::runtime::fetcher::Fetcher;
+use crate::runtime::types::{IngestContext, QueueItem};
+use crate::sources::common::{body_block, capitalize_first};
 use crate::sources::SourceAdapter;
-use crate::types::{ContentBlock, NodeMeta, NodePayload, SectionContent};
+use crate::types::{ContentBlock, DiscoveryResult, NodeMeta, NodePayload, SectionContent};
 use async_trait::async_trait;
-use serde_json::json;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 
@@ -16,45 +17,20 @@ pub const USC_ADAPTER: UscAdapter = UscAdapter;
 
 #[async_trait]
 impl SourceAdapter for UscAdapter {
+    async fn discover(&self, fetcher: &dyn Fetcher, url: &str) -> Result<DiscoveryResult, String> {
+        crate::sources::usc::discover::discover_usc_root(fetcher, url).await
+    }
+
     async fn process_url(
         &self,
         context: &mut IngestContext<'_>,
-        url: &str,
-        metadata: serde_json::Value,
+        item: &QueueItem,
     ) -> Result<(), String> {
-        let task_type = metadata["type"].as_str().unwrap_or("unknown");
+        let url = &item.url;
+        let metadata = &item.metadata;
 
-        match task_type {
-            "discovery" => {
-                let fetcher = crate::runtime::fetcher::HttpFetcher::new(reqwest::Client::new());
-                let discovery =
-                    crate::sources::usc::discover::discover_usc_root(&fetcher, url).await?;
-
-                // Enqueue Title ZIPs
-                for (i, root) in discovery.unit_roots.into_iter().enumerate() {
-                    context.queue.enqueue(
-                        root.url,
-                        json!({
-                            "type": "unit",
-                            "unit_id": root.id,
-                            "title_num": root.title_num,
-                            "sort_order": i as i32
-                        }),
-                    );
-                }
-
-                // Report discovery results
-                context.queue.enqueue(
-                    "discovery-result".to_string(),
-                    json!({
-                        "type": "discovery_result",
-                        "version_id": discovery.version_id,
-                        "root_node": discovery.root_node,
-                        "source_id": "usc" // Should be dynamic? Or just let orchestrator handle it
-                    }),
-                );
-            }
-            "unit" => {
+        match item.level_name.as_str() {
+            "unit" | "title" => {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
                 let xml = context
                     .cache
@@ -163,16 +139,7 @@ impl SourceAdapter for UscAdapter {
                                 continue;
                             }
 
-                            let body_content = section.body.clone();
-                            let mut blocks = vec![ContentBlock {
-                                type_: "body".to_string(),
-                                content: if body_content.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(body_content)
-                                },
-                                label: None,
-                            }];
+                            let mut blocks = vec![body_block(&section.body)];
                             for block in &section.blocks {
                                 blocks.push(ContentBlock {
                                     type_: block.type_.clone(),
@@ -228,14 +195,17 @@ impl SourceAdapter for UscAdapter {
                     }
                 }
             }
-            _ => return Err(format!("Unknown USC task type: {task_type}")),
+            other => return Err(format!("Unknown USC level: {other}")),
         }
 
         Ok(())
     }
 
-    fn unit_label(&self, metadata: &serde_json::Value) -> String {
-        format!("Title {}", metadata["title_num"].as_str().unwrap_or("?"))
+    fn unit_label(&self, item: &QueueItem) -> String {
+        format!(
+            "Title {}",
+            item.metadata["title_num"].as_str().unwrap_or("?")
+        )
     }
 }
 
@@ -298,10 +268,3 @@ fn resolve_section_parent_string_id(root_string_id: &str, parent_ref: &USCParent
     }
 }
 
-fn capitalize_first(value: &str) -> String {
-    let mut chars = value.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
-}
