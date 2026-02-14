@@ -16,7 +16,7 @@ export interface AmendatoryInstruction {
 }
 
 const SEC_HEADER_RE = /^SEC\.\s+\d+/;
-const IS_AMENDED_RE = /\bis\s+amended\b/i;
+const IS_AMENDED_RE = /\bis\s+(further\s+)?amended\b/;
 const STRUCTURAL_RE = /^(TITLE|SUBTITLE|CHAPTER|SUBCHAPTER|PART)\s+[IVXLC\d]/i;
 const USC_CITATION_RE = /(\d+)\s+U\.S\.C\.\s+\d+(?:\([^)]*\))*/;
 

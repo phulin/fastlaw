@@ -74,27 +74,23 @@ function startsLowercase(s: string): boolean {
 	return /^[a-z]/.test(s.trim());
 }
 
+const SECTION_MARKER_RE =
+	/^(DIVISION|TITLE|Subtitle|CHAPTER|Subchapter|SUBCHAPTER|PART|SUBPART|SECTION|Sec\.|SEC\.)\s+[A-Z0-9]/;
 function startsSectionMarker(s: string): boolean {
 	const t = s.trim();
 	// Legislative headers: SEC. 101. or Section 5(e) or Title IV
-	if (/^SEC\.\s*/i.test(t)) return true;
-	if (/^Section\s+\d+/i.test(t)) return true;
-	if (
-		/^(TITLE|SUBTITLE|CHAPTER|SUBCHAPTER|PART|SECTION|SEC\.)\s+[IVXLC\d]/i.test(
-			t,
-		)
-	)
+	if (SECTION_MARKER_RE.test(t)) {
 		return true;
-	if (/^(Title|Subtitle|Chapter|Subchapter|Part|Section)\s+[IVXLC\d]/i.test(t))
-		return true;
+	}
 	return false;
 }
 
+const LIST_ITEM_MARKER_RE = /^["‘‘“”]?\([a-z0-9,.]+\)[,;]?(\s|$)/i;
 function isListItemMarker(s: string): boolean {
 	const t = s.trim();
 	// Matches (a), (1), (iv), (A), "(i)", etc.
 	// Includes smart quotes and handles trailing punctuation.
-	return /^["‘‘“”]?\([a-z0-9,.]+\)[,;]?(\s|$)/i.test(t);
+	return LIST_ITEM_MARKER_RE.test(t);
 }
 
 function isWhitespaceOnly(s: string): boolean {
@@ -103,18 +99,13 @@ function isWhitespaceOnly(s: string): boolean {
 
 function startsDoubleOpeningQuote(s: string): boolean {
 	const t = s.trimStart();
-	return (
-		t.startsWith("‘‘") ||
-		t.startsWith('"') ||
-		t.startsWith("'") ||
-		t.startsWith("“")
-	);
+	return t.startsWith("‘‘") || t.startsWith('"') || t.startsWith("“");
 }
 
 function normalizeDoubleQuotes(s: string): string {
 	return s
-		.replaceAll("‘‘", '"')
-		.replaceAll("’’", '"')
+		.replaceAll("‘‘", "“")
+		.replaceAll("’’", "”")
 		.replaceAll("Representa-tives", "Representatives");
 }
 
@@ -181,7 +172,7 @@ function isTopCenteredPageNumberSpan(
 
 function isBottomDaggerShortLine(line: Line, pageHeight: number): boolean {
 	const text = line.text.trim();
-	return text.includes("†") && text.length < 20 && line.y <= pageHeight * 0.1;
+	return !!text.match("[†•]") && text.length < 20 && line.y <= pageHeight * 0.1;
 }
 
 function isTextItem(item: unknown): item is TextItem {
@@ -454,7 +445,7 @@ export class PdfParagraphExtractor {
 
 		const isListStart = isListItemMarker(trimmedCurr);
 		const isLegislativeRef =
-			/\b(subparagraph|section|paragraph|clause|item|part|subtitle|Title|subsection)[)\s]*$/i.test(
+			/\b([Ss]ubsection|[Pp]aragraph|[Ss]ubparagraph|[Cc]lause|[Ss]ubclause|[Ii]tem|[Ss]ubitem)[)\s]*$/.test(
 				trimmedPrev,
 			);
 		const hasOpeningQuote = startsDoubleOpeningQuote(trimmedCurr);
@@ -484,44 +475,9 @@ export class PdfParagraphExtractor {
 			return true;
 		}
 
-		if (prev.page !== curr.page) {
-			if (endsWithHyphen(prev.text)) {
-				// Special case: if it ends with "amended—" and next is list item, split
-				if (trimmedPrev.toLowerCase().includes("amended") && isListStart)
-					return true;
-				return false;
-			}
-
-			// Join if it ends with common continuation markers or prepositions
-			if (
-				/\b(and|or|of|to|for|with|the|a|an|subparagraph|section|paragraph|clause|item|part|subtitle|in|is|into|by|as|at|from)$/i.test(
-					trimmedPrev,
-				)
-			) {
-				// But if next line is a clear new list item (not following a reference word), split
-				if (isListStart && !isLegislativeRef) return true;
-				return false;
-			}
-
-			// If it's a list item, split (unless it follows a reference word)
-			if (isListStart && !isLegislativeRef) return true;
-
-			// If it's lowercase, it's almost certainly a continuation
-			if (startsLowercase(curr.text)) return false;
-
-			// If it's an uppercase reference continuation like "(E) REPORTING"
-			if (
-				/^\([A-Z0-9]+\)\s/.test(trimmedCurr) &&
-				!endsWithPunctuation(prev.text)
-			)
-				return false;
-
-			return true;
-		}
-
 		if (/^the table of contents\b/i.test(trimmedCurr)) return true;
 
-		const gap = prev.y - curr.y;
+		const gap = prev.page === curr.page ? prev.y - curr.y : medianGap;
 		const indentChange = Math.abs(curr.xStart - prev.xStart);
 
 		if (isListStart) {

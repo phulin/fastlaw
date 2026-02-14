@@ -56,12 +56,7 @@ describe("extractParagraphs", () => {
 				const pageNumber = index + 1;
 				const body =
 					paragraphs.length > 0
-						? paragraphs
-								.map(
-									(paragraph, paragraphIndex) =>
-										`[${paragraphIndex + 1}] ${paragraph}`,
-								)
-								.join("\n")
+						? paragraphs.map((paragraph) => `[*] ${paragraph}`).join("\n")
 						: "[no paragraphs]";
 				return `Page ${pageNumber}\n${body}`;
 			});
