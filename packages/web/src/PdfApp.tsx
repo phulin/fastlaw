@@ -1,7 +1,7 @@
 import { MetaProvider, Title } from "@solidjs/meta";
-// Import types from pdfjs-dist
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onMount, Show } from "solid-js";
 import { Header } from "./components/Header";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -9,7 +9,6 @@ import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { PdfParagraphExtractor } from "./lib/text-extract";
 
 const HASH_PREFIX_LENGTH = 8;
-const INITIAL_RENDER_PAGE_COUNT = 5;
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -77,8 +76,6 @@ export default function PdfApp() {
 	const [_file, setFile] = createSignal<File | null>(null);
 	const [pageRows, setPageRows] = createSignal<PageRowState[]>([]);
 	const [activeRunId, setActiveRunId] = createSignal(0);
-	const [_renderedInitialPageCount, setRenderedInitialPageCount] =
-		createSignal(0);
 	const [renderContext, setRenderContext] = createSignal<{
 		pdf: PDFDocumentProxy;
 		pdfjsLib: Awaited<typeof import("pdfjs-dist")>;
@@ -88,30 +85,45 @@ export default function PdfApp() {
 	>("idle");
 	const [error, setError] = createSignal<string | null>(null);
 	const [fileName, setFileName] = createSignal<string>("");
+	const [scrollContainer, setScrollContainer] =
+		createSignal<HTMLDivElement | null>(null);
 
 	// Refs and state for PDF rendering
-	let canvasContainer: HTMLDivElement | undefined;
 	let fileInput: HTMLInputElement | undefined;
-	let scrollContainer: HTMLDivElement | undefined;
 	let currentPdf: PDFDocumentProxy | null = null;
 	let pdfjsLib: Awaited<typeof import("pdfjs-dist")> | null = null;
 	let currentFileHash: string | null = null;
 	let currentRunId = 0;
 	let initialScrollTargetPage = 1;
 	let hasAppliedInitialScroll = false;
+	const rowVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+		get count() {
+			return pageRows().length;
+		},
+		getScrollElement: () => scrollContainer(),
+		initialRect: {
+			width: 0,
+			height: typeof window === "undefined" ? 800 : window.innerHeight,
+		},
+		estimateSize: () => 1250,
+		overscan: 2,
+	});
+	createEffect(() => {
+		if (!scrollContainer() || pageRows().length === 0) return;
+		pageRows();
+		requestAnimationFrame(() => rowVirtualizer.measure());
+	});
 
 	const reset = (keepHash = false) => {
 		setFile(null);
 		setPageRows([]);
 		setActiveRunId(0);
-		setRenderedInitialPageCount(0);
-		setRenderContext(null);
 		setStatus("idle");
 		setError(null);
 		setFileName("");
 		if (fileInput) fileInput.value = "";
 		currentPdf = null;
-		scrollContainer = undefined;
+		setScrollContainer(null);
 		currentFileHash = null;
 		initialScrollTargetPage = 1;
 		hasAppliedInitialScroll = false;
@@ -151,13 +163,19 @@ export default function PdfApp() {
 		);
 	};
 
-	const scrollToPage = (page: number) => {
-		if (!scrollContainer || !canvasContainer) return;
-		const target = canvasContainer.querySelector<HTMLElement>(
-			`[data-page-number="${page}"]`,
-		);
-		if (!target) return;
-		scrollContainer.scrollTo({ top: Math.max(0, target.offsetTop - 80) });
+	const applyInitialScroll = (page: number, runId: number) => {
+		const apply = () => {
+			if (runId !== currentRunId || hasAppliedInitialScroll) return;
+			if (!scrollContainer()) {
+				requestAnimationFrame(apply);
+				return;
+			}
+			rowVirtualizer.scrollToIndex(page - 1, { align: "start" });
+			replaceLocationHash(page);
+			hasAppliedInitialScroll = true;
+		};
+
+		requestAnimationFrame(apply);
 	};
 
 	onMount(async () => {
@@ -222,20 +240,10 @@ export default function PdfApp() {
 	const handlePageRenderSuccess = (pageNumber: number, runId: number) => {
 		if (runId !== currentRunId || !currentPdf) return;
 		if (!hasAppliedInitialScroll && pageNumber === initialScrollTargetPage) {
-			scrollToPage(pageNumber);
-			replaceLocationHash(pageNumber);
 			hasAppliedInitialScroll = true;
 		}
-
-		const pagesToRender = Math.min(
-			INITIAL_RENDER_PAGE_COUNT,
-			currentPdf.numPages,
-		);
-		setRenderedInitialPageCount((count) => {
-			const nextCount = count + 1;
-			if (nextCount >= pagesToRender) setStatus("rendered");
-			return nextCount;
-		});
+		requestAnimationFrame(() => rowVirtualizer.measure());
+		if (status() === "rendering") setStatus("rendered");
 	};
 
 	const handlePageRenderError = (err: unknown, runId: number) => {
@@ -291,18 +299,17 @@ export default function PdfApp() {
 				Math.max(1, Math.floor(initialPage)),
 				currentPdf.numPages,
 			);
-			const renderedTargetPage = Math.min(
-				targetPage,
-				Math.min(INITIAL_RENDER_PAGE_COUNT, currentPdf.numPages),
-			);
 
-			setRenderedInitialPageCount(0);
 			setActiveRunId(runId);
-			initialScrollTargetPage = renderedTargetPage;
+			initialScrollTargetPage = targetPage;
 			hasAppliedInitialScroll = false;
+			setStatus("rendering");
+			await new Promise<void>((resolve) =>
+				requestAnimationFrame(() => resolve()),
+			);
 			setupPageRows();
 			void startTextExtraction(currentPdf, runId);
-			setStatus("rendering");
+			applyInitialScroll(targetPage, runId);
 		} catch (err: unknown) {
 			console.error(err);
 			setError(err instanceof Error ? err.message : String(err));
@@ -312,7 +319,8 @@ export default function PdfApp() {
 
 	// Separate ref handlers for the load-more trigger wiring
 	const scrollContainerRef = (el: HTMLDivElement) => {
-		scrollContainer = el;
+		setScrollContainer(el);
+		rowVirtualizer.measure();
 	};
 
 	const handleDrop = (e: DragEvent) => {
@@ -329,15 +337,30 @@ export default function PdfApp() {
 	return (
 		<MetaProvider>
 			<Title>PDF Viewer - fast.law</Title>
-			<div class="flex min-h-screen flex-col">
-				<Header />
+			<div class="pdf-app-shell">
+				<Header
+					heading={status() !== "idle" ? fileName() : undefined}
+					rightContent={
+						status() !== "idle" ? (
+							<button
+								type="button"
+								onClick={() => reset(false)}
+								class="pdf-secondary-button"
+							>
+								Upload Another
+							</button>
+						) : undefined
+					}
+				/>
 
 				<main
-					class={`min-h-0 flex-1 flex flex-col ${status() === "idle" ? "items-center justify-center p-8" : "w-full overflow-hidden"}`}
+					class={
+						status() === "idle" ? "pdf-app-main idle" : "pdf-app-main active"
+					}
 				>
 					<Show when={status() === "idle"}>
 						<section
-							class="border-2 border-dashed border-[var(--line)] rounded-xl p-12 text-center bg-white transition-all cursor-pointer w-full max-w-[600px] hover:border-[var(--accent)] hover:bg-[rgba(217,119,87,0.05)]"
+							class="pdf-dropzone"
 							onDragOver={handleDragOver}
 							onDrop={handleDrop}
 							onClick={() => fileInput?.click()}
@@ -347,72 +370,66 @@ export default function PdfApp() {
 							aria-label="PDF drop zone"
 							tabindex="0"
 						>
-							<h1 class="font-serif m-0 mb-4">Upload PDF</h1>
+							<h1 class="pdf-dropzone-title">Upload PDF</h1>
 							<p>Drag and drop a PDF file here, or click to select</p>
 							<input
 								type="file"
 								accept="application/pdf"
-								class="hidden"
+								class="pdf-file-input-hidden"
 								ref={fileInput}
 								onChange={(e) => {
 									if (e.target.files?.[0]) processFile(e.target.files[0], true);
 								}}
 							/>
-							<button
-								type="button"
-								class="bg-[var(--accent)] text-white border-none px-6 py-3 rounded-md font-medium cursor-pointer mt-4 hover:opacity-90"
-							>
+							<button type="button" class="pdf-primary-button">
 								Select File
 							</button>
 						</section>
 					</Show>
 
 					<Show when={status() !== "idle"}>
-						{/* Scroll container */}
+						<Show when={status() === "processing"}>
+							<p>Processing...</p>
+						</Show>
+
+						<Show when={error()}>
+							<p class="pdf-error-text">Error processing PDF: {error()}</p>
+						</Show>
+
 						<div
 							ref={scrollContainerRef}
-							class="w-full min-h-0 flex-1 bg-white overflow-y-auto overflow-x-hidden block relative"
+							class="pdf-scroll-container"
+							onScroll={() => rowVirtualizer.measure()}
 						>
-							<div class="flex justify-between items-center px-8 py-4 sticky top-0 bg-white z-20 border-b border-[var(--line)] shadow-sm">
-								<h2 class="m-0 text-ellipsis overflow-hidden whitespace-nowrap max-w-[70%] text-lg font-medium">
-									{fileName()}
-								</h2>
-								<button
-									type="button"
-									onClick={() => reset(false)}
-									class="m-0 bg-transparent text-[var(--ink-soft)] border border-[var(--line)] px-4 py-2 rounded cursor-pointer hover:bg-gray-50"
-								>
-									Upload Another
-								</button>
-							</div>
-
-							<Show when={status() === "processing"}>
-								<p>Processing...</p>
-							</Show>
-
-							<Show when={error()}>
-								<p class="text-red-500">Error processing PDF: {error()}</p>
-							</Show>
-
-							<div ref={canvasContainer} class="flex flex-col w-full">
-								<Show when={renderContext()}>
-									{(ctx) => (
-										<For each={pageRows().slice(0, INITIAL_RENDER_PAGE_COUNT)}>
-											{(pageRow) => (
-												<PageRow
-													pageNumber={pageRow.pageNumber}
-													paragraphs={pageRow.paragraphs}
-													pdf={ctx().pdf}
-													pdfjsLib={ctx().pdfjsLib}
-													runId={activeRunId()}
-													isCurrentRun={(runId) => runId === currentRunId}
-													onRenderSuccess={handlePageRenderSuccess}
-													onRenderError={handlePageRenderError}
-												/>
-											)}
-										</For>
+							<div
+								class="pdf-virtualizer-size"
+								style={{
+									height: `${rowVirtualizer.getTotalSize()}px`,
+								}}
+							>
+								<For each={rowVirtualizer.getVirtualItems()}>
+									{(virtualItem) => (
+										<div
+											ref={(el) => rowVirtualizer.measureElement(el)}
+											data-index={virtualItem.index}
+											class="pdf-virtualizer-item"
+											style={{
+												transform: `translateY(${virtualItem.start}px)`,
+											}}
+										>
+											<PageRow
+												pageNumber={pageRows()[virtualItem.index].pageNumber}
+												paragraphs={pageRows()[virtualItem.index].paragraphs}
+												pdf={renderContext()?.pdf}
+												pdfjsLib={renderContext()?.pdfjsLib}
+												runId={activeRunId()}
+												isCurrentRun={(runId) => runId === currentRunId}
+												onRenderSuccess={handlePageRenderSuccess}
+												onRenderError={handlePageRenderError}
+											/>
+										</div>
 									)}
-								</Show>
+								</For>
 							</div>
 						</div>
 					</Show>

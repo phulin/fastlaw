@@ -14,80 +14,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Space+Grotesk:wght@400;500;600&display=swap" />
-  <link rel="stylesheet" href="/src/styles/global.css" />
+  <link rel="stylesheet" href="/src/styles/pdf.css" />
   <!--app-head-->
-
-  <style>
-    /* Local overrides or specific styles for the PDF viewer layout */
-    main {
-      flex: 1;
-      padding: 2rem;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2rem;
-    }
-
-    .upload-area {
-      border: 2px dashed var(--line);
-      border-radius: 12px;
-      padding: 3rem;
-      text-align: center;
-      background: white;
-      transition: all 0.2s;
-      cursor: pointer;
-      width: 100%;
-      max-width: 600px;
-    }
-
-    .upload-area:hover,
-    .upload-area.drag-over {
-      border-color: var(--accent);
-      background: rgba(217, 119, 87, 0.05);
-    }
-
-    .viewer {
-      width: 100%;
-      max-width: 1000px;
-      background: white;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 2rem;
-      min-height: 500px;
-      display: none;
-      overflow: auto;
-    }
-
-    .viewer.active {
-      display: block;
-    }
-
-    h1 {
-      font-family: var(--font-serif);
-      margin: 0 0 1rem 0;
-    }
-
-    button {
-      background: var(--accent);
-      color: white;
-      border: none;
-      padding: 0.75rem 1.5rem;
-      border-radius: 6px;
-      font-weight: 500;
-      cursor: pointer;
-    }
-
-    button:hover {
-      opacity: 0.9;
-    }
-
-    #canvas-container {
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-      align-items: center;
-    }
-  </style>
 </head>
 
 <body>
