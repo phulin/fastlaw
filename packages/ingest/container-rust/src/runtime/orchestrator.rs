@@ -243,7 +243,7 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
             &config.source_id,
             &full_version_id,
             &discovery.root_node,
-            &[],
+            &discovery.unit_roots,
         )
         .await?;
 
