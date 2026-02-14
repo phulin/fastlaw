@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { describe, expect, it } from "vitest";
-import { extractParagraphs, PdfParagraphExtractor } from "./text-extract";
+import { extractParagraphs, PdfParagraphExtractor } from "../text-extract";
 
 const makeTextItem = (
 	str: string,
@@ -22,9 +22,9 @@ const makeTextItem = (
 
 describe("extractParagraphs", () => {
 	it("extracts text page-by-page from hr1-abridged fixture", async () => {
-		const fixtureUrl = new URL("../../hr1-abridged.pdf", import.meta.url);
+		const fixtureUrl = new URL("../../../hr1-abridged.pdf", import.meta.url);
 		const outputFixtureUrl = new URL(
-			"./__fixtures__/hr1-abridged-output.txt",
+			"../__fixtures__/hr1-abridged-output.txt",
 			import.meta.url,
 		);
 		const data = new Uint8Array(await readFile(fixtureUrl));

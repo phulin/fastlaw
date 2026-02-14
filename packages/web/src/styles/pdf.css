@@ -247,21 +247,21 @@ body {
 	pointer-events: none;
 }
 
+
 .pdf-page-row {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	min-height: 100vh;
-	border-bottom: 1px solid var(--line);
 	width: 100%;
+    /* No longer a grid itself */
 }
 
 .pdf-page-row-viewer-pane {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	padding: 2rem;
-	border-right: 1px solid var(--line);
+	padding: 24px 0;
+	/* Border moved to column split potentially, or kept here if we want a line between pages? 
+       Actually, grid gap or border on the column div is better. */
 	background-color: var(--bg);
+    /* min-height removed to fix offset sync */
 }
 
 .pdf-page-row-canvas-shell {
@@ -286,24 +286,39 @@ body {
 	top: 0;
 }
 
-.pdf-page-row-text-pane {
-	position: relative;
-	padding: 2rem;
-	background-color: white;
-	font-family: monospace;
-	font-size: 1rem;
-	white-space: pre-wrap;
-	overflow: visible;
-	width: 100%;
-	min-width: 0;
+/* New Split Columns */
+.pdf-column-viewer {
+    background-color: var(--bg);
+    border-right: 1px solid var(--line);
 }
 
-.pdf-page-row-text-pane p[class^="pdf-amend-color-"] {
+.pdf-column-annotations {
+    background-color: white;
+    position: relative;
+    padding: 0 2rem;
+    /* Annotations are absolutely positioned within this, so we need a relative container. 
+       Actually, AnnotationLayer handles the relative container. */
+}
+
+/* Annotation Styles (migrated from text-pane) */
+.pdf-column-annotations p[class^="pdf-amend-color-"] {
 	border-left: 3px solid;
 	padding-left: 0.5rem;
-	margin-left: -0.75rem;
+	margin-left: -0.75rem; /* Pull back slightly to hang the border, relative to the 2rem container padding */
 	margin-right: 1.5rem;
-	z-index: 10;
+    margin-top: 0;
+    margin-bottom: 0;
+    font-family: monospace;
+	font-size: 0.9rem;
+	white-space: pre-wrap;
+}
+
+/* Default style for non-amendatory paragraphs to match font */
+.pdf-column-annotations p {
+    font-family: monospace;
+	font-size: 0.9rem;
+	white-space: pre-wrap;
+    margin: 0;
 }
 
 .pdf-amend-color-0 {

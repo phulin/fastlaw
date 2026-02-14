@@ -8,7 +8,9 @@ import { wordDictionary } from "./word-dictionary";
 
 export interface Line {
 	page: number;
-	y: number;
+	y: number; // baseline
+	yStart: number; // top
+	yEnd: number; // bottom
 	xStart: number;
 	xEnd: number;
 	text: string;
@@ -22,7 +24,9 @@ export interface Paragraph {
 	text: string;
 	lines: Line[];
 	confidence: number;
-	y: number;
+	y: number; // start line baseline
+	yStart: number; // start line top
+	yEnd: number; // start line bottom
 	pageHeight: number;
 }
 
@@ -307,6 +311,8 @@ export class PdfParagraphExtractor {
 				y: item.transform[5],
 				w: item.width,
 				h: item.height || 10,
+				yStart: item.transform[5] + (item.height || 10), // PDF space is Y-up, so top is y + height
+				yEnd: item.transform[5],
 			}));
 
 		if (enriched.length === 0) return [];
@@ -343,7 +349,15 @@ export class PdfParagraphExtractor {
 	}
 
 	private buildLine(
-		enriched: { item: TextItem; x: number; y: number; w: number; h: number }[],
+		enriched: {
+			item: TextItem;
+			x: number;
+			y: number;
+			w: number;
+			h: number;
+			yStart: number;
+			yEnd: number;
+		}[],
 		page: number,
 		pageHeight: number,
 	): Line {
@@ -363,6 +377,8 @@ export class PdfParagraphExtractor {
 		return {
 			page,
 			y: enriched[0].y,
+			yStart: Math.max(...enriched.map((e) => e.yStart)),
+			yEnd: Math.min(...enriched.map((e) => e.yEnd)),
 			xStart: enriched[0].x,
 			xEnd: enriched[enriched.length - 1].x + enriched[enriched.length - 1].w,
 			text,
@@ -586,6 +602,8 @@ export class PdfParagraphExtractor {
 			lines: p.lines,
 			confidence: p.confidence,
 			y: p.lines[0].y,
+			yStart: p.lines[0].yStart,
+			yEnd: p.lines[0].yEnd,
 			pageHeight: p.lines[0].pageHeight,
 		};
 	}

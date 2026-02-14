@@ -11,6 +11,7 @@ import {
 	onMount,
 	Show,
 } from "solid-js";
+import { AnnotationLayer, type PageLayout } from "./components/AnnotationLayer";
 import { Header } from "./components/Header";
 import type { PageItem } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
@@ -22,7 +23,7 @@ import { extractParagraphs } from "./lib/text-extract";
 const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
-const DEFAULT_ITEM_SIZE = 1093;
+const DEFAULT_ITEM_SIZE = 1078;
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -112,6 +113,48 @@ export default function PdfApp() {
 	);
 	const [isVirtualDebugEnabled, setIsVirtualDebugEnabled] = createSignal(false);
 
+	const [pageLayouts, setPageLayouts] = createSignal<PageLayout[]>([]);
+	const [allItems, setAllItems] = createSignal<
+		{ item: PageItem; pageNumber: number }[]
+	>([]);
+
+	const visibleItems = createMemo(() => {
+		const indexes = virtualIndexes();
+		if (indexes.length === 0) return [];
+
+		const startPage = Math.max(0, indexes[0] - 1);
+		const endPage = indexes[indexes.length - 1] + 1;
+
+		const layouts = pageLayouts();
+		if (layouts.length === 0) return [];
+
+		return allItems()
+			.filter(
+				(item) =>
+					item.pageNumber >= startPage + 1 && item.pageNumber <= endPage + 1,
+			)
+			.map((entry) => {
+				const layout = layouts[entry.pageNumber - 1];
+				if (!layout) return null;
+				// Calculate global top based on topPercent
+				const topPercent =
+					entry.item.type === "paragraph"
+						? entry.item.topPercent
+						: entry.item.topPercent;
+				// Add padding top to align with visual rendering
+				// Subtract ~18px because extraction Y is baseline, not top
+				const globalTop =
+					layout.pageOffset + 24 + (topPercent / 100) * layout.pageHeight;
+
+				return {
+					item: entry.item,
+					globalTop,
+					pageNumber: entry.pageNumber,
+				};
+			})
+			.filter((i): i is NonNullable<typeof i> => i !== null);
+	});
+
 	// Refs and state for PDF rendering
 	let fileInput: HTMLInputElement | undefined;
 	let currentPdf: PDFDocumentProxy | null = null;
@@ -129,21 +172,47 @@ export default function PdfApp() {
 			width: 0,
 			height: typeof window === "undefined" ? 800 : window.innerHeight,
 		},
-		estimateSize: () => DEFAULT_ITEM_SIZE,
+		estimateSize: (i) => {
+			const layouts = pageLayouts();
+			if (layouts[i]) {
+				const padding = 48; // 24 top + 24 bottom
+				return layouts[i].pageHeight + padding;
+			}
+			return DEFAULT_ITEM_SIZE;
+		},
 		overscan: 3,
 		onChange(instance) {
 			const items = instance.getVirtualItems();
+
+			const nextIndexes = items.map((item) => item.index);
+			const nextStarts = items.map((item) => item.start);
+			const nextSizes = items.map((item) => item.size);
+
+			const arraysEqual = (a: number[], b: number[]) =>
+				a.length === b.length && a.every((v, i) => v === b[i]);
+
 			batch(() => {
-				setVirtualIndexes(items.map((item) => item.index));
-				setVirtualStarts(items.map((item) => item.start));
-				setVirtualSizes(items.map((item) => item.size));
+				if (!arraysEqual(nextIndexes, virtualIndexes())) {
+					setVirtualIndexes(nextIndexes);
+				}
+				if (!arraysEqual(nextStarts, virtualStarts())) {
+					setVirtualStarts(nextStarts);
+				}
+				if (!arraysEqual(nextSizes, virtualSizes())) {
+					setVirtualSizes(nextSizes);
+				}
 			});
 		},
 	});
 
 	// On HMR, null out the scroll container so the virtualizer detaches its
 	// observers from the now-removed DOM element.
-	onCleanup(() => setScrollContainer(null));
+	onCleanup(() => {
+		setScrollContainer(null);
+		if (typeof window !== "undefined") {
+			window.removeEventListener("hashchange", handleHashChange);
+		}
+	});
 
 	const virtualRangeLabel = createMemo(() => {
 		const indexes = virtualIndexes();
@@ -180,6 +249,16 @@ export default function PdfApp() {
 		const timeout = setTimeout(() => replaceLocationHash(page), 150);
 		onCleanup(() => clearTimeout(timeout));
 	});
+
+	const handleHashChange = () => {
+		const parsed = parseHashState();
+		if (!parsed || !currentFileHash) return;
+
+		// If the document hash matches but the page is different, scroll to it.
+		if (parsed.hash === currentFileHash && parsed.page !== currentPage()) {
+			rowVirtualizer.scrollToIndex(parsed.page - 1, { align: "start" });
+		}
+	};
 
 	const reset = (keepHash = false) => {
 		setFile(null);
@@ -248,7 +327,9 @@ export default function PdfApp() {
 			setIsVirtualDebugEnabled(search.get(VIRTUAL_DEBUG_SEARCH_PARAM) === "1");
 		}
 
+		window.addEventListener("hashchange", handleHashChange);
 		if (typeof window === "undefined" || !window.location.hash) return;
+
 		const parsed = parseHashState();
 		if (!parsed) return;
 		const file = await getFileFromDB(parsed.hash);
@@ -322,6 +403,10 @@ export default function PdfApp() {
 			const arrayBuffer = await selectedFile.arrayBuffer();
 			const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
 			currentPdf = await loadingTask.promise;
+			if (!currentPdf) {
+				console.error("Failed to load PDF...");
+				return;
+			}
 			setRenderContext({ pdf: currentPdf, pdfjsLib });
 			const targetPage = Math.min(
 				Math.max(1, Math.floor(initialPage)),
@@ -334,8 +419,40 @@ export default function PdfApp() {
 			await new Promise<void>((resolve) =>
 				requestAnimationFrame(() => resolve()),
 			);
+
+			// Pre-calculate page layouts
+			const layouts: PageLayout[] = [];
+			let currentOffset = 0;
+			const PAGE_PADDING_TOP = 24;
+			const PAGE_PADDING_BOTTOM = 24;
+
+			// We need to fetch all page viewports to know heights
+			// This might be slow for massive PDFs, but necessary for global layout
+			const currentPdfNonNull: PDFDocumentProxy = currentPdf;
+			void Promise.all(
+				Array.from({ length: currentPdfNonNull.numPages }, (_, i) =>
+					currentPdfNonNull.getPage(i + 1),
+				),
+			).then((pages) => {
+				const baseScale = 1.3; // Match PageRow scale
+
+				for (const page of pages) {
+					const viewport = page.getViewport({ scale: baseScale });
+
+					layouts.push({
+						pageOffset: currentOffset,
+						pageHeight: viewport.height,
+						pageWidth: viewport.width,
+					});
+					currentOffset +=
+						viewport.height + PAGE_PADDING_TOP + PAGE_PADDING_BOTTOM;
+				}
+				setPageLayouts(layouts);
+			});
+
 			setupPageRows();
 			const pdf = currentPdf;
+
 			const applyParagraphs = (allParagraphs: Paragraph[]) => {
 				const instructions = extractAmendatoryInstructions(allParagraphs);
 
@@ -354,48 +471,48 @@ export default function PdfApp() {
 					}
 				}
 
-				const displayByPage: PageItem[][] = Array.from(
-					{ length: pdf.numPages },
-					() => [],
-				);
+				const newItems: { item: PageItem; pageNumber: number }[] = [];
 
 				for (const p of allParagraphs) {
 					if (instructionParagraphs.has(p)) {
 						// Only add the instruction item if this paragraph is the *start* of the instruction
 						const instr = instructionMap.get(p);
 						if (instr) {
-							const topPercent =
-								instr.paragraphs[0] && instr.paragraphs[0].pageHeight
-									? ((instr.paragraphs[0].pageHeight - instr.paragraphs[0].y) /
-											instr.paragraphs[0].pageHeight) *
-									  100
-									: 0;
+							const topPercent = instr.paragraphs[0]?.pageHeight
+								? ((instr.paragraphs[0].pageHeight - instr.paragraphs[0].y) /
+										instr.paragraphs[0].pageHeight) *
+									100
+								: 0;
 
-							displayByPage[p.startPage - 1].push({
-								type: "instruction",
-								instruction: instr,
-								colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
-								topPercent,
+							newItems.push({
+								item: {
+									type: "instruction",
+									instruction: instr,
+									colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
+									topPercent,
+								},
+								pageNumber: p.startPage,
 							});
 						}
 					} else {
 						const topPercent =
-							p.pageHeight > 0 ? ((p.pageHeight - p.y) / p.pageHeight) * 100 : 0;
-						displayByPage[p.startPage - 1].push({
-							type: "paragraph",
-							text: p.text,
-							colorIndex: null,
-							topPercent,
+							p.pageHeight > 0
+								? ((p.pageHeight - p.yStart) / p.pageHeight) * 100
+								: 0;
+
+						newItems.push({
+							item: {
+								type: "paragraph",
+								text: p.text,
+								colorIndex: null,
+								topPercent,
+							},
+							pageNumber: p.startPage,
 						});
 					}
 				}
 
-				setPageRows((currentRows) =>
-					currentRows.map((row, index) => ({
-						...row,
-						items: displayByPage[index] ?? [],
-					})),
-				);
+				setAllItems(newItems);
 			};
 
 			const windowStart = Math.max(1, targetPage - 4);
@@ -438,7 +555,6 @@ export default function PdfApp() {
 		if (!container) return;
 		setLastScrollTop(container.scrollTop);
 		setLastViewportHeight(container.clientHeight);
-		rowVirtualizer.measure();
 	};
 
 	const handleDrop = (e: DragEvent) => {
@@ -518,7 +634,8 @@ export default function PdfApp() {
 						class="pdf-scroll-container"
 						onScroll={handleScroll}
 						style={{
-							display: status() !== "idle" ? "block" : "none",
+							display: status() !== "idle" ? "grid" : "none",
+							"grid-template-columns": "1fr 1fr",
 						}}
 					>
 						<Show when={isVirtualDebugEnabled()}>
@@ -533,56 +650,70 @@ export default function PdfApp() {
 								</span>
 							</output>
 						</Show>
-						<Show when={status() !== "idle"}>
-							<div
-								class="pdf-virtualizer-size"
-								style={{
-									height: `${rowVirtualizer.getTotalSize()}px`,
-								}}
-							>
-								<For each={virtualIndexes()}>
-									{(index, listIndex) => (
-										<div
-											ref={(el) => rowVirtualizer.measureElement(el)}
-											data-index={index}
-											data-start={Math.round(
-												virtualStarts()[listIndex()] ??
-													index * DEFAULT_ITEM_SIZE,
-											)}
-											data-size={Math.round(
-												virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
-											)}
-											class="pdf-virtualizer-item"
-											style={{
-												transform: `translateY(${virtualStarts()[listIndex()] ?? index * DEFAULT_ITEM_SIZE}px)`,
-											}}
-										>
-											<Show when={isVirtualDebugEnabled()}>
-												<div class="pdf-virtualizer-item-debug">
-													#{index + 1} y=
-													{Math.round(
+
+						{/* Left Column: PDF Pages */}
+						<div class="pdf-column-viewer">
+							<Show when={status() !== "idle"}>
+								<div
+									class="pdf-virtualizer-size"
+									style={{
+										height: `${rowVirtualizer.getTotalSize()}px`,
+									}}
+								>
+									<For each={virtualIndexes()}>
+										{(index, listIndex) => (
+											<div
+												data-index={index}
+												data-start={Math.round(
+													virtualStarts()[listIndex()] ??
+														index * DEFAULT_ITEM_SIZE,
+												)}
+												data-size={Math.round(
+													virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
+												)}
+												class="pdf-virtualizer-item"
+												style={{
+													transform: `translateY(${
 														virtualStarts()[listIndex()] ??
-															index * DEFAULT_ITEM_SIZE,
-													)}{" "}
-													h=
-													{Math.round(
-														virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
-													)}
-												</div>
-											</Show>
-											<PageRow
-												pageNumber={index + 1}
-												items={pageRows()[index]?.items ?? []}
-												pdf={renderContext()?.pdf}
-												pdfjsLib={renderContext()?.pdfjsLib}
-												onRenderSuccess={handlePageRenderSuccess}
-												onRenderError={handlePageRenderError}
-											/>
-										</div>
-									)}
-								</For>
-							</div>
-						</Show>
+														index * DEFAULT_ITEM_SIZE
+													}px)`,
+												}}
+											>
+												<Show when={isVirtualDebugEnabled()}>
+													<div class="pdf-virtualizer-item-debug">
+														#{index + 1} y=
+														{Math.round(
+															virtualStarts()[listIndex()] ??
+																index * DEFAULT_ITEM_SIZE,
+														)}{" "}
+														h=
+														{Math.round(
+															virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
+														)}
+													</div>
+												</Show>
+												<PageRow
+													pageNumber={index + 1}
+													pdf={renderContext()?.pdf}
+													pdfjsLib={renderContext()?.pdfjsLib}
+													onRenderSuccess={handlePageRenderSuccess}
+													onRenderError={handlePageRenderError}
+												/>
+											</div>
+										)}
+									</For>
+								</div>
+							</Show>
+						</div>
+
+						{/* Right Column: Annotations */}
+						<div class="pdf-column-annotations">
+							<AnnotationLayer
+								items={visibleItems()}
+								totalHeight={rowVirtualizer.getTotalSize()}
+								width={0} // handled by CSS
+							/>
+						</div>
 					</div>
 				</main>
 			</div>

@@ -1,5 +1,5 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 
 export type PageItem =
 	| {
@@ -17,7 +17,6 @@ export type PageItem =
 
 interface PageRowProps {
 	pageNumber: number;
-	items: PageItem[];
 	pdf?: PDFDocumentProxy;
 	pdfjsLib?: Awaited<typeof import("pdfjs-dist")>;
 	onRenderSuccess: (pageNumber: number) => void;
@@ -118,46 +117,6 @@ export function PageRow(props: PageRowProps) {
 						}}
 					/>
 				</div>
-			</div>
-
-			<div class="pdf-page-row-text-pane">
-				<For each={props.items}>
-					{(item) => (
-						<div
-							style={{
-								position: "absolute",
-								top: `${item.topPercent}%`,
-							}}
-						>
-							<Show
-								when={item.type === "instruction"}
-								fallback={
-									<p
-										class={
-											item.type === "paragraph" && item.colorIndex !== null
-												? `pdf-amend-color-${item.colorIndex}`
-												: undefined
-										}
-									>
-										{item.type === "paragraph" ? item.text : ""}
-									</p>
-								}
-							>
-								<p
-									class={`pdf-amend-color-${
-										(item as Extract<PageItem, { type: "instruction" }>)
-											.colorIndex
-									}`}
-								>
-									{
-										(item as Extract<PageItem, { type: "instruction" }>)
-											.instruction.text
-									}
-								</p>
-							</Show>
-						</div>
-					)}
-				</For>
 			</div>
 		</div>
 	);
