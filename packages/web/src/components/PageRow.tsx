@@ -1,14 +1,23 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { createEffect, createSignal, For, onCleanup } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 
-export interface ParagraphDisplay {
-	text: string;
-	colorIndex: number | null;
-}
+export type PageItem =
+	| {
+			type: "paragraph";
+			text: string;
+			colorIndex: number | null;
+			topPercent: number;
+	  }
+	| {
+			type: "instruction";
+			instruction: import("../lib/amendatory-instructions").AmendatoryInstruction;
+			colorIndex: number;
+			topPercent: number;
+	  };
 
 interface PageRowProps {
 	pageNumber: number;
-	paragraphs: ParagraphDisplay[];
+	items: PageItem[];
 	pdf?: PDFDocumentProxy;
 	pdfjsLib?: Awaited<typeof import("pdfjs-dist")>;
 	onRenderSuccess: (pageNumber: number) => void;
@@ -112,17 +121,41 @@ export function PageRow(props: PageRowProps) {
 			</div>
 
 			<div class="pdf-page-row-text-pane">
-				<For each={props.paragraphs}>
-					{(paragraph) => (
-						<p
-							class={
-								paragraph.colorIndex !== null
-									? `pdf-amend-color-${paragraph.colorIndex}`
-									: undefined
-							}
+				<For each={props.items}>
+					{(item) => (
+						<div
+							style={{
+								position: "absolute",
+								top: `${item.topPercent}%`,
+							}}
 						>
-							{paragraph.text}
-						</p>
+							<Show
+								when={item.type === "instruction"}
+								fallback={
+									<p
+										class={
+											item.type === "paragraph" && item.colorIndex !== null
+												? `pdf-amend-color-${item.colorIndex}`
+												: undefined
+										}
+									>
+										{item.type === "paragraph" ? item.text : ""}
+									</p>
+								}
+							>
+								<p
+									class={`pdf-amend-color-${
+										(item as Extract<PageItem, { type: "instruction" }>)
+											.colorIndex
+									}`}
+								>
+									{
+										(item as Extract<PageItem, { type: "instruction" }>)
+											.instruction.text
+									}
+								</p>
+							</Show>
+						</div>
 					)}
 				</For>
 			</div>

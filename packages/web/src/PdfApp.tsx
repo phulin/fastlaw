@@ -12,16 +12,15 @@ import {
 	Show,
 } from "solid-js";
 import { Header } from "./components/Header";
-import type { ParagraphDisplay } from "./components/PageRow";
+import type { PageItem } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { extractAmendatoryInstructions } from "./lib/amendatory-instructions";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
 
-const NUM_AMEND_COLORS = 6;
-
 const HASH_PREFIX_LENGTH = 8;
+const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1093;
 
@@ -85,7 +84,7 @@ const hashFile = async (file: File): Promise<string> => {
 export default function PdfApp() {
 	interface PageRowState {
 		pageNumber: number;
-		paragraphs: ParagraphDisplay[];
+		items: PageItem[];
 	}
 
 	const [_file, setFile] = createSignal<File | null>(null);
@@ -263,7 +262,7 @@ export default function PdfApp() {
 		setPageRows(
 			Array.from({ length: currentPdf.numPages }, (_, index) => ({
 				pageNumber: index + 1,
-				paragraphs: [],
+				items: [],
 			})),
 		);
 	};
@@ -339,28 +338,62 @@ export default function PdfApp() {
 			const pdf = currentPdf;
 			const applyParagraphs = (allParagraphs: Paragraph[]) => {
 				const instructions = extractAmendatoryInstructions(allParagraphs);
-				const colorMap = new Map<Paragraph, number>();
-				for (let i = 0; i < instructions.length; i++) {
-					for (const p of instructions[i].paragraphs) {
-						colorMap.set(p, i % NUM_AMEND_COLORS);
+
+				const instructionParagraphs = new Set<Paragraph>();
+				const instructionMap = new Map<
+					Paragraph,
+					import("./lib/amendatory-instructions").AmendatoryInstruction
+				>();
+
+				for (const instr of instructions) {
+					for (const p of instr.paragraphs) {
+						instructionParagraphs.add(p);
+						if (p === instr.paragraphs[0]) {
+							instructionMap.set(p, instr);
+						}
 					}
 				}
 
-				const displayByPage: ParagraphDisplay[][] = Array.from(
+				const displayByPage: PageItem[][] = Array.from(
 					{ length: pdf.numPages },
 					() => [],
 				);
+
 				for (const p of allParagraphs) {
-					displayByPage[p.startPage - 1].push({
-						text: p.text,
-						colorIndex: colorMap.get(p) ?? null,
-					});
+					if (instructionParagraphs.has(p)) {
+						// Only add the instruction item if this paragraph is the *start* of the instruction
+						const instr = instructionMap.get(p);
+						if (instr) {
+							const topPercent =
+								instr.paragraphs[0] && instr.paragraphs[0].pageHeight
+									? ((instr.paragraphs[0].pageHeight - instr.paragraphs[0].y) /
+											instr.paragraphs[0].pageHeight) *
+									  100
+									: 0;
+
+							displayByPage[p.startPage - 1].push({
+								type: "instruction",
+								instruction: instr,
+								colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
+								topPercent,
+							});
+						}
+					} else {
+						const topPercent =
+							p.pageHeight > 0 ? ((p.pageHeight - p.y) / p.pageHeight) * 100 : 0;
+						displayByPage[p.startPage - 1].push({
+							type: "paragraph",
+							text: p.text,
+							colorIndex: null,
+							topPercent,
+						});
+					}
 				}
 
 				setPageRows((currentRows) =>
 					currentRows.map((row, index) => ({
 						...row,
-						paragraphs: displayByPage[index] ?? [],
+						items: displayByPage[index] ?? [],
 					})),
 				);
 			};
@@ -539,7 +572,7 @@ export default function PdfApp() {
 											</Show>
 											<PageRow
 												pageNumber={index + 1}
-												paragraphs={pageRows()[index]?.paragraphs ?? []}
+												items={pageRows()[index]?.items ?? []}
 												pdf={renderContext()?.pdf}
 												pdfjsLib={renderContext()?.pdfjsLib}
 												onRenderSuccess={handlePageRenderSuccess}

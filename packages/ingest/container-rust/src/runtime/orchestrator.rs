@@ -100,7 +100,7 @@ impl Cache for HttpCache {
             url,
             &self.callback_base,
             &self.callback_token,
-            false,
+            url.to_lowercase().ends_with(".zip"),
             key,
         )
         .await?;
@@ -187,10 +187,7 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
         }
     } else {
         // Discovery mode: fetch root URL, discover units, sync with backend
-        let sources_json_path =
-            std::env::var("SOURCES_JSON_PATH").unwrap_or_else(|_| "../../sources.json".to_string());
-        let config_data =
-            SourcesConfig::load_from_file(&sources_json_path).expect("Failed to load sources.json");
+        let config_data = SourcesConfig::load_default().expect("Failed to load sources.json");
         let root_url = config_data
             .get_root_url(config.source)
             .expect("Missing root URL in sources.json")

@@ -287,12 +287,13 @@ body {
 }
 
 .pdf-page-row-text-pane {
+	position: relative;
 	padding: 2rem;
 	background-color: white;
 	font-family: monospace;
-	font-size: 0.75rem;
+	font-size: 1rem;
 	white-space: pre-wrap;
-	overflow: auto;
+	overflow: visible;
 	width: 100%;
 	min-width: 0;
 }
@@ -301,6 +302,8 @@ body {
 	border-left: 3px solid;
 	padding-left: 0.5rem;
 	margin-left: -0.75rem;
+	margin-right: 1.5rem;
+	z-index: 10;
 }
 
 .pdf-amend-color-0 {

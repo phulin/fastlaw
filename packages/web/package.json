@@ -5,7 +5,9 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build",
+		"build": "yarn build:worker && yarn build:client",
+		"build:worker": "BUILD_MODE=worker vite build",
+		"build:client": "vite build",
 		"start": "vite preview",
 		"test": "vitest run",
 		"test:watch": "vitest",

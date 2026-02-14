@@ -615,6 +615,7 @@ app.post("/api/proxy/cache", async (c) => {
 	}
 
 	// Fetch the URL
+	console.log("fetching", url);
 	const response = await fetch(url, {
 		headers: { "User-Agent": "fastlaw-ingest/1.0" },
 	});

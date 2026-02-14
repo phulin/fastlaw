@@ -25,8 +25,10 @@ pub async fn discover_usc_root(
     for href in hrefs {
         let url = if href.starts_with("http") {
             href
-        } else {
+        } else if href.starts_with('/') {
             format!("https://uscode.house.gov{}", href)
+        } else {
+            format!("https://uscode.house.gov/{}", href)
         };
 
         if let Some(caps) = xml_link_re.captures(&url) {

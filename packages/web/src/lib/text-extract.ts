@@ -13,6 +13,7 @@ export interface Line {
 	xEnd: number;
 	text: string;
 	items: TextItem[];
+	pageHeight: number;
 }
 
 export interface Paragraph {
@@ -21,6 +22,8 @@ export interface Paragraph {
 	text: string;
 	lines: Line[];
 	confidence: number;
+	y: number;
+	pageHeight: number;
 }
 
 /* ===========================
@@ -327,13 +330,13 @@ export class PdfParagraphExtractor {
 			if (Math.abs(prev.y - e.y) < yTolerance) {
 				current.push(e);
 			} else {
-				lines.push(this.buildLine(current, pageNumber));
+				lines.push(this.buildLine(current, pageNumber, pageHeight));
 				current = [e];
 			}
 		}
 
 		if (current.length) {
-			lines.push(this.buildLine(current, pageNumber));
+			lines.push(this.buildLine(current, pageNumber, pageHeight));
 		}
 
 		return lines.filter((line) => !isBottomDaggerShortLine(line, pageHeight));
@@ -342,6 +345,7 @@ export class PdfParagraphExtractor {
 	private buildLine(
 		enriched: { item: TextItem; x: number; y: number; w: number; h: number }[],
 		page: number,
+		pageHeight: number,
 	): Line {
 		enriched.sort((a, b) => a.x - b.x);
 
@@ -363,6 +367,7 @@ export class PdfParagraphExtractor {
 			xEnd: enriched[enriched.length - 1].x + enriched[enriched.length - 1].w,
 			text,
 			items: enriched.map((e) => e.item),
+			pageHeight,
 		};
 	}
 
@@ -580,6 +585,8 @@ export class PdfParagraphExtractor {
 			text: p.text.trim(),
 			lines: p.lines,
 			confidence: p.confidence,
+			y: p.lines[0].y,
+			pageHeight: p.lines[0].pageHeight,
 		};
 	}
 }
