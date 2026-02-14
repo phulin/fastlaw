@@ -39,12 +39,18 @@ pub trait UrlQueue: Send + Sync {
     fn enqueue(&self, item: QueueItem);
 }
 
+#[async_trait]
+pub trait Logger: Send + Sync {
+    async fn log(&self, level: &str, message: &str, context: Option<Value>);
+}
+
 pub struct IngestContext<'a> {
     pub build: BuildContext<'a>,
     pub nodes: Box<dyn NodeStore>,
     pub blobs: Arc<dyn BlobStore>,
     pub cache: Arc<dyn Cache>,
     pub queue: Arc<dyn UrlQueue>,
+    pub logger: Arc<dyn Logger>,
 }
 
 pub enum UnitStatus {

@@ -1,6 +1,7 @@
 use crate::sources::usc::parser::title_sort_key;
 use crate::types::{DiscoveryResult, NodeMeta, UnitRoot};
 use regex::Regex;
+use reqwest::Url;
 use std::collections::HashMap;
 
 const USC_DOWNLOAD_PAGE_URL: &str = "https://uscode.house.gov/download/download.shtml";
@@ -14,6 +15,9 @@ pub async fn discover_usc_root(
     let html = fetcher.fetch(USC_DOWNLOAD_PAGE_URL).await?;
     let hrefs = extract_href_links(&html);
 
+    let base_url = Url::parse(USC_DOWNLOAD_PAGE_URL)
+        .map_err(|e| format!("Failed to parse USC download page URL: {e}"))?;
+
     let xml_link_re = Regex::new(r"(?i)xml_usc(\d{2}[a-z]?)@")
         .map_err(|e| format!("Failed to compile USC XML link regex: {e}"))?;
     let release_point_re = Regex::new(r"(?i)@(\d+-[^./?#\s]+)")
@@ -23,13 +27,10 @@ pub async fn discover_usc_root(
     let mut release_points = std::collections::HashSet::new();
 
     for href in hrefs {
-        let url = if href.starts_with("http") {
-            href
-        } else if href.starts_with('/') {
-            format!("https://uscode.house.gov{}", href)
-        } else {
-            format!("https://uscode.house.gov/{}", href)
-        };
+        let url = base_url
+            .join(&href)
+            .map_err(|e| format!("Failed to resolve relative URL {href}: {e}"))?
+            .to_string();
 
         if let Some(caps) = xml_link_re.captures(&url) {
             let title_num = caps[1].trim_start_matches('0').to_string();

@@ -3,6 +3,34 @@ use crate::types::IngestConfig;
 use reqwest::Client;
 use reqwest::Url;
 
+#[macro_export]
+macro_rules! debug {
+    ($ctx:expr, $($arg:tt)*) => {
+        $ctx.logger.log("debug", &format!($($arg)*), None).await;
+    }
+}
+
+#[macro_export]
+macro_rules! info {
+    ($ctx:expr, $($arg:tt)*) => {
+        $ctx.logger.log("info", &format!($($arg)*), None).await;
+    }
+}
+
+#[macro_export]
+macro_rules! warn {
+    ($ctx:expr, $($arg:tt)*) => {
+        $ctx.logger.log("warn", &format!($($arg)*), None).await;
+    }
+}
+
+#[macro_export]
+macro_rules! error {
+    ($ctx:expr, $($arg:tt)*) => {
+        $ctx.logger.log("error", &format!($($arg)*), None).await;
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum LogLevel {
     Debug,

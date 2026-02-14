@@ -37,7 +37,8 @@ impl SourceAdapter for CgsAdapter {
                 let normalized_title_id =
                     normalize_designator(Some(title_num)).unwrap_or_else(|| title_num.to_string());
 
-                let cache_key = format!("cgs/title_{normalized_title_id}.html");
+                let version_id = &context.build.source_version_id;
+                let cache_key = format!("cgs/{}/title_{}.html", version_id, normalized_title_id);
                 let html = context.cache.fetch_cached(url, &cache_key).await?;
 
                 let title_name = extract_title_name_from_html(&html)
@@ -97,7 +98,8 @@ impl SourceAdapter for CgsAdapter {
 
                 let unit_kind = CgsUnitKind::from_url(url);
 
-                let cache_key = format!("cgs/{}.html", chapter_id);
+                let version_id = &context.build.source_version_id;
+                let cache_key = format!("cgs/{}/{}.html", version_id, chapter_id);
                 let html = context.cache.fetch_cached(url, &cache_key).await?;
 
                 let parsed = parse_cgs_chapter_html(&html, &chapter_id, url, unit_kind);

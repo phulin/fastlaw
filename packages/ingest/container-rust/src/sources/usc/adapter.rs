@@ -1,3 +1,4 @@
+use crate::info;
 use crate::runtime::fetcher::Fetcher;
 use crate::runtime::types::{IngestContext, QueueItem};
 use crate::sources::common::{body_block, capitalize_first};
@@ -32,10 +33,9 @@ impl SourceAdapter for UscAdapter {
         match item.level_name.as_str() {
             "unit" | "title" => {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
-                let xml = context
-                    .cache
-                    .fetch_cached(url, &format!("usc/title-{}.xml", title_num))
-                    .await?;
+                let version_id = &context.build.source_version_id;
+                let cache_key = format!("usc/{}/title-{}.xml", version_id, title_num);
+                let xml = context.cache.fetch_cached(url, &cache_key).await?;
 
                 let mut seen_level_ids: HashSet<String> = HashSet::new();
                 let mut seen_section_keys: HashSet<String> = HashSet::new();
@@ -45,6 +45,14 @@ impl SourceAdapter for UscAdapter {
                 let (tx, mut rx) = mpsc::channel(100);
                 let xml_str = xml.to_string();
                 let title_num_payload = title_num.to_string();
+
+                info!(
+                    context,
+                    "Processing USC Title {} (XML size: {} bytes, first 100 chars: {:?})",
+                    title_num,
+                    xml_str.len(),
+                    xml_str.chars().take(100).collect::<String>()
+                );
 
                 std::thread::spawn(move || {
                     parse_usc_xml_stream(&xml_str, &title_num_payload, |event| {
@@ -56,8 +64,10 @@ impl SourceAdapter for UscAdapter {
 
                 let section_level_idx = section_level_index() as i32;
                 let mut title_name_from_parser: Option<String> = None;
+                let mut event_count = 0;
 
                 while let Some(event) = rx.recv().await {
+                    event_count += 1;
                     match event {
                         USCStreamEvent::Title(name) => {
                             title_name_from_parser = Some(name);
@@ -192,8 +202,29 @@ impl SourceAdapter for UscAdapter {
                                 })
                                 .await?;
                         }
+                        USCStreamEvent::Error(e) => {
+                            return Err(format!("Error parsing USC XML: {}", e));
+                        }
                     }
                 }
+
+                if !title_emitted {
+                    if let Some(title_name) = title_name_from_parser {
+                        emit_title_node(
+                            url,
+                            context,
+                            &item.metadata["title_num"].as_str().unwrap_or("?"),
+                            &title_name,
+                            &mut seen_level_ids,
+                        )
+                        .await?;
+                    }
+                }
+
+                info!(
+                    context,
+                    "Finished processing USC Title {}. Total events: {}", title_num, event_count
+                );
             }
             other => return Err(format!("Unknown USC level: {other}")),
         }

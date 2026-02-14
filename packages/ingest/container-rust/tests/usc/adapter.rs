@@ -154,3 +154,35 @@ async fn test_adapter_matches_42_usc_302_nodepayload() {
         ],
     );
 }
+
+#[tokio::test]
+async fn test_adapter_handles_source_with_no_children() {
+    let mut t = AdapterTestContext::new(UscAdapter, "root");
+
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t46">
+            <meta><title>Title 46</title></meta>
+            <main>
+                <title identifier="/us/usc/t46">
+                    <num value="46">Title 46</num>
+                    <heading>Shipping</heading>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let item = QueueItem {
+        url: "http://example.com".to_string(),
+        parent_id: "root".to_string(),
+        level_name: "title".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({ "title_num": "46" }),
+    };
+
+    t.add_fixture(&item.url, xml);
+    t.run_item(item).await;
+
+    // Should at least have the title node
+    t.expect_node("root/t46/root")
+        .level("title")
+        .name("Shipping");
+}

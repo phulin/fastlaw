@@ -79,6 +79,7 @@ pub enum USCStreamEvent {
     Title(String),
     Level(USCLevel),
     Section(USCSection),
+    Error(String),
 }
 
 #[repr(u8)]
@@ -369,6 +370,7 @@ pub fn parse_usc_xml(xml: &str, title_num: &str, _source_url: &str) -> USCParseR
         USCStreamEvent::Title(name) => result.title_name = name,
         USCStreamEvent::Level(level) => result.levels.push(level),
         USCStreamEvent::Section(section) => result.sections.push(section),
+        USCStreamEvent::Error(e) => panic!("USC parsing error: {}", e),
     });
 
     result
@@ -402,7 +404,10 @@ where
             }
             Ok(Event::End(e)) => handle_end(&mut state, e.local_name().as_ref(), &mut emit),
             Ok(Event::Eof) => break,
-            Err(_) => break,
+            Err(e) => {
+                emit(USCStreamEvent::Error(format!("XML parsing error: {}", e)));
+                break;
+            }
             _ => {}
         }
         buf.clear();

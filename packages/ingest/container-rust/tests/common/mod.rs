@@ -126,6 +126,15 @@ impl UrlQueue for MockUrlQueue {
     }
 }
 
+pub struct MockLogger;
+
+use ingest::runtime::types::Logger;
+
+#[async_trait]
+impl Logger for MockLogger {
+    async fn log(&self, _level: &str, _message: &str, _context: Option<serde_json::Value>) {}
+}
+
 pub fn create_test_context<'a>(
     node_store: MockNodeStore,
     cache: MockCache,
@@ -144,6 +153,7 @@ pub fn create_test_context<'a>(
         blobs: Arc::new(MockBlobStore),
         cache: Arc::new(cache),
         queue: Arc::new(queue),
+        logger: Arc::new(MockLogger),
     }
 }
 

@@ -3,8 +3,9 @@ use crate::runtime::callbacks::{
     post_ensure_source_version, post_node_batch, post_unit_progress, post_unit_start,
 };
 use crate::runtime::fetcher::HttpFetcher;
+use crate::runtime::logging::{log_event_with_callback, LogLevel};
 use crate::runtime::types::{
-    BlobStore, BuildContext, Cache, IngestContext, NodeStore, QueueItem, UrlQueue,
+    BlobStore, BuildContext, Cache, IngestContext, Logger, NodeStore, QueueItem, UrlQueue,
 };
 use crate::sources::adapter_for;
 use crate::sources::configs::SourcesConfig;
@@ -122,6 +123,35 @@ impl Cache for HttpCache {
     }
 }
 
+struct HttpLogger {
+    client: Client,
+    callback_base: String,
+    callback_token: String,
+}
+
+#[async_trait]
+impl Logger for HttpLogger {
+    async fn log(&self, level: &str, message: &str, context: Option<serde_json::Value>) {
+        let log_level = match level {
+            "debug" => LogLevel::Debug,
+            "info" => LogLevel::Info,
+            "warn" => LogLevel::Warn,
+            "error" => LogLevel::Error,
+            _ => LogLevel::Info,
+        };
+
+        log_event_with_callback(
+            &self.client,
+            Some(&self.callback_base),
+            Some(&self.callback_token),
+            log_level,
+            message,
+            context,
+        )
+        .await;
+    }
+}
+
 pub struct SimpleUrlQueue {
     items: Mutex<VecDeque<QueueItem>>,
 }
@@ -157,6 +187,12 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     let queue = Arc::new(SimpleUrlQueue::new());
     let blob_store = Arc::new(DummyBlobStore);
     let cache_store = Arc::new(HttpCache {
+        client: client.clone(),
+        callback_base: config.callback_base.clone(),
+        callback_token: config.callback_token.clone(),
+    });
+
+    let logger = Arc::new(HttpLogger {
         client: client.clone(),
         callback_base: config.callback_base.clone(),
         callback_token: config.callback_token.clone(),
@@ -264,6 +300,7 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
             blobs: blob_store.clone(),
             cache: cache_store.clone(),
             queue: queue.clone(),
+            logger: logger.clone(),
         };
 
         // Only report start for unit-level tasks (direct children of root)

@@ -32,10 +32,9 @@ impl SourceAdapter for MglAdapter {
             "unit" | "part" => {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
 
-                let json_str = context
-                    .cache
-                    .fetch_cached(url, &format!("mgl/part-{}.json", title_num))
-                    .await?;
+                let version_id = &context.build.source_version_id;
+                let cache_key = format!("mgl/{}/part-{}.json", version_id, title_num);
+                let json_str = context.cache.fetch_cached(url, &cache_key).await?;
                 let part: MglApiPart = serde_json::from_str(&json_str)
                     .map_err(|err| format!("Failed to parse MGL part JSON: {url}: {err}"))?;
 
@@ -87,7 +86,12 @@ impl SourceAdapter for MglAdapter {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
                 let chapter_code = metadata["chapter_code"].as_str().unwrap_or_default();
 
-                let cache_key = format!("mgl/chapter-{}.json", chapter_code.to_lowercase());
+                let version_id = &context.build.source_version_id;
+                let cache_key = format!(
+                    "mgl/{}/chapter-{}.json",
+                    version_id,
+                    chapter_code.to_lowercase()
+                );
                 let json_str = context.cache.fetch_cached(url, &cache_key).await?;
                 let chapter: MglApiChapter = serde_json::from_str(&json_str)
                     .map_err(|err| format!("Failed to parse MGL chapter JSON: {url}: {err}"))?;
@@ -170,8 +174,10 @@ impl SourceAdapter for MglAdapter {
                     metadata["immediate_name"].as_str().map(|s| s.to_string());
 
                 if raw_body.trim().is_empty() && url != "none" {
+                    let version_id = &context.build.source_version_id;
                     let cache_key = format!(
-                        "mgl/chapter-{}-section-{}.json",
+                        "mgl/{}/chapter-{}-section-{}.json",
+                        version_id,
                         chapter_code.to_lowercase(),
                         section_code.to_lowercase()
                     );

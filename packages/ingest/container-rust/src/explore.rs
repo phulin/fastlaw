@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use ingest::runtime::types::{
-    BlobStore, BuildContext, Cache, IngestContext, NodeStore, QueueItem, UrlQueue,
+    BlobStore, BuildContext, Cache, IngestContext, Logger, NodeStore, QueueItem, UrlQueue,
 };
 use ingest::sources::cgs::adapter::CGS_ADAPTER;
 use ingest::sources::mgl::adapter::MGL_ADAPTER;
@@ -58,6 +58,7 @@ async fn main() -> Result<(), DynError> {
         blobs: Arc::new(NoopBlobStore),
         cache: Arc::new(NoopCache::new(&file_path, &input)),
         queue: queue.clone(),
+        logger: Arc::new(ConsoleLogger),
     };
 
     let item = build_queue_item(source, &file_path);
@@ -293,6 +294,15 @@ impl Cache for NoopCache {
         } else {
             Err(format!("NoopCache cannot fetch: {}", url))
         }
+    }
+}
+
+struct ConsoleLogger;
+
+#[async_trait]
+impl Logger for ConsoleLogger {
+    async fn log(&self, level: &str, message: &str, _context: Option<serde_json::Value>) {
+        eprintln!("[{}] {}", level.to_uppercase(), message);
     }
 }
 
