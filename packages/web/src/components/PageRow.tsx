@@ -6,10 +6,8 @@ interface PageRowProps {
 	paragraphs: string[];
 	pdf?: PDFDocumentProxy;
 	pdfjsLib?: Awaited<typeof import("pdfjs-dist")>;
-	runId: number;
-	isCurrentRun: (runId: number) => boolean;
-	onRenderSuccess: (pageNumber: number, runId: number) => void;
-	onRenderError: (error: unknown, runId: number) => void;
+	onRenderSuccess: (pageNumber: number) => void;
+	onRenderError: (error: unknown) => void;
 }
 
 export function PageRow(props: PageRowProps) {
@@ -21,7 +19,6 @@ export function PageRow(props: PageRowProps) {
 
 	createEffect(() => {
 		const pageNumber = props.pageNumber;
-		const runId = props.runId;
 		let isCancelled = false;
 		let renderTask: {
 			cancel: () => void;
@@ -30,15 +27,9 @@ export function PageRow(props: PageRowProps) {
 
 		const renderPage = async () => {
 			try {
-				if (
-					!props.isCurrentRun(runId) ||
-					!props.pdf ||
-					!canvas ||
-					!textLayerDiv
-				)
-					return;
+				if (!props.pdf || !canvas || !textLayerDiv) return;
 				const page = await props.pdf.getPage(pageNumber);
-				if (!props.isCurrentRun(runId) || isCancelled) return;
+				if (isCancelled) return;
 
 				const pixelRatio = window.devicePixelRatio || 1;
 				const baseScale = 1.3;
@@ -68,8 +59,8 @@ export function PageRow(props: PageRowProps) {
 				} else {
 					await renderPromise;
 				}
-				if (!props.isCurrentRun(runId) || isCancelled) return;
-				props.onRenderSuccess(pageNumber, runId);
+				if (isCancelled) return;
+				props.onRenderSuccess(pageNumber);
 			} catch (error: unknown) {
 				if (
 					error instanceof Error &&
@@ -78,8 +69,8 @@ export function PageRow(props: PageRowProps) {
 				) {
 					return;
 				}
-				if (!props.isCurrentRun(runId) || isCancelled) return;
-				props.onRenderError(error, runId);
+				if (isCancelled) return;
+				props.onRenderError(error);
 			}
 		};
 

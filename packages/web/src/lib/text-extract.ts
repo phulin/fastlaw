@@ -1,3 +1,4 @@
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 
 /* ===========================
@@ -14,8 +15,8 @@ export interface Line {
 }
 
 export interface Paragraph {
-	pageStart: number;
-	pageEnd: number;
+	startPage: number;
+	endPage: number;
 	text: string;
 	lines: Line[];
 	confidence: number;
@@ -28,7 +29,7 @@ export interface Paragraph {
 interface ParagraphBuilder {
 	lines: Line[];
 	text: string;
-	pageStart: number;
+	startPage: number;
 	lastLine: Line;
 	confidence: number;
 }
@@ -118,21 +119,35 @@ function normalizeDoubleOpeningQuotes(s: string): string {
 	return s.replaceAll("‘‘", '"');
 }
 
+function isTextItem(item: unknown): item is TextItem {
+	if (typeof item !== "object" || item === null) return false;
+	const candidate = item as {
+		str?: unknown;
+		transform?: unknown;
+		width?: unknown;
+		height?: unknown;
+	};
+	return (
+		typeof candidate.str === "string" &&
+		Array.isArray(candidate.transform) &&
+		typeof candidate.width === "number" &&
+		typeof candidate.height === "number"
+	);
+}
+
 /* ===========================
  * Extractor class
  * =========================== */
 
 export class PdfParagraphExtractor {
 	private openParagraph: ParagraphBuilder | null = null;
+	private paragraphs: Paragraph[] = [];
 	private lastLine: Line | null = null;
 
 	private lineNumberColumn: LineNumberColumnState | null = null;
 
 	private recentGaps: number[] = [];
 	private medianGap: number | null = null;
-
-	/** NEW: buffer of closed paragraphs ready to be consumed */
-	private closedQueue: Paragraph[] = [];
 
 	/* ===========================
 	 * Public API
@@ -146,25 +161,15 @@ export class PdfParagraphExtractor {
 	}
 
 	/**
-	 * NEW: Return paragraphs that have been closed since last call.
-	 * Safe to call after each page or render tick.
-	 */
-	drainClosedParagraphs(): Paragraph[] {
-		const out = this.closedQueue;
-		this.closedQueue = [];
-		return out;
-	}
-
-	/**
 	 * Final flush — closes any open paragraph.
 	 * Call once at end of document.
 	 */
 	finish(): Paragraph[] {
 		if (this.openParagraph) {
-			this.closedQueue.push(this.finalizeParagraph(this.openParagraph));
+			this.paragraphs.push(this.finalizeParagraph(this.openParagraph));
 			this.openParagraph = null;
 		}
-		return this.drainClosedParagraphs();
+		return this.paragraphs;
 	}
 
 	/* ===========================
@@ -196,8 +201,7 @@ export class PdfParagraphExtractor {
 			this.medianGap !== null &&
 			this.shouldCloseParagraph(this.lastLine, line, this.medianGap)
 		) {
-			// NEW: emit closed paragraph immediately
-			this.closedQueue.push(this.finalizeParagraph(this.openParagraph));
+			this.paragraphs.push(this.finalizeParagraph(this.openParagraph));
 			this.openParagraph = this.startParagraph(line);
 		} else {
 			this.appendLine(this.openParagraph, line);
@@ -382,7 +386,7 @@ export class PdfParagraphExtractor {
 		return {
 			lines: [line],
 			text: line.text,
-			pageStart: line.page,
+			startPage: line.page,
 			lastLine: line,
 			confidence: 0.6,
 		};
@@ -402,11 +406,57 @@ export class PdfParagraphExtractor {
 
 	private finalizeParagraph(p: ParagraphBuilder): Paragraph {
 		return {
-			pageStart: p.pageStart,
-			pageEnd: p.lastLine.page,
+			startPage: p.startPage,
+			endPage: p.lastLine.page,
 			text: p.text,
 			lines: p.lines,
 			confidence: p.confidence,
 		};
 	}
+}
+
+export async function extractParagraphs(
+	pdf: PDFDocumentProxy,
+): Promise<string[][]> {
+	const waitForAnimationFrame = () =>
+		new Promise<void>((resolve) => {
+			if (typeof requestAnimationFrame === "function") {
+				requestAnimationFrame(() => resolve());
+				return;
+			}
+			setTimeout(() => resolve(), 0);
+		});
+	const readStreamTextItems = async (
+		page: Awaited<ReturnType<PDFDocumentProxy["getPage"]>>,
+	): Promise<TextItem[]> => {
+		const reader = page.streamTextContent().getReader();
+		const items: TextItem[] = [];
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			const chunk = value as { items?: unknown[] } | undefined;
+			if (!chunk?.items) continue;
+			items.push(...chunk.items.filter(isTextItem));
+		}
+		return items;
+	};
+
+	const extractor = new PdfParagraphExtractor();
+	const paragraphsByPage = Array.from(
+		{ length: pdf.numPages },
+		() => [] as string[],
+	);
+
+	for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+		if (pageNum % 25 === 0) await waitForAnimationFrame();
+		const page = await pdf.getPage(pageNum);
+		const textItems = await readStreamTextItems(page);
+		extractor.ingestPage(pageNum, textItems);
+	}
+
+	for (const paragraph of extractor.finish()) {
+		paragraphsByPage[paragraph.startPage - 1].push(paragraph.text);
+	}
+
+	return paragraphsByPage;
 }

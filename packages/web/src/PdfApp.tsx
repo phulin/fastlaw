@@ -1,14 +1,21 @@
 import { MetaProvider, Title } from "@solidjs/meta";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { createEffect, createSignal, For, onMount, Show } from "solid-js";
+import {
+	createEffect,
+	createMemo,
+	createSignal,
+	For,
+	onMount,
+	Show,
+} from "solid-js";
 import { Header } from "./components/Header";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
-import type { TextItem } from "pdfjs-dist/types/src/display/api";
-import { PdfParagraphExtractor } from "./lib/text-extract";
+import { extractParagraphs } from "./lib/text-extract";
 
 const HASH_PREFIX_LENGTH = 8;
+const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -75,7 +82,6 @@ export default function PdfApp() {
 
 	const [_file, setFile] = createSignal<File | null>(null);
 	const [pageRows, setPageRows] = createSignal<PageRowState[]>([]);
-	const [activeRunId, setActiveRunId] = createSignal(0);
 	const [renderContext, setRenderContext] = createSignal<{
 		pdf: PDFDocumentProxy;
 		pdfjsLib: Awaited<typeof import("pdfjs-dist")>;
@@ -87,15 +93,18 @@ export default function PdfApp() {
 	const [fileName, setFileName] = createSignal<string>("");
 	const [scrollContainer, setScrollContainer] =
 		createSignal<HTMLDivElement | null>(null);
+	const [lastScrollTop, setLastScrollTop] = createSignal(0);
+	const [lastViewportHeight, setLastViewportHeight] = createSignal(0);
+	const [isVirtualDebugEnabled, setIsVirtualDebugEnabled] = createSignal(false);
 
 	// Refs and state for PDF rendering
 	let fileInput: HTMLInputElement | undefined;
 	let currentPdf: PDFDocumentProxy | null = null;
 	let pdfjsLib: Awaited<typeof import("pdfjs-dist")> | null = null;
 	let currentFileHash: string | null = null;
-	let currentRunId = 0;
 	let initialScrollTargetPage = 1;
 	let hasAppliedInitialScroll = false;
+
 	const rowVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
 		get count() {
 			return pageRows().length;
@@ -105,19 +114,60 @@ export default function PdfApp() {
 			width: 0,
 			height: typeof window === "undefined" ? 800 : window.innerHeight,
 		},
-		estimateSize: () => 1250,
+		estimateSize: () => 1094,
 		overscan: 2,
 	});
+
+	const virtualItems = createMemo(() => rowVirtualizer.getVirtualItems());
+	const virtualRangeLabel = createMemo(() => {
+		const items = virtualItems();
+		if (items.length === 0) return "empty";
+		return `${items[0].index}-${items[items.length - 1].index}`;
+	});
+
 	createEffect(() => {
 		if (!scrollContainer() || pageRows().length === 0) return;
 		pageRows();
 		requestAnimationFrame(() => rowVirtualizer.measure());
 	});
 
+	let lastVirtualDebugSignature = "";
+	createEffect(() => {
+		if (!isVirtualDebugEnabled()) return;
+		const items = virtualItems();
+		const scrollTop = lastScrollTop();
+		const viewportHeight = lastViewportHeight();
+		const totalSize = rowVirtualizer.getTotalSize();
+		const signature = JSON.stringify({
+			range: virtualRangeLabel(),
+			count: pageRows().length,
+			totalSize,
+			scrollTop,
+			viewportHeight,
+			starts: items
+				.map((item) => `${item.index}:${Math.round(item.start)}`)
+				.join(","),
+		});
+		if (signature === lastVirtualDebugSignature) return;
+		lastVirtualDebugSignature = signature;
+		console.info("[virtual-debug]", {
+			count: pageRows().length,
+			totalSize,
+			scrollTop,
+			viewportHeight,
+			range: virtualRangeLabel(),
+			items: items.slice(0, 8).map((item) => ({
+				index: item.index,
+				start: Math.round(item.start),
+				size: Math.round(item.size),
+				end: Math.round(item.end),
+			})),
+		});
+	});
+
 	const reset = (keepHash = false) => {
 		setFile(null);
 		setPageRows([]);
-		setActiveRunId(0);
 		setStatus("idle");
 		setError(null);
 		setFileName("");
@@ -127,7 +177,6 @@ export default function PdfApp() {
 		currentFileHash = null;
 		initialScrollTargetPage = 1;
 		hasAppliedInitialScroll = false;
-		currentRunId += 1;
 		// Clear hash when resetting, unless requested to keep it (e.g. during initial load)
 		if (!keepHash && typeof window !== "undefined") {
 			history.pushState(
@@ -163,9 +212,9 @@ export default function PdfApp() {
 		);
 	};
 
-	const applyInitialScroll = (page: number, runId: number) => {
+	const applyInitialScroll = (page: number) => {
 		const apply = () => {
-			if (runId !== currentRunId || hasAppliedInitialScroll) return;
+			if (hasAppliedInitialScroll) return;
 			if (!scrollContainer()) {
 				requestAnimationFrame(apply);
 				return;
@@ -179,6 +228,11 @@ export default function PdfApp() {
 	};
 
 	onMount(async () => {
+		if (typeof window !== "undefined") {
+			const search = new URLSearchParams(window.location.search);
+			setIsVirtualDebugEnabled(search.get(VIRTUAL_DEBUG_SEARCH_PARAM) === "1");
+		}
+
 		if (typeof window === "undefined" || !window.location.hash) return;
 		const parsed = parseHashState();
 		if (!parsed) return;
@@ -187,23 +241,6 @@ export default function PdfApp() {
 		// Load file without persisting again and restore target page.
 		processFile(file, false, parsed.hash, parsed.page);
 	});
-
-	const appendParagraphs = (
-		pageNumber: number,
-		paragraphs: { text: string }[],
-	) => {
-		if (paragraphs.length === 0) return;
-		setPageRows((previousRows) =>
-			previousRows.map((row) =>
-				row.pageNumber === pageNumber
-					? {
-							...row,
-							paragraphs: [...row.paragraphs, ...paragraphs.map((p) => p.text)],
-						}
-					: row,
-			),
-		);
-	};
 
 	const setupPageRows = () => {
 		if (!currentPdf) return;
@@ -215,30 +252,8 @@ export default function PdfApp() {
 		);
 	};
 
-	const startTextExtraction = async (
-		pdf: PDFDocumentProxy,
-		runId: number,
-	): Promise<void> => {
-		const extractor = new PdfParagraphExtractor();
-		try {
-			for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-				if (runId !== currentRunId) return;
-				const page = await pdf.getPage(pageNum);
-				const textContent = await page.getTextContent();
-				extractor.ingestPage(pageNum, textContent.items as TextItem[]);
-				appendParagraphs(pageNum, extractor.drainClosedParagraphs());
-			}
-			appendParagraphs(pdf.numPages, extractor.finish());
-		} catch (err: unknown) {
-			if (runId !== currentRunId) return;
-			console.error("Error extracting text:", err);
-			setError(err instanceof Error ? err.message : String(err));
-			setStatus("error");
-		}
-	};
-
-	const handlePageRenderSuccess = (pageNumber: number, runId: number) => {
-		if (runId !== currentRunId || !currentPdf) return;
+	const handlePageRenderSuccess = (pageNumber: number) => {
+		if (!currentPdf) return;
 		if (!hasAppliedInitialScroll && pageNumber === initialScrollTargetPage) {
 			hasAppliedInitialScroll = true;
 		}
@@ -246,8 +261,7 @@ export default function PdfApp() {
 		if (status() === "rendering") setStatus("rendered");
 	};
 
-	const handlePageRenderError = (err: unknown, runId: number) => {
-		if (runId !== currentRunId) return;
+	const handlePageRenderError = (err: unknown) => {
 		console.error("Error rendering page:", err);
 		setError(err instanceof Error ? err.message : String(err));
 		setStatus("error");
@@ -294,13 +308,11 @@ export default function PdfApp() {
 			const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
 			currentPdf = await loadingTask.promise;
 			setRenderContext({ pdf: currentPdf, pdfjsLib });
-			const runId = currentRunId;
 			const targetPage = Math.min(
 				Math.max(1, Math.floor(initialPage)),
 				currentPdf.numPages,
 			);
 
-			setActiveRunId(runId);
 			initialScrollTargetPage = targetPage;
 			hasAppliedInitialScroll = false;
 			setStatus("rendering");
@@ -308,8 +320,21 @@ export default function PdfApp() {
 				requestAnimationFrame(() => resolve()),
 			);
 			setupPageRows();
-			void startTextExtraction(currentPdf, runId);
-			applyInitialScroll(targetPage, runId);
+			void extractParagraphs(currentPdf)
+				.then((paragraphsByPage) => {
+					setPageRows((currentRows) =>
+						currentRows.map((row, index) => ({
+							...row,
+							paragraphs: paragraphsByPage[index] ?? [],
+						})),
+					);
+				})
+				.catch((err: unknown) => {
+					console.error("Error extracting text:", err);
+					setError(err instanceof Error ? err.message : String(err));
+					setStatus("error");
+				});
+			applyInitialScroll(targetPage);
 		} catch (err: unknown) {
 			console.error(err);
 			setError(err instanceof Error ? err.message : String(err));
@@ -320,6 +345,16 @@ export default function PdfApp() {
 	// Separate ref handlers for the load-more trigger wiring
 	const scrollContainerRef = (el: HTMLDivElement) => {
 		setScrollContainer(el);
+		setLastScrollTop(el.scrollTop);
+		setLastViewportHeight(el.clientHeight);
+		rowVirtualizer.measure();
+	};
+
+	const handleScroll = () => {
+		const container = scrollContainer();
+		if (!container) return;
+		setLastScrollTop(container.scrollTop);
+		setLastViewportHeight(container.clientHeight);
 		rowVirtualizer.measure();
 	};
 
@@ -399,31 +434,50 @@ export default function PdfApp() {
 						<div
 							ref={scrollContainerRef}
 							class="pdf-scroll-container"
-							onScroll={() => rowVirtualizer.measure()}
+							onScroll={handleScroll}
 						>
+							<Show when={isVirtualDebugEnabled()}>
+								<output class="pdf-virtualizer-debug">
+									<span>count: {pageRows().length}</span>
+									<span>range: {virtualRangeLabel()}</span>
+									<span>rendered: {virtualItems().length}</span>
+									<span>scrollTop: {Math.round(lastScrollTop())}</span>
+									<span>viewport: {Math.round(lastViewportHeight())}</span>
+									<span>
+										totalSize: {Math.round(rowVirtualizer.getTotalSize())}
+									</span>
+								</output>
+							</Show>
 							<div
 								class="pdf-virtualizer-size"
 								style={{
 									height: `${rowVirtualizer.getTotalSize()}px`,
 								}}
 							>
-								<For each={rowVirtualizer.getVirtualItems()}>
+								<For each={virtualItems()}>
 									{(virtualItem) => (
 										<div
 											ref={(el) => rowVirtualizer.measureElement(el)}
 											data-index={virtualItem.index}
+											data-start={Math.round(virtualItem.start)}
+											data-size={Math.round(virtualItem.size)}
 											class="pdf-virtualizer-item"
 											style={{
 												transform: `translateY(${virtualItem.start}px)`,
 											}}
 										>
+											<Show when={isVirtualDebugEnabled()}>
+												<div class="pdf-virtualizer-item-debug">
+													#{virtualItem.index + 1} y=
+													{Math.round(virtualItem.start)} h=
+													{Math.round(virtualItem.size)}
+												</div>
+											</Show>
 											<PageRow
 												pageNumber={pageRows()[virtualItem.index].pageNumber}
 												paragraphs={pageRows()[virtualItem.index].paragraphs}
 												pdf={renderContext()?.pdf}
 												pdfjsLib={renderContext()?.pdfjsLib}
-												runId={activeRunId()}
-												isCurrentRun={(runId) => runId === currentRunId}
 												onRenderSuccess={handlePageRenderSuccess}
 												onRenderError={handlePageRenderError}
 											/>
