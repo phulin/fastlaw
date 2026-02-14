@@ -17,6 +17,7 @@ import type { PageItem } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { extractAmendatoryInstructions } from "./lib/amendatory-instructions";
+import { computeAmendmentEffect } from "./lib/amendment-effect";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
 
@@ -471,6 +472,13 @@ export default function PdfApp() {
 					}
 				}
 
+				// Compute effects for each instruction
+				// For now, we compute effects without fetching actual section content
+				// (that would require the API call which we'll add later)
+				const effects = instructions.map((instr, idx) =>
+					computeAmendmentEffect(instr, idx, null),
+				);
+
 				const newItems: { item: PageItem; pageNumber: number }[] = [];
 
 				for (const p of allParagraphs) {
@@ -478,6 +486,7 @@ export default function PdfApp() {
 						// Only add the instruction item if this paragraph is the *start* of the instruction
 						const instr = instructionMap.get(p);
 						if (instr) {
+							const instrIdx = instructions.indexOf(instr);
 							const topPercent = instr.paragraphs[0]?.pageHeight
 								? ((instr.paragraphs[0].pageHeight - instr.paragraphs[0].y) /
 										instr.paragraphs[0].pageHeight) *
@@ -488,8 +497,9 @@ export default function PdfApp() {
 								item: {
 									type: "instruction",
 									instruction: instr,
-									colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
+									colorIndex: instrIdx % NUM_AMEND_COLORS,
 									topPercent,
+									effect: effects[instrIdx],
 								},
 								pageNumber: p.startPage,
 							});

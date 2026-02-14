@@ -247,10 +247,9 @@ body {
 	pointer-events: none;
 }
 
-
 .pdf-page-row {
 	width: 100%;
-    /* No longer a grid itself */
+	/* No longer a grid itself */
 }
 
 .pdf-page-row-viewer-pane {
@@ -261,7 +260,7 @@ body {
 	/* Border moved to column split potentially, or kept here if we want a line between pages? 
        Actually, grid gap or border on the column div is better. */
 	background-color: var(--bg);
-    /* min-height removed to fix offset sync */
+	/* min-height removed to fix offset sync */
 }
 
 .pdf-page-row-canvas-shell {
@@ -288,15 +287,15 @@ body {
 
 /* New Split Columns */
 .pdf-column-viewer {
-    background-color: var(--bg);
-    border-right: 1px solid var(--line);
+	background-color: var(--bg);
+	border-right: 1px solid var(--line);
 }
 
 .pdf-column-annotations {
-    background-color: white;
-    position: relative;
-    padding: 0 2rem;
-    /* Annotations are absolutely positioned within this, so we need a relative container. 
+	background-color: white;
+	position: relative;
+	padding: 0 2rem;
+	/* Annotations are absolutely positioned within this, so we need a relative container. 
        Actually, AnnotationLayer handles the relative container. */
 }
 
@@ -306,19 +305,19 @@ body {
 	padding-left: 0.5rem;
 	margin-left: -0.75rem; /* Pull back slightly to hang the border, relative to the 2rem container padding */
 	margin-right: 1.5rem;
-    margin-top: 0;
-    margin-bottom: 0;
-    font-family: monospace;
+	margin-top: 0;
+	margin-bottom: 0;
+	font-family: monospace;
 	font-size: 0.9rem;
 	white-space: pre-wrap;
 }
 
 /* Default style for non-amendatory paragraphs to match font */
 .pdf-column-annotations p {
-    font-family: monospace;
+	font-family: monospace;
 	font-size: 0.9rem;
 	white-space: pre-wrap;
-    margin: 0;
+	margin: 0;
 }
 
 .pdf-amend-color-0 {
@@ -349,4 +348,166 @@ body {
 .pdf-amend-color-5 {
 	background: rgba(20, 184, 166, 0.08);
 	border-left-color: rgba(20, 184, 166, 0.5);
+}
+
+/* Amendment Effect Styles */
+
+.amend-snippet {
+	font-family: "Source Serif Pro", Georgia, serif;
+	font-size: 14px;
+	line-height: 1.6;
+	padding: 8px 12px;
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.95);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.amend-inserted {
+	background-color: #d4edda;
+	color: #155724;
+}
+
+.amend-deleted {
+	background-color: #f8d7da;
+	color: #721c24;
+	text-decoration: line-through;
+}
+
+.amend-existing {
+	color: #333;
+}
+
+.amend-label {
+	font-weight: 600;
+	color: #555;
+}
+
+.amend-diff {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.amend-diff-before,
+.amend-diff-after {
+	padding: 4px 8px;
+	border-radius: 3px;
+}
+
+.amend-diff-before {
+	background-color: rgba(248, 215, 218, 0.3);
+	border-left: 3px solid #f5c6cb;
+}
+
+.amend-diff-after {
+	background-color: rgba(212, 237, 218, 0.3);
+	border-left: 3px solid #c3e6cb;
+}
+
+.amend-diff-label {
+	font-family: monospace;
+	font-weight: bold;
+	margin-right: 4px;
+}
+
+.amend-insertion {
+	padding: 8px;
+	background-color: rgba(212, 237, 218, 0.3);
+	border-left: 3px solid #28a745;
+	border-radius: 3px;
+}
+
+.amend-position-label {
+	font-size: 12px;
+	font-style: italic;
+	color: #666;
+	margin-right: 8px;
+}
+
+.amend-deletion {
+	padding: 8px;
+	background-color: rgba(248, 215, 218, 0.3);
+	border-left: 3px solid #dc3545;
+	border-radius: 3px;
+}
+
+.amend-full-replacement {
+	border: 1px solid #dee2e6;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.amend-replacement-header {
+	background-color: #f8f9fa;
+	padding: 8px 12px;
+	font-weight: 600;
+	border-bottom: 1px solid #dee2e6;
+}
+
+.amend-replacement-content {
+	padding: 12px;
+}
+
+.amend-replacement-line {
+	padding: 2px 0;
+	text-indent: -2em;
+	padding-left: 2em;
+}
+
+.amend-edge-case-notice {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	background-color: #fff3cd;
+	border: 1px solid #ffc107;
+	border-radius: 4px;
+	color: #856404;
+	font-size: 13px;
+}
+
+.amend-edge-case-icon {
+	font-weight: bold;
+	font-size: 16px;
+}
+
+.amend-unknown {
+	padding: 8px 12px;
+	background-color: #f8f9fa;
+	border: 1px dashed #ced4da;
+	border-radius: 4px;
+	color: #6c757d;
+	font-style: italic;
+}
+
+/* Multiple Operations Styles */
+.amend-multiple {
+	border: 1px solid #dee2e6;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.amend-multiple-header {
+	background-color: #e9ecef;
+	padding: 8px 12px;
+	font-weight: 600;
+	border-bottom: 1px solid #dee2e6;
+	font-size: 13px;
+}
+
+.amend-operation {
+	border-bottom: 1px solid #dee2e6;
+	padding: 8px 12px;
+}
+
+.amend-operation:last-child {
+	border-bottom: none;
+}
+
+.amend-operation-header {
+	font-size: 12px;
+	font-weight: 600;
+	color: #495057;
+	margin-bottom: 4px;
+	text-transform: capitalize;
 }

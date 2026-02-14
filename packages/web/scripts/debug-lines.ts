@@ -64,9 +64,7 @@ function detectLines(
 	pageHeight: number,
 ): SimpleLine[] {
 	const enriched = items
-		.filter(
-			(item) => !isTopCenteredPageNumberSpan(item, pageWidth, pageHeight),
-		)
+		.filter((item) => !isTopCenteredPageNumberSpan(item, pageWidth, pageHeight))
 		.filter((item) => !isWhitespaceOnly(item.str))
 		.map((item) => ({
 			item,

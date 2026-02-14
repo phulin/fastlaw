@@ -4,6 +4,7 @@ import type { PageData } from "./App";
 import { render } from "./entry-server";
 import {
 	abortIngestJob,
+	fetchSectionsBatch,
 	getAncestorNodes,
 	getChildNodes,
 	getIngestJobById,
@@ -14,6 +15,7 @@ import {
 	getSourceByCode,
 	listIngestJobs,
 	listIngestJobUnits,
+	type SectionQuery,
 	setEnv,
 } from "./lib/db";
 import { isDocumentRoute, isKnownPageRoute } from "./lib/routes";
@@ -86,6 +88,23 @@ app.post("/api/ingest/jobs/:jobId/abort", async (c) => {
 			return c.json({ error: error.message }, 409);
 		}
 		return c.json({ error: "Abort failed" }, 500);
+	}
+});
+
+// Batch section fetching for amendatory instruction processing
+app.post("/api/sections/batch", async (c) => {
+	try {
+		const body = (await c.req.json()) as { queries: SectionQuery[] };
+		if (!body.queries || !Array.isArray(body.queries)) {
+			return c.json({ error: "Invalid request: queries array required" }, 400);
+		}
+		const results = await fetchSectionsBatch(body.queries);
+		return c.json({ sections: results });
+	} catch (error) {
+		if (error instanceof Error) {
+			return c.json({ error: error.message }, 500);
+		}
+		return c.json({ error: "Failed to fetch sections" }, 500);
 	}
 });
 

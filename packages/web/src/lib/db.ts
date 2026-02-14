@@ -476,3 +476,105 @@ export const getLevelsByParentId = async (
 export const getLevelById = getNodeById;
 export const getAncestorLevels = getAncestorNodes;
 export const getSiblingLevels = getSiblingNodes;
+
+// Batch section fetching for amendatory instruction processing
+
+export interface SectionQuery {
+	source: string;
+	path: string;
+}
+
+export interface SectionResult {
+	query: SectionQuery;
+	found: boolean;
+	node: NodeRecord | null;
+	content: NodeContent | null;
+	children: NodeRecord[];
+}
+
+/**
+ * Resolves a hierarchy path like "/statutes/usc/section/3" to a node.
+ * This is used to find the target of an amendatory instruction.
+ */
+export async function resolveHierarchyPath(
+	sourceCode: string,
+	hierarchyPath: string,
+): Promise<NodeRecord | null> {
+	const source = await getSourceByCode(sourceCode);
+	if (!source) return null;
+
+	const sourceVersion = await getLatestSourceVersion(source.id);
+	if (!sourceVersion) return null;
+
+	// Try direct path match
+	const node = await getNodeByPath(sourceVersion.id, hierarchyPath);
+	if (node) return node;
+
+	// Try with /statutes/ prefix
+	const fullPath = `/statutes/${sourceCode}${hierarchyPath}`;
+	return getNodeByPath(sourceVersion.id, fullPath);
+}
+
+/**
+ * Fetches multiple sections in batch, including their content and children.
+ * This is used to get the statutory text needed to compute amendment effects.
+ */
+export async function fetchSectionsBatch(
+	queries: SectionQuery[],
+): Promise<SectionResult[]> {
+	const results: SectionResult[] = [];
+
+	for (const query of queries) {
+		const node = await resolveHierarchyPath(query.source, query.path);
+
+		if (!node) {
+			results.push({
+				query,
+				found: false,
+				node: null,
+				content: null,
+				children: [],
+			});
+			continue;
+		}
+
+		const [content, children] = await Promise.all([
+			getNodeContent(node),
+			getChildNodes(node.id),
+		]);
+
+		results.push({
+			query,
+			found: true,
+			node,
+			content,
+			children,
+		});
+	}
+
+	return results;
+}
+
+/**
+ * Gets all descendant nodes recursively for a given parent node.
+ * This is useful when we need the full hierarchy under a section.
+ */
+export async function getAllDescendantNodes(
+	parentId: string,
+): Promise<NodeRecord[]> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`WITH RECURSIVE descendants AS (
+        SELECT * FROM nodes WHERE parent_id = ?
+        UNION ALL
+        SELECT n.* FROM nodes n
+        INNER JOIN descendants d ON n.parent_id = d.id
+      )
+      SELECT ${NODE_SELECT} FROM descendants
+      ORDER BY sort_order`,
+		)
+		.bind(parentId)
+		.all<NodeRecord>();
+	return result.results;
+}

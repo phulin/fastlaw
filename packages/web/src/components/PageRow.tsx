@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { createEffect, createSignal, onCleanup } from "solid-js";
+import type { AmendmentEffect } from "../lib/amendment-effect";
 
 export type PageItem =
 	| {
@@ -13,6 +14,7 @@ export type PageItem =
 			instruction: import("../lib/amendatory-instructions").AmendatoryInstruction;
 			colorIndex: number;
 			topPercent: number;
+			effect?: AmendmentEffect;
 	  };
 
 interface PageRowProps {
