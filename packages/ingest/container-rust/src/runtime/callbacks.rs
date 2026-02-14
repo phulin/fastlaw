@@ -169,27 +169,3 @@ pub async fn post_ensure_source_version(
 
     Ok(())
 }
-
-pub async fn post_container_stop(
-    client: &Client,
-    callback_base: &str,
-    callback_token: &str,
-    reason: &str,
-) -> Result<(), String> {
-    let res = callback_fetch(
-        client,
-        callback_base,
-        callback_token,
-        "/api/callback/containerStop",
-        reqwest::Method::POST,
-        Some(serde_json::json!({ "reason": reason })),
-    )
-    .await?;
-
-    if !res.status().is_success() {
-        let text = res.text().await.unwrap_or_default();
-        return Err(format!("Container stop callback failed: {text}"));
-    }
-
-    Ok(())
-}

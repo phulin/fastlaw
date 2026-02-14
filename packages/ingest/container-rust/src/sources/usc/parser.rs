@@ -609,6 +609,9 @@ where
         state.title_name_main = Some(text.to_string());
         emit(USCStreamEvent::Title(state.title_name()));
         state.title_emitted = true;
+    } else if !state.title_emitted && state.tag_stack.ends_with(&[Tag::Title, Tag::Heading]) {
+        // Debug trace: why isn't this matched by is_main_title_heading?
+        // Maybe Main is missing from the stack?
     }
 
     if state.title_name_meta.is_none() && is_meta_title(&state.tag_stack) {
