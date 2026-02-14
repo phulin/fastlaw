@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
+import { wordDictionary } from "./word-dictionary";
 
 /* ===========================
  * Public types
@@ -60,41 +61,6 @@ function endsWithHyphen(s: string): boolean {
 	return /-$/.test(s.trim());
 }
 
-const HYPHEN_PREFIXES = [
-	"non",
-	"anti",
-	"pre",
-	"post",
-	"self",
-	"quasi",
-	"co",
-	"sub",
-	"inter",
-	"intra",
-	"multi",
-	"pseudo",
-	"cross",
-	"counter",
-	"ex",
-	"ultra",
-	"infra",
-	"macro",
-	"micro",
-] as const;
-
-const protectedHyphenPrefixes = new Set(
-	HYPHEN_PREFIXES.map((prefix) => `${prefix}-`),
-);
-
-function shouldPreserveTrailingHyphen(s: string): boolean {
-	const match = s
-		.trim()
-		.toLowerCase()
-		.match(/([a-z]+-)$/);
-	if (!match) return false;
-	return protectedHyphenPrefixes.has(match[1]);
-}
-
 function endsWithPunctuation(s: string): boolean {
 	return /[.;:)\]]$/.test(s.trim());
 }
@@ -104,7 +70,7 @@ function startsLowercase(s: string): boolean {
 }
 
 function startsSectionMarker(s: string): boolean {
-	return s.trim().startsWith("Sec.");
+	return s.trim().toLowerCase().startsWith("sec.");
 }
 
 function isWhitespaceOnly(s: string): boolean {
@@ -112,11 +78,45 @@ function isWhitespaceOnly(s: string): boolean {
 }
 
 function startsDoubleOpeningQuote(s: string): boolean {
-	return s.trimStart().startsWith("‘‘");
+	return s.trimStart().startsWith("‘‘") || s.trimStart().startsWith('"');
 }
 
-function normalizeDoubleOpeningQuotes(s: string): string {
-	return s.replaceAll("‘‘", '"');
+function normalizeDoubleQuotes(s: string): string {
+	return s.replaceAll("‘‘", '"').replaceAll("’’", '"');
+}
+
+function shouldDropTrailingHyphenWhenCoalescing(
+	paragraphText: string,
+	nextLineText: string,
+): boolean {
+	const leftMatch = paragraphText.trimEnd().match(/([a-z]+)-$/i);
+	const rightMatch = nextLineText.trimStart().match(/^([a-z]+)/i);
+	if (!leftMatch || !rightMatch) return false;
+
+	const combinedWord = `${leftMatch[1]}${rightMatch[1]}`.toLowerCase();
+	return wordDictionary.has(combinedWord);
+}
+
+function isTopCenteredPageNumberSpan(
+	item: TextItem,
+	pageWidth: number,
+	pageHeight: number,
+): boolean {
+	if (!isNumeric(item.str)) return false;
+	const x = item.transform[4];
+	const y = item.transform[5];
+	const itemCenter = x + item.width / 2;
+	const pageCenter = pageWidth / 2;
+	const centerTolerance = pageWidth * 0.08;
+	return (
+		Math.abs(itemCenter - pageCenter) <= centerTolerance &&
+		y >= pageHeight * 0.9
+	);
+}
+
+function isBottomDaggerShortLine(line: Line, pageHeight: number): boolean {
+	const text = line.text.trim();
+	return text.includes("†") && text.length < 20 && line.y <= pageHeight * 0.1;
 }
 
 function isTextItem(item: unknown): item is TextItem {
@@ -153,8 +153,13 @@ export class PdfParagraphExtractor {
 	 * Public API
 	 * =========================== */
 
-	ingestPage(pageNumber: number, items: TextItem[]): void {
-		const lines = this.detectLines(items, pageNumber);
+	ingestPage(
+		pageNumber: number,
+		items: TextItem[],
+		pageWidth: number,
+		pageHeight: number,
+	): void {
+		const lines = this.detectLines(items, pageNumber, pageWidth, pageHeight);
 		for (const rawLine of lines) {
 			this.processLine(rawLine);
 		}
@@ -214,8 +219,16 @@ export class PdfParagraphExtractor {
 	 * Line detection
 	 * =========================== */
 
-	private detectLines(items: TextItem[], pageNumber: number): Line[] {
+	private detectLines(
+		items: TextItem[],
+		pageNumber: number,
+		pageWidth: number,
+		pageHeight: number,
+	): Line[] {
 		const enriched = items
+			.filter(
+				(item) => !isTopCenteredPageNumberSpan(item, pageWidth, pageHeight),
+			)
 			.filter((item) => !isWhitespaceOnly(item.str))
 			.map((item) => ({
 				item,
@@ -255,7 +268,7 @@ export class PdfParagraphExtractor {
 			lines.push(this.buildLine(current, pageNumber));
 		}
 
-		return lines;
+		return lines.filter((line) => !isBottomDaggerShortLine(line, pageHeight));
 	}
 
 	private buildLine(
@@ -269,11 +282,11 @@ export class PdfParagraphExtractor {
 		for (let i = 0; i < enriched.length; i++) {
 			if (i > 0) {
 				const gap = enriched[i].x - (enriched[i - 1].x + enriched[i - 1].w);
-				if (gap > lineHeight * 0.28) text += " ";
+				if (gap > lineHeight * 0.24) text += " ";
 			}
 			text += enriched[i].item.str;
 		}
-		text = normalizeDoubleOpeningQuotes(text);
+		text = normalizeDoubleQuotes(text);
 
 		return {
 			page,
@@ -366,18 +379,16 @@ export class PdfParagraphExtractor {
 	): boolean {
 		if (startsDoubleOpeningQuote(curr.text)) return true;
 		if (startsSectionMarker(curr.text)) return true;
+		if (endsWithHyphen(prev.text)) return false;
 
-		const gap = prev.page === curr.page ? prev.y - curr.y : Infinity;
+		const gap = prev.page === curr.page ? prev.y - curr.y : 0;
 
 		const indentChange = Math.abs(curr.xStart - prev.xStart);
 
-		if (gap > 1.6 * medianGap) return true;
-		if (indentChange > 15) return true;
-
-		if (!endsWithPunctuation(prev.text) && startsLowercase(curr.text))
-			return false;
-
-		if (endsWithHyphen(prev.text)) return false;
+		if (gap > 2.25 * medianGap) return true;
+		if (indentChange > 30 && endsWithPunctuation(prev.text)) return true;
+		if (!endsWithPunctuation(prev.text)) return false;
+		if (startsLowercase(curr.text)) return false;
 
 		return false;
 	}
@@ -393,8 +404,10 @@ export class PdfParagraphExtractor {
 	}
 
 	private appendLine(p: ParagraphBuilder, line: Line): void {
-		if (endsWithHyphen(p.text) && !shouldPreserveTrailingHyphen(p.text)) {
-			p.text = p.text.replace(/-$/, "");
+		if (endsWithHyphen(p.text)) {
+			if (shouldDropTrailingHyphenWhenCoalescing(p.text, line.text)) {
+				p.text = p.text.replace(/-$/, "");
+			}
 		} else if (!endsWithHyphen(p.text)) {
 			p.text += " ";
 		}
@@ -451,7 +464,8 @@ export async function extractParagraphs(
 		if (pageNum % 25 === 0) await waitForAnimationFrame();
 		const page = await pdf.getPage(pageNum);
 		const textItems = await readStreamTextItems(page);
-		extractor.ingestPage(pageNum, textItems);
+		const viewport = page.getViewport({ scale: 1 });
+		extractor.ingestPage(pageNum, textItems, viewport.width, viewport.height);
 	}
 
 	for (const paragraph of extractor.finish()) {

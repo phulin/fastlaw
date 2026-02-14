@@ -788,7 +788,6 @@ __metadata:
     "@google/genai": "npm:^1.38.0"
     "@solidjs/meta": "npm:^0.29.4"
     "@tanstack/solid-virtual": "npm:^3.13.18"
-    fzstd: "npm:^0.1.1"
     hono: "npm:^4.6.4"
     marked: "npm:^12.0.2"
     pdfjs-dist: "npm:^5.4.624"
@@ -796,6 +795,7 @@ __metadata:
     tsx: "npm:^4.21.0"
     vite: "npm:^6.1.1"
     vite-plugin-solid: "npm:^2.10.0"
+    vitest: "npm:^3.0.0"
     xxhash-wasm: "npm:^1.1.0"
   languageName: unknown
   linkType: soft
@@ -2503,13 +2503,6 @@ __metadata:
   dependencies:
     node-gyp: "npm:latest"
   conditions: os=darwin
-  languageName: node
-  linkType: hard
-
-"fzstd@npm:^0.1.1":
-  version: 0.1.1
-  resolution: "fzstd@npm:0.1.1"
-  checksum: 10c0/c4ae25a4b9e7ac58e9716fcb0c4ec19f3e678d90a67a59e97ce361beb27e4aa4b8666b58b4dc2d715e92db4b65b189c978186a5fedba6fccb5ec9765717dd1cd
   languageName: node
   linkType: hard
 
