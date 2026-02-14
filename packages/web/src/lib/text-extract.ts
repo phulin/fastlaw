@@ -75,7 +75,7 @@ function startsLowercase(s: string): boolean {
 }
 
 const SECTION_MARKER_RE =
-	/^(DIVISION|TITLE|Subtitle|CHAPTER|Subchapter|SUBCHAPTER|PART|SUBPART|SECTION|Sec\.|SEC\.)\s+[A-Z0-9]/;
+	/^(DIVISION|TITLE|Subtitle|CHAPTER|Subchapter|SUBCHAPTER|PART|SUBPART|SECTION|Section|Sec\.|SEC\.)\s+[A-Z0-9]/;
 function startsSectionMarker(s: string): boolean {
 	const t = s.trim();
 	// Legislative headers: SEC. 101. or Section 5(e) or Title IV
@@ -95,6 +95,11 @@ function isListItemMarker(s: string): boolean {
 
 function isWhitespaceOnly(s: string): boolean {
 	return s.trim().length === 0;
+}
+
+function isAllCapsText(s: string): boolean {
+	const t = s.trim();
+	return t.length > 0 && /^[A-Z\s\d.,;:—–\-''""()"']+$/.test(t);
 }
 
 function startsDoubleOpeningQuote(s: string): boolean {
@@ -443,6 +448,10 @@ export class PdfParagraphExtractor {
 		const trimmedCurr = curr.text.trim();
 		const trimmedPrev = prev.text.trim();
 
+		// Compute gap early so all handlers can use it (cross-page safe).
+		const gap = prev.page === curr.page ? prev.y - curr.y : medianGap;
+		const indentChange = Math.abs(curr.xStart - prev.xStart);
+
 		const isListStart = isListItemMarker(trimmedCurr);
 		const isLegislativeRef =
 			/\b([Ss]ubsection|[Pp]aragraph|[Ss]ubparagraph|[Cc]lause|[Ss]ubclause|[Ii]tem|[Ss]ubitem)[)\s]*$/.test(
@@ -455,38 +464,58 @@ export class PdfParagraphExtractor {
 			// Join if it follows an unpunctuated legislative reference word
 			if (isLegislativeRef && !endsWithPunctuation(prev.text)) return false;
 
-			// Join if it's extremely tight
-			if (prev.y - curr.y < 0.6 * medianGap) return false;
+			// Quoted list markers like "(A), "(1) are structural — usually split
+			if (isListStart) {
+				if (gap < 0.6 * medianGap) return false;
+				return true;
+			}
+
+			// Plain quotes (not list markers): join if prev is mid-sentence
+			if (!endsWithPunctuation(prev.text) && !/—\s*$/.test(trimmedPrev))
+				return false;
+
+			if (gap < 0.6 * medianGap) return false;
 
 			return true;
 		}
 
 		// ALWAYS SPLIT section markers if they follow punctuation, quotes, or significant gap
 		if (startsSectionMarker(curr.text)) {
-			// Join headers if the previous line ends in colon or em-dash (sub-header style)
-			// AND it is vertically tight.
-			if (/[—:] ?$/.test(prev.text) && prev.y - curr.y < 1.1 * medianGap)
+			// Em-dash at end of prev: subsection header introducing body text — join
+			if (/—\s*$/.test(prev.text) && gap < 1.1 * medianGap) return false;
+
+			// Colon at end: only join if prev itself is a header (section marker or all-caps)
+			if (
+				/:\s*$/.test(prev.text) &&
+				gap < 1.1 * medianGap &&
+				(startsSectionMarker(prev.text) ||
+					/^[A-Z\s\d.,;:—]+$/.test(trimmedPrev))
+			)
 				return false;
 
 			if (endsWithPunctuation(prev.text)) return true;
-			if (/["’’”][.]?$|[.]["’’”]$/.test(trimmedPrev)) return true;
-			if (prev.y - curr.y > 1.25 * medianGap) return true;
+			if (/["''"][.]?$|[.]["''"]$/.test(trimmedPrev)) return true;
+			if (gap > 1.25 * medianGap) return true;
 
 			return true;
 		}
 
-		if (/^the table of contents\b/i.test(trimmedCurr)) return true;
-
-		const gap = prev.page === curr.page ? prev.y - curr.y : medianGap;
-		const indentChange = Math.abs(curr.xStart - prev.xStart);
+		if (/\btable of contents\b/i.test(trimmedCurr)) return true;
 
 		if (isListStart) {
 			// If it follows a legislative reference and didn't end in punctuation (like "; and"), JOIN
 			if (isLegislativeRef && !endsWithPunctuation(prev.text)) return false;
 
-			// If it follows "and" or "or" (coordinated inline list) JOIN
-			// unless it's a structural sub-paragraph (starts with quote)
-			if (/\b(and|or)$/i.test(trimmedPrev) && !hasOpeningQuote) return false;
+			// "; and/or" continuation: join if no indentation change (parallel structure stays together)
+			if (
+				/\b(and|or)$/i.test(trimmedPrev) &&
+				!hasOpeningQuote &&
+				indentChange <= 12 &&
+				// If it is "; and", it usually marks the end of a list item, so we should split (to allow the next list marker to start a new paragraph)
+				!/;\s*(and|or)$/i.test(trimmedPrev)
+			) {
+				return false;
+			}
 
 			// If we just ended a sentence or a list continuation like "; and", split
 			if (endsWithPunctuation(prev.text)) return true;
@@ -504,6 +533,11 @@ export class PdfParagraphExtractor {
 		}
 
 		if (endsWithHyphen(prev.text)) return false;
+
+		// Join all-caps continuations (e.g., title wrapping across lines).
+		// Section markers have already been caught above, so this only affects
+		// non-section-marker all-caps text like "FORESTRY" continuing "...AND".
+		if (isAllCapsText(trimmedCurr) && isAllCapsText(trimmedPrev)) return false;
 
 		const punctuationSplit = endsWithPunctuation(prev.text);
 		if (gap > 2.0 * medianGap) return true;
