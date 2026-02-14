@@ -2,6 +2,7 @@ import { MetaProvider, Title } from "@solidjs/meta";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
+	batch,
 	createEffect,
 	createMemo,
 	createSignal,
@@ -16,6 +17,7 @@ import { extractParagraphs } from "./lib/text-extract";
 
 const HASH_PREFIX_LENGTH = 8;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
+const DEFAULT_ITEM_SIZE = 1093;
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -95,6 +97,14 @@ export default function PdfApp() {
 		createSignal<HTMLDivElement | null>(null);
 	const [lastScrollTop, setLastScrollTop] = createSignal(0);
 	const [lastViewportHeight, setLastViewportHeight] = createSignal(0);
+	// virtualIndexes always contiguous, so we can store starts / sizes densely.
+	const [virtualIndexes, setVirtualIndexes] = createSignal<number[]>([0, 1, 2]);
+	const [virtualStarts, setVirtualStarts] = createSignal<number[]>(
+		[0, 1, 2].map((i) => i * DEFAULT_ITEM_SIZE),
+	);
+	const [virtualSizes, setVirtualSizes] = createSignal<number[]>(
+		[0, 1, 2].map(() => DEFAULT_ITEM_SIZE),
+	);
 	const [isVirtualDebugEnabled, setIsVirtualDebugEnabled] = createSignal(false);
 
 	// Refs and state for PDF rendering
@@ -114,55 +124,28 @@ export default function PdfApp() {
 			width: 0,
 			height: typeof window === "undefined" ? 800 : window.innerHeight,
 		},
-		estimateSize: () => 1094,
-		overscan: 2,
+		estimateSize: () => DEFAULT_ITEM_SIZE,
+		overscan: 3,
+		onChange(instance) {
+			const items = instance.getVirtualItems();
+			batch(() => {
+				setVirtualIndexes(items.map((item) => item.index));
+				setVirtualStarts(items.map((item) => item.start));
+				setVirtualSizes(items.map((item) => item.size));
+			});
+		},
 	});
 
-	const virtualItems = createMemo(() => rowVirtualizer.getVirtualItems());
 	const virtualRangeLabel = createMemo(() => {
-		const items = virtualItems();
-		if (items.length === 0) return "empty";
-		return `${items[0].index}-${items[items.length - 1].index}`;
+		const indexes = virtualIndexes();
+		if (indexes.length === 0) return "empty";
+		return `${indexes[0]}-${indexes[indexes.length - 1]}`;
 	});
 
 	createEffect(() => {
 		if (!scrollContainer() || pageRows().length === 0) return;
 		pageRows();
 		requestAnimationFrame(() => rowVirtualizer.measure());
-	});
-
-	let lastVirtualDebugSignature = "";
-	createEffect(() => {
-		if (!isVirtualDebugEnabled()) return;
-		const items = virtualItems();
-		const scrollTop = lastScrollTop();
-		const viewportHeight = lastViewportHeight();
-		const totalSize = rowVirtualizer.getTotalSize();
-		const signature = JSON.stringify({
-			range: virtualRangeLabel(),
-			count: pageRows().length,
-			totalSize,
-			scrollTop,
-			viewportHeight,
-			starts: items
-				.map((item) => `${item.index}:${Math.round(item.start)}`)
-				.join(","),
-		});
-		if (signature === lastVirtualDebugSignature) return;
-		lastVirtualDebugSignature = signature;
-		console.info("[virtual-debug]", {
-			count: pageRows().length,
-			totalSize,
-			scrollTop,
-			viewportHeight,
-			range: virtualRangeLabel(),
-			items: items.slice(0, 8).map((item) => ({
-				index: item.index,
-				start: Math.round(item.start),
-				size: Math.round(item.size),
-				end: Math.round(item.end),
-			})),
-		});
 	});
 
 	const reset = (keepHash = false) => {
@@ -173,7 +156,6 @@ export default function PdfApp() {
 		setFileName("");
 		if (fileInput) fileInput.value = "";
 		currentPdf = null;
-		setScrollContainer(null);
 		currentFileHash = null;
 		initialScrollTargetPage = 1;
 		hasAppliedInitialScroll = false;
@@ -422,60 +404,74 @@ export default function PdfApp() {
 						</section>
 					</Show>
 
-					<Show when={status() !== "idle"}>
-						<Show when={status() === "processing"}>
-							<p>Processing...</p>
-						</Show>
+					<Show when={status() === "processing"}>
+						<p>Processing...</p>
+					</Show>
 
-						<Show when={error()}>
-							<p class="pdf-error-text">Error processing PDF: {error()}</p>
-						</Show>
+					<Show when={error()}>
+						<p class="pdf-error-text">Error processing PDF: {error()}</p>
+					</Show>
 
-						<div
-							ref={scrollContainerRef}
-							class="pdf-scroll-container"
-							onScroll={handleScroll}
-						>
-							<Show when={isVirtualDebugEnabled()}>
-								<output class="pdf-virtualizer-debug">
-									<span>count: {pageRows().length}</span>
-									<span>range: {virtualRangeLabel()}</span>
-									<span>rendered: {virtualItems().length}</span>
-									<span>scrollTop: {Math.round(lastScrollTop())}</span>
-									<span>viewport: {Math.round(lastViewportHeight())}</span>
-									<span>
-										totalSize: {Math.round(rowVirtualizer.getTotalSize())}
-									</span>
-								</output>
-							</Show>
+					<div
+						ref={scrollContainerRef}
+						class="pdf-scroll-container"
+						onScroll={handleScroll}
+						style={{
+							display: status() !== "idle" ? "block" : "none",
+						}}
+					>
+						<Show when={isVirtualDebugEnabled()}>
+							<output class="pdf-virtualizer-debug">
+								<span>count: {pageRows().length}</span>
+								<span>range: {virtualRangeLabel()}</span>
+								<span>rendered: {virtualIndexes().length}</span>
+								<span>scrollTop: {Math.round(lastScrollTop())}</span>
+								<span>viewport: {Math.round(lastViewportHeight())}</span>
+								<span>
+									totalSize: {Math.round(rowVirtualizer.getTotalSize())}
+								</span>
+							</output>
+						</Show>
+						<Show when={status() !== "idle"}>
 							<div
 								class="pdf-virtualizer-size"
 								style={{
 									height: `${rowVirtualizer.getTotalSize()}px`,
 								}}
 							>
-								<For each={virtualItems()}>
-									{(virtualItem) => (
+								<For each={virtualIndexes()}>
+									{(index, listIndex) => (
 										<div
 											ref={(el) => rowVirtualizer.measureElement(el)}
-											data-index={virtualItem.index}
-											data-start={Math.round(virtualItem.start)}
-											data-size={Math.round(virtualItem.size)}
+											data-index={index}
+											data-start={Math.round(
+												virtualStarts()[listIndex()] ??
+													index * DEFAULT_ITEM_SIZE,
+											)}
+											data-size={Math.round(
+												virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
+											)}
 											class="pdf-virtualizer-item"
 											style={{
-												transform: `translateY(${virtualItem.start}px)`,
+												transform: `translateY(${virtualStarts()[listIndex()] ?? index * DEFAULT_ITEM_SIZE}px)`,
 											}}
 										>
 											<Show when={isVirtualDebugEnabled()}>
 												<div class="pdf-virtualizer-item-debug">
-													#{virtualItem.index + 1} y=
-													{Math.round(virtualItem.start)} h=
-													{Math.round(virtualItem.size)}
+													#{index + 1} y=
+													{Math.round(
+														virtualStarts()[listIndex()] ??
+															index * DEFAULT_ITEM_SIZE,
+													)}{" "}
+													h=
+													{Math.round(
+														virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
+													)}
 												</div>
 											</Show>
 											<PageRow
-												pageNumber={pageRows()[virtualItem.index].pageNumber}
-												paragraphs={pageRows()[virtualItem.index].paragraphs}
+												pageNumber={index + 1}
+												paragraphs={pageRows()[index]?.paragraphs ?? []}
 												pdf={renderContext()?.pdf}
 												pdfjsLib={renderContext()?.pdfjsLib}
 												onRenderSuccess={handlePageRenderSuccess}
@@ -485,8 +481,8 @@ export default function PdfApp() {
 									)}
 								</For>
 							</div>
-						</div>
-					</Show>
+						</Show>
+					</div>
 				</main>
 			</div>
 		</MetaProvider>
