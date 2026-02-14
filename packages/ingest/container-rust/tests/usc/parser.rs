@@ -11,6 +11,7 @@ fn extracts_correct_title_number() {
 
 #[test]
 fn extracts_title_name() {
+    let _ = tracing_subscriber::fmt::try_init();
     let xml = load_fixture("usc/usc_title_1.xml");
     let result = parse_usc_xml(&xml, "1", "https://uscode.house.gov/");
     assert_eq!(result.title_name, "GENERAL PROVISIONS");

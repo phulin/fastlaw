@@ -31,7 +31,7 @@ impl SourceAdapter for UscAdapter {
         let metadata = &item.metadata;
 
         match item.level_name.as_str() {
-            "unit" | "title" => {
+            "title" => {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
                 let version_id = &context.build.source_version_id;
                 let cache_key = format!("usc/{}/title-{}.xml", version_id, title_num);
@@ -40,7 +40,6 @@ impl SourceAdapter for UscAdapter {
                 let mut seen_level_ids: HashSet<String> = HashSet::new();
                 let mut seen_section_keys: HashSet<String> = HashSet::new();
                 let mut level_sort_order: i32 = 0;
-                let mut title_emitted = false;
 
                 let (tx, mut rx) = mpsc::channel(100);
                 let xml_str = xml.to_string();
@@ -65,29 +64,28 @@ impl SourceAdapter for UscAdapter {
                 let section_level_idx = section_level_index() as i32;
                 let mut title_name_from_parser: Option<String> = None;
                 let mut event_count = 0;
+                let mut events = Vec::new();
 
                 while let Some(event) = rx.recv().await {
                     event_count += 1;
+                    if let USCStreamEvent::Title(ref name) = event {
+                        title_name_from_parser = Some(name.clone());
+                    }
+                    events.push(event);
+                }
+
+                let title_name = title_name_from_parser
+                    .clone()
+                    .unwrap_or_else(|| format!("Title {}", title_num));
+
+                emit_title_node(url, context, title_num, &title_name, &mut seen_level_ids).await?;
+
+                for event in events {
                     match event {
-                        USCStreamEvent::Title(name) => {
-                            title_name_from_parser = Some(name);
+                        USCStreamEvent::Title(_) => {
+                            // Already handled
                         }
                         USCStreamEvent::Level(level) => {
-                            if !title_emitted {
-                                let title_name = title_name_from_parser
-                                    .clone()
-                                    .unwrap_or_else(|| format!("Title {}", level.title_num));
-                                emit_title_node(
-                                    url,
-                                    context,
-                                    &level.title_num,
-                                    &title_name,
-                                    &mut seen_level_ids,
-                                )
-                                .await?;
-                                title_emitted = true;
-                            }
-
                             if seen_level_ids.contains(&level.identifier) {
                                 continue;
                             }
@@ -130,21 +128,6 @@ impl SourceAdapter for UscAdapter {
                             seen_level_ids.insert(level.identifier.clone());
                         }
                         USCStreamEvent::Section(section) => {
-                            if !title_emitted {
-                                let title_name = title_name_from_parser
-                                    .clone()
-                                    .unwrap_or_else(|| format!("Title {}", section.title_num));
-                                emit_title_node(
-                                    url,
-                                    context,
-                                    &section.title_num,
-                                    &title_name,
-                                    &mut seen_level_ids,
-                                )
-                                .await?;
-                                title_emitted = true;
-                            }
-
                             if !seen_section_keys.insert(section.section_key.clone()) {
                                 continue;
                             }
@@ -205,19 +188,6 @@ impl SourceAdapter for UscAdapter {
                         USCStreamEvent::Error(e) => {
                             return Err(format!("Error parsing USC XML: {}", e));
                         }
-                    }
-                }
-
-                if !title_emitted {
-                    if let Some(title_name) = title_name_from_parser {
-                        emit_title_node(
-                            url,
-                            context,
-                            &item.metadata["title_num"].as_str().unwrap_or("?"),
-                            &title_name,
-                            &mut seen_level_ids,
-                        )
-                        .await?;
                     }
                 }
 
