@@ -1,5 +1,40 @@
 import type { Paragraph } from "./text-extract";
 
+export type HierarchyLevel =
+	| { type: "section"; val: string }
+	| { type: "subsection"; val: string }
+	| { type: "paragraph"; val: string }
+	| { type: "subparagraph"; val: string }
+	| { type: "clause"; val: string }
+	| { type: "subclause"; val: string }
+	| { type: "item"; val: string }
+	| { type: "subitem"; val: string }
+	| { type: "none" };
+
+export type AmendmentActionType =
+	| "replace"
+	| "delete"
+	| "insert"
+	| "insert_before"
+	| "insert_after"
+	| "add_at_end"
+	| "context"
+	| "unknown";
+
+export interface AmendatoryOperation {
+	type: AmendmentActionType;
+	target?: HierarchyLevel[]; // Relative path segments found in this text
+	content?: string; // For 'insert', 'replace'
+	strikingContent?: string; // The text being replaced
+}
+
+export interface InstructionNode {
+	label?: HierarchyLevel; // The instruction level, e.g. (1)
+	operation: AmendatoryOperation;
+	children: InstructionNode[];
+	text: string;
+}
+
 export interface AmendatoryInstruction {
 	/** Bill section header (e.g., "SEC. 10101. RE-EVALUATION OF THRIFTY FOOD PLAN.") */
 	billSection: string | null;
@@ -13,6 +48,10 @@ export interface AmendatoryInstruction {
 	paragraphs: Paragraph[];
 	startPage: number;
 	endPage: number;
+	/** Structured parsing of the target */
+	rootQuery: HierarchyLevel[];
+	/** Tree of specific operations */
+	tree: InstructionNode[];
 }
 
 interface TreeNode {
@@ -21,7 +60,9 @@ interface TreeNode {
 	indent: number;
 }
 
-const SEC_HEADER_RE = /^SEC\.\s+\d+/;
+const SEC_HEADER_RE = /^SEC\.\s+(\d+)/;
+const DIVISION_HEADER_RE =
+	/^(?:TITLE|Subtitle|CHAPTER|SUBCHAPTER|PART|SEC\.)\s+[A-Z0-9]+[\s.—\u2014-]/i;
 // Heuristic phrases that trigger an instruction block
 const AMENDATORY_PHRASES = ["is amended", "is repealed", "is further amended"];
 const USC_CITATION_RE = /(\d+)\s+U\.S\.C\.\s+\d+(?:\([^)]*\))*/;
@@ -30,18 +71,22 @@ function isQuotedText(text: string): boolean {
 	return /^[""\u201c'']/.test(text.trimStart());
 }
 
-type HierarchyLevel =
-	| { type: "section"; val: number }
-	| { type: "subsection"; val: string }
-	| { type: "paragraph"; val: number }
-	| { type: "subparagraph"; val: string }
-	| { type: "clause"; val: string }
-	| { type: "subclause"; val: string }
-	| { type: "none" };
-
 function getHierarchyLevel(text: string): HierarchyLevel {
 	const trimmed = text.trim();
-	if (SEC_HEADER_RE.test(trimmed)) return { type: "section", val: 0 }; // Value doesn't really matter for sections in this context
+	if (SEC_HEADER_RE.test(trimmed)) {
+		const match = trimmed.match(SEC_HEADER_RE);
+		return { type: "section", val: match ? match[1] : "" };
+	}
+
+	// (i) Clause - Check BEFORE subsection to catch (i), (v), (x)
+	const clauseMatch = trimmed.match(/^\(([ivx]+)\)/);
+	if (clauseMatch) {
+		return { type: "clause", val: clauseMatch[1] };
+	}
+
+	// (I) Subclause - distinct check
+	const subclauseMatch = trimmed.match(/^\(([IVX]+)\)/);
+	if (subclauseMatch) return { type: "subclause", val: subclauseMatch[1] };
 
 	// (a) Subsection
 	const subsectionMatch = trimmed.match(/^\(([a-z]+)\)/);
@@ -49,33 +94,12 @@ function getHierarchyLevel(text: string): HierarchyLevel {
 
 	// (1) Paragraph
 	const paragraphMatch = trimmed.match(/^\((\d+)\)/);
-	if (paragraphMatch)
-		return { type: "paragraph", val: parseInt(paragraphMatch[1], 10) };
+	if (paragraphMatch) return { type: "paragraph", val: paragraphMatch[1] };
 
 	// (A) Subparagraph
 	const subparagraphMatch = trimmed.match(/^\(([A-Z]+)\)/);
 	if (subparagraphMatch)
 		return { type: "subparagraph", val: subparagraphMatch[1] };
-
-	// (i) Clause
-	const clauseMatch = trimmed.match(/^\(([ivx]+)\)/i); // Simplified roman numeral check
-	if (clauseMatch && /^[ivx]+$/.test(clauseMatch[1]))
-		return { type: "clause", val: clauseMatch[1] };
-
-	// (I) Subclause - distinct from subparagraph by context usually, but for simple heuristic:
-	// This is tricky because (I) matches (A) regex too.
-	// In standard legislative drafting: (a)(1)(A)(i)(I).
-	// Let's assume (A) is subparagraph and (I) is subclause if we are already deep.
-	// For now, let's treat generic (Letter) as Subparagraph level, and handle strictly if needed.
-	// Actually, (I) is often subclause.
-
-	// Let's stick to a simple numerical rank for comparison:
-	// Section: 0
-	// Subsection (a): 1
-	// Paragraph (1): 2
-	// Subparagraph (A): 3
-	// Clause (i): 4
-	// Subclause (I): 5
 
 	return { type: "none" };
 }
@@ -99,17 +123,14 @@ function getHierarchyRank(level: HierarchyLevel): number {
 	}
 }
 
-function extractTarget(text: string): string {
+function extractTargetString(text: string): string {
 	// Match strictly on the phrase " is amended" etc to grab the prefix
-	// We iterate phrases to find the earliest match
 	let splitIndex = -1;
-
 	const lower = text.toLowerCase();
 
 	for (const phrase of AMENDATORY_PHRASES) {
 		const idx = lower.indexOf(phrase);
 		if (idx !== -1) {
-			// Pick the earliest occurrence
 			if (splitIndex === -1 || idx < splitIndex) {
 				splitIndex = idx;
 			}
@@ -133,6 +154,235 @@ function extractUscCitation(text: string): string | null {
 }
 
 /**
+ * Strips the leading hierarchy label from a string.
+ * e.g. "(1) in subsection (a)" -> "in subsection (a)"
+ */
+function stripInstructionLabel(text: string): string {
+	const level = getHierarchyLevel(text);
+	if (level.type === "none" || level.type === "section") return text;
+
+	// Find the end of the label
+	const closeParen = text.indexOf(")");
+	if (closeParen !== -1) {
+		return text.substring(closeParen + 1).trim();
+	}
+	return text;
+}
+
+function parseTarget(target: string): HierarchyLevel[] {
+	const levels: HierarchyLevel[] = [];
+	let current = target;
+
+	// Regex for "Section X"
+	const secMatch = current.match(/^Section\s+(\w+)/i);
+	if (secMatch) {
+		levels.push({ type: "section", val: secMatch[1] });
+		current = current.substring(secMatch[0].length);
+	}
+
+	while (true) {
+		current = current.trim();
+		if (current.length === 0) break;
+
+		// consume common separators / noise words
+		const noiseMatch = current.match(
+			/^(?:in|of|and|the|by|striking|inserting|adding|redesignating|after|before|,|;)\s+/i,
+		);
+		if (noiseMatch) {
+			current = current.substring(noiseMatch[0].length);
+			continue;
+		}
+
+		// Handle verbose types "subsection (a)", "paragraph (1)"
+		const verboseMatch = current.match(
+			/^(subsection|paragraph|subparagraph|clause|subclause|item)\s+\(([^)]+)\)/i,
+		);
+		if (verboseMatch) {
+			const typeStr = verboseMatch[1].toLowerCase();
+			const val = verboseMatch[2];
+
+			// Map string to HierarchyLevel type
+			let type: HierarchyLevel["type"] = "none";
+			if (typeStr === "subsection") type = "subsection";
+			else if (typeStr === "paragraph") type = "paragraph";
+			else if (typeStr === "subparagraph") type = "subparagraph";
+			else if (typeStr === "clause") type = "clause";
+			else if (typeStr === "subclause") type = "subclause";
+			else if (typeStr === "item") type = "item";
+
+			if (type !== "none") {
+				levels.push({ type, val } as HierarchyLevel);
+			}
+			current = current.substring(verboseMatch[0].length);
+			continue;
+		}
+
+		// (i) - Clause (Prioritize over subsection to avoid confusion)
+		const clauseMatch = current.match(/^\(([ivx]+)\)/);
+		if (clauseMatch) {
+			levels.push({ type: "clause", val: clauseMatch[1] });
+			current = current.substring(clauseMatch[0].length);
+			continue;
+		}
+
+		// (I) - Subclause
+		const subclauseMatch = current.match(/^\(([IVX]+)\)/);
+		if (subclauseMatch) {
+			levels.push({ type: "subclause", val: subclauseMatch[1] });
+			current = current.substring(subclauseMatch[0].length);
+			continue;
+		}
+
+		const subMatch = current.match(/^\(([a-z]+)\)/);
+		if (subMatch) {
+			levels.push({ type: "subsection", val: subMatch[1] });
+			current = current.substring(subMatch[0].length);
+			continue;
+		}
+
+		const paraMatch = current.match(/^\((\d+)\)/);
+		if (paraMatch) {
+			levels.push({ type: "paragraph", val: paraMatch[1] });
+			current = current.substring(paraMatch[0].length);
+			continue;
+		}
+
+		const subParaMatch = current.match(/^\(([A-Z]+)\)/);
+		if (subParaMatch) {
+			levels.push({ type: "subparagraph", val: subParaMatch[1] });
+			current = current.substring(subParaMatch[0].length);
+			continue;
+		}
+
+		// If we hit something we don't recognize, we stop
+		break;
+	}
+
+	return levels;
+}
+
+function parseOperation(text: string): AmendatoryOperation {
+	const stripped = stripInstructionLabel(text);
+	const lower = stripped.toLowerCase();
+	const targetLevels = parseTarget(stripped);
+
+	let type: AmendmentActionType = "unknown";
+	let strikingContent: string | undefined;
+	let content: string | undefined;
+
+	// Extract quoted content for both striking and inserting
+	// Match text between standard or smart quotes
+	const strikingMatch = stripped.match(
+		/striking\s+["\u201c‘']([^"\u201d’']+)/i,
+	);
+	if (strikingMatch) strikingContent = strikingMatch[1];
+
+	const insertingMatch = stripped.match(
+		/inserting\s+["\u201c‘']([^"\u201d’']+)/i,
+	);
+	if (insertingMatch) content = insertingMatch[1];
+
+	if (
+		lower.includes("by striking") ||
+		lower.includes("is repealed") ||
+		lower.includes("by inserting") ||
+		lower.includes("by adding") ||
+		lower.includes("by redesignating")
+	) {
+		if (lower.includes("by striking") && lower.includes("inserting")) {
+			type = "replace";
+		} else if (lower.includes("by striking") || lower.includes("is repealed")) {
+			type = "delete";
+		} else if (lower.includes("by inserting")) {
+			if (lower.includes("before")) {
+				type = "insert_before";
+			} else if (lower.includes("after")) {
+				type = "insert_after";
+			} else {
+				type = "insert";
+			}
+		} else if (lower.includes("by adding")) {
+			type = "add_at_end";
+		}
+
+		return { type, target: targetLevels, content, strikingContent };
+	}
+
+	return { type: "context", target: targetLevels, content, strikingContent };
+}
+
+/**
+ * Advanced tree builder that handles flattening and restructuring logic.
+ * It consumes a flat list of nodes (lexical order) and reconstructs the hierarchy.
+ */
+function reconstructInstructionTree(nodes: TreeNode[]): InstructionNode[] {
+	const result: InstructionNode[] = [];
+	const stack: InstructionNode[] = [];
+
+	for (const node of nodes) {
+		const text = node.paragraph.text.trim();
+
+		if (isQuotedText(text)) {
+			// Attach to the last item on the stack (the active instruction)
+			if (stack.length > 0) {
+				const parent = stack[stack.length - 1];
+				parent.children.push({
+					label: { type: "none" },
+					operation: { type: "unknown", content: text },
+					children: [],
+					text: text,
+				});
+			} else {
+				// Floating quoted text? Should rarely happen if parsed correctly.
+				// Treat as top level for now.
+				result.push({
+					label: { type: "none" },
+					operation: { type: "unknown", content: text },
+					children: [],
+					text: text,
+				});
+			}
+			continue;
+		}
+
+		const label = getHierarchyLevel(text);
+		const rank = getHierarchyRank(label);
+
+		// Pop from stack until we find a parent with lower rank (higher level)
+		// e.g. if we are (A) [rank 3], we pop (i) [rank 4], we pop (B) [rank 3].
+		// We stop when we see (1) [rank 2].
+		while (stack.length > 0) {
+			const top = stack[stack.length - 1];
+			const topRank = getHierarchyRank(top.label ?? { type: "none" });
+
+			if (topRank !== -1 && rank !== -1 && topRank >= rank) {
+				stack.pop();
+			} else {
+				break;
+			}
+		}
+
+		const newNode: InstructionNode = {
+			label: label.type !== "none" ? label : undefined,
+			operation: parseOperation(text),
+			children: [],
+			text: text,
+		};
+
+		// If stack is empty, it's a root
+		if (stack.length === 0) {
+			result.push(newNode);
+		} else {
+			stack[stack.length - 1].children.push(newNode);
+		}
+
+		stack.push(newNode);
+	}
+
+	return result;
+}
+
+/**
  * Builds a tree of paragraphs based on their visual indentation (xStart).
  */
 function buildTree(paragraphs: Paragraph[]): TreeNode[] {
@@ -146,20 +396,15 @@ function buildTree(paragraphs: Paragraph[]): TreeNode[] {
 		// Unwind stack to find the correct parent
 		while (stack.length > 0) {
 			const top = stack[stack.length - 1];
-			// If new node is indented to the right of top (with some tolerance), it is a child
-			// Tolerance of ~5 units handles minor alignment jitters
 			if (indent > top.indent + 5) {
 				top.children.push(node);
-				// This node becomes the new top of stack for subsequent deeper children
 				stack.push(node);
 				break;
 			} else {
-				// Not a child of 'top', so we are done with 'top's subtree (for now)
 				stack.pop();
 			}
 		}
 
-		// If stack is empty, this is a root node (at the current level of traversal)
 		if (stack.length === 0) {
 			roots.push(node);
 			stack.push(node);
@@ -169,72 +414,74 @@ function buildTree(paragraphs: Paragraph[]): TreeNode[] {
 	return roots;
 }
 
-/**
- * flattens a subtree into a list of paragraphs
- */
-function flattenSubtree(node: TreeNode): Paragraph[] {
-	const result = [node.paragraph];
-	for (const child of node.children) {
-		result.push(...flattenSubtree(child));
-	}
-	return result;
-}
-
 export function extractAmendatoryInstructions(
 	paragraphs: Paragraph[],
 ): AmendatoryInstruction[] {
 	const instructions: AmendatoryInstruction[] = [];
-	// Global tracker for the most recent Bill Section encountered
 	let currentBillSection: string | null = null;
 
 	const roots = buildTree(paragraphs);
 
-	// Recursive traversal
 	function traverse(nodes: TreeNode[]) {
 		for (let i = 0; i < nodes.length; i++) {
 			const node = nodes[i];
 			const text = node.paragraph.text.trim();
 			if (!text) continue;
 
-			// Update Bill Section context if this paragraph looks like one
-			// (and it's not quoted text)
 			if (!isQuotedText(text) && SEC_HEADER_RE.test(text)) {
 				currentBillSection = text;
-				// A bill section header itself *might* contain an instruction inline
-				// e.g. "SEC. 101. SECTION 5 IS AMENDED..."
-				// so we fall through to check amendatory phrases
 			}
 
-			// Check for amendatory phrase
 			const isInstruction =
 				!isQuotedText(text) &&
 				AMENDATORY_PHRASES.some((phrase) => text.includes(phrase));
 
 			if (isInstruction) {
-				// This node is the root of an instruction.
 				const instructionLevel = getHierarchyLevel(text);
 				const instructionRank = getHierarchyRank(instructionLevel);
 
-				// Start with this node's subtree
-				const instructionParagraphs = flattenSubtree(node);
+				// The instruction node itself is always included
+				const instructionParagraphs = [node.paragraph];
 
-				// Look ahead at subsequent siblings
-				// We consume siblings if they are:
-				// 1. Quoted text (content of amendment)
-				// 2. Deeper in hierarchy than the instruction
-				// 3. "continuation" text that doesn't look like a new structure (e.g. "and")
+				// Flatten children and subsequent siblings into a linear list for reconstruction
+				// We want to process them in reading order to rebuild the hierarchy based on labels
+				const nodesToProcess: TreeNode[] = [];
+
+				// Helper to add nodes while respecting division boundaries
+				const addFilteredSubtree = (n: TreeNode, skipSelf: boolean = false) => {
+					const t = n.paragraph.text.trim();
+					if (
+						!skipSelf &&
+						(SEC_HEADER_RE.test(t) || DIVISION_HEADER_RE.test(t))
+					) {
+						return false; // Stop!
+					}
+
+					if (!skipSelf) {
+						nodesToProcess.push(n);
+						instructionParagraphs.push(n.paragraph);
+					}
+
+					for (const child of n.children) {
+						if (!addFilteredSubtree(child)) break;
+					}
+					return true;
+				};
+
+				// Process current node's children
+				for (const child of node.children) {
+					addFilteredSubtree(child);
+				}
+
+				// Then consume siblings
 				let j = i + 1;
 				while (j < nodes.length) {
 					const sibling = nodes[j];
 					const siblingText = sibling.paragraph.text.trim();
 					const siblingLevel = getHierarchyLevel(siblingText);
 					const siblingRank = getHierarchyRank(siblingLevel);
-
 					const siblingIsQuoted = isQuotedText(siblingText);
 
-					// Stop if:
-					// 1. Sibling is a known structure AT or ABOVE our level (e.g. we are at (1), sibling is (2) or (b))
-					//    AND it is NOT quoted text.
 					if (
 						!siblingIsQuoted &&
 						siblingRank !== -1 &&
@@ -244,40 +491,39 @@ export function extractAmendatoryInstructions(
 						break;
 					}
 
-					// Specific case: if we are at (a) [rank 1], and sibling is (1) [rank 2], we consume it.
-					// If sibling is (b) [rank 1], we break.
-
-					// If sibling has no discernible hierarchy (rank -1) and is not quoted:
-					// It might be continuation text "and" or "or". We generally consume it.
-					// But if it looks like a new Section "SEC. 102", we break.
-					if (SEC_HEADER_RE.test(siblingText)) {
+					if (
+						SEC_HEADER_RE.test(siblingText) ||
+						DIVISION_HEADER_RE.test(siblingText)
+					) {
 						break;
 					}
 
-					// Otherwise, consume this sibling
-					instructionParagraphs.push(...flattenSubtree(sibling));
+					if (!addFilteredSubtree(sibling)) break;
 					j++;
 				}
 
-				// Advance main loop index to skip consumed siblings
 				i = j - 1;
+
+				const targetStr = extractTargetString(text);
+				const rootQuery = parseTarget(targetStr);
+
+				// Reconstruct tree from the linear list of components
+				// The instruction node itself is the 'root' context.
+				const opTree = reconstructInstructionTree([node, ...nodesToProcess]);
 
 				instructions.push({
 					billSection: currentBillSection,
-					target: extractTarget(text),
+					target: targetStr,
 					uscCitation: extractUscCitation(text),
 					text: instructionParagraphs.map((p) => p.text).join("\n"),
 					paragraphs: instructionParagraphs,
 					startPage: instructionParagraphs[0].startPage,
 					endPage:
 						instructionParagraphs[instructionParagraphs.length - 1].endPage,
+					rootQuery: rootQuery,
+					tree: opTree,
 				});
-
-				// Do NOT recurse into children of the instruction node itself; they are consumed.
 			} else {
-				// Not an instruction itself; it might be a structural header (parent)
-				// or just non-amendatory text.
-				// Recurse to see if children trigger instructions.
 				traverse(node.children);
 			}
 		}

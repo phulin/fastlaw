@@ -20,7 +20,7 @@ function createMockParagraph(
 				xEnd: xStart + 50,
 				items: [],
 				pageHeight: 800,
-			} as any,
+			},
 		],
 		startPage,
 		endPage: startPage,
@@ -46,10 +46,42 @@ describe("extractAmendatoryInstructions", () => {
 		const instructions = extractAmendatoryInstructions(paras);
 
 		expect(instructions).toHaveLength(1);
-		expect(instructions[0].target).toBe("Section 123");
-		expect(instructions[0].billSection).toContain("SEC. 101");
-		expect(instructions[0].text).toContain("(a) IN GENERAL");
-		expect(instructions[0].text).toContain('(B) by inserting "baz"');
+
+		// Verify structured parsing
+		expect(instructions[0].rootQuery).toEqual([
+			{ type: "section", val: "123" },
+		]);
+
+		const tree = instructions[0].tree;
+		// (a) is the root node in the tree
+		expect(tree[0].label).toEqual({ type: "subsection", val: "a" });
+		const children = tree[0].children;
+
+		// (1)
+		expect(children[0].label).toEqual({ type: "paragraph", val: "1" });
+		expect(children[0].operation.type).toBe("delete"); // contains "striking"
+		expect(children[0].operation.target).toEqual([
+			{ type: "subsection", val: "a" },
+		]);
+
+		// (2)
+		expect(children[1].label).toEqual({ type: "paragraph", val: "2" });
+		expect(children[1].operation.type).toBe("context"); // "in subsection (b)—"
+		expect(children[1].children).toHaveLength(2);
+
+		// (A)
+		expect(children[1].children[0].label).toEqual({
+			type: "subparagraph",
+			val: "A",
+		});
+		expect(children[1].children[0].operation.type).toBe("delete");
+
+		// (B)
+		expect(children[1].children[1].label).toEqual({
+			type: "subparagraph",
+			val: "B",
+		});
+		expect(children[1].children[1].operation.type).toBe("insert");
 	});
 
 	it("keeps siblings distinct when parent is just a header", () => {
@@ -65,6 +97,13 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instructions).toHaveLength(2);
 		expect(instructions[0].target).toBe("Section 456");
 		expect(instructions[1].target).toBe("Section 789");
+
+		expect(instructions[0].rootQuery).toEqual([
+			{ type: "section", val: "456" },
+		]);
+		expect(instructions[1].rootQuery).toEqual([
+			{ type: "section", val: "789" },
+		]);
 	});
 
 	it("handles 'is further amended'", () => {
@@ -81,6 +120,10 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instructions[0].target).toBe(
 			"Section 123 of Something (1 U.S.C. 1)",
 		);
+		expect(instructions[0].rootQuery[0]).toEqual({
+			type: "section",
+			val: "123",
+		});
 	});
 
 	it("handles the case with (A) and (i)", () => {
@@ -103,11 +146,25 @@ describe("extractAmendatoryInstructions", () => {
 
 		const instructions = extractAmendatoryInstructions(paras);
 		expect(instructions).toHaveLength(1);
-		const text = instructions[0].text;
-		expect(text).toContain("(a) IN GENERAL");
-		expect(text).toContain("(2) in subsection (c)");
-		expect(text).toContain("(A) in the matter");
-		expect(text).toContain("(i) by striking");
+
+		// Verify deep structure
+		const tree = instructions[0].tree;
+		expect(tree[0].label).toEqual({ type: "subsection", val: "a" });
+		const children = tree[0].children;
+
+		expect(children[0].label).toEqual({ type: "paragraph", val: "1" });
+		expect(children[0].operation.type).toBe("replace"); // striking and inserting
+
+		expect(children[1].label).toEqual({ type: "paragraph", val: "2" });
+		expect(children[1].operation.type).toBe("context");
+		expect(children[1].children[0].label).toEqual({
+			type: "subparagraph",
+			val: "A",
+		});
+		expect(children[1].children[0].children[0].label).toEqual({
+			type: "clause",
+			val: "i",
+		});
 	});
 
 	it("groups indented and dedented quoted text correctly based on hierarchy", () => {
@@ -123,8 +180,7 @@ describe("extractAmendatoryInstructions", () => {
 				"(1) by striking “(a) Subject to” and inserting the following:",
 				40,
 			),
-
-			// Quoted text - Dedented to 20 (same as (a)), but should be child of (1) or at least (a)
+			// Quoted text
 			createMockParagraph("“(a) PROGRAM.—", 20),
 			createMockParagraph("“(1) ESTABLISHMENT.—Subject to”; and", 20),
 
@@ -133,39 +189,11 @@ describe("extractAmendatoryInstructions", () => {
 
 			// Quoted text block
 			createMockParagraph("“(2) STATE QUALITY CONTROL INCENTIVE.—", 20),
-			createMockParagraph(
-				"“(A) DEFINITION OF PAYMENT ERROR RATE.—In this paragraph, the term ‘payment error rate’ has the meaning given the term in section 16(c)(2).",
-				20,
-			),
-			createMockParagraph("“(B) STATE COST SHARE.—", 20),
-			createMockParagraph(
-				"“(i) IN GENERAL.—Subject to clause (iii), beginning in fiscal year 2028, if the payment error rate of a State as determined under clause (ii) is—",
-				20,
-			),
-			createMockParagraph(
-				"“(I) less than 6 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 100 percent, and the State share shall be 0 percent;",
-				20,
-			),
-			createMockParagraph(
-				"“(II) equal to or greater than 6 percent but less than 8 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 95 percent, and the State share shall be 5 percent;",
-				20,
-			),
-			createMockParagraph(
-				"“(III) equal to or greater than 8 percent but less than 10 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 90 percent, and the State share shall be 10 percent; and",
-				20,
-			),
-			createMockParagraph(
-				"“(IV) equal to or greater than 10 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 85 percent, and the State share shall be 15 percent.",
-				20,
-			),
-			createMockParagraph(
-				"“(3) MAXIMUM FEDERAL PAYMENT.—The Secretary may not pay towards the cost of an allotment described in paragraph (1) an amount that is greater than the applicable Federal share under paragraph (2).”.",
-				20,
-			),
+			createMockParagraph("“(3) MAXIMUM FEDERAL PAYMENT.—...", 20),
 
 			// (b) Subsection - Sibling of (a). Should close the previous instruction.
 			createMockParagraph(
-				"(b) LIMITATION ON AUTHORITY.—Section 13(a)(1) of the Food and Nutrition Act of 2008 (7 U.S.C. 2022(a)(1)) is amended in the first sentence by inserting “or the payment or disposition of a State share under section 4(a)(2)” after “16(c)(1)(D)(i)(II)”.",
+				"(b) LIMITATION ON AUTHORITY.—Section 13(a)(1) ... is amended ...",
 				20,
 			),
 		];
@@ -175,14 +203,168 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instructions).toHaveLength(2);
 
 		const instr1 = instructions[0];
-		expect(instr1.target.startsWith("Section 4(a)")).toBe(true);
-		expect(instr1.text).toContain("“(a) PROGRAM.—");
-		expect(instr1.text).toContain("“(2) STATE QUALITY CONTROL INCENTIVE.—");
-		expect(instr1.text).toContain("MAXIMUM FEDERAL PAYMENT");
-		// Should NOT contain (b) text
-		expect(instr1.text).not.toContain("LIMITATION ON AUTHORITY");
+		expect(instr1.rootQuery).toEqual([
+			{ type: "section", val: "4" },
+			{ type: "subsection", val: "a" },
+		]);
 
-		const instr2 = instructions[1];
-		expect(instr2.target.startsWith("Section 13(a)(1)")).toBe(true);
+		const tree = instr1.tree;
+		expect(tree[0].label?.type).toBe("subsection"); // (a)
+		const children = tree[0].children;
+
+		expect(children[0].label?.type).toBe("paragraph"); // (1)
+		expect(children[0].operation.type).toBe("replace");
+		// Verify children are captured (quoted text)
+		expect(children[0].children.length).toBeGreaterThan(0);
+		expect(children[0].children[0].operation.type).toBe("unknown"); // Quoted text
+
+		expect(children[1].label?.type).toBe("paragraph"); // (2)
+		expect(children[1].operation.type).toBe("add_at_end");
+	});
+
+	it("parses test cases from hr1-abridged-output.txt", () => {
+		// Instruction 1: Section 3 (Page 13)
+		const para1 = createMockParagraph(
+			"(a) IN GENERAL.—Section 3 of the Food and Nutrition Act of 2008 (7 U.S.C. 2012) is amended by striking subsection (u) and inserting the following:",
+			20,
+			13,
+		);
+		const instrs1 = extractAmendatoryInstructions([para1]);
+		expect(instrs1[0].rootQuery).toEqual([{ type: "section", val: "3" }]);
+		expect(instrs1[0].tree[0].operation.type).toBe("replace");
+
+		// Instruction 2: Section 16(c)(1)(A)(ii)(II) (Page 16)
+		const para2 = createMockParagraph(
+			"(1) Section 16(c)(1)(A)(ii)(II) of the Food and Nutrition Act of 2008 (7 U.S.C. 2025(c)(1)(A)(ii)(II)) is amended by striking “section 3(u)(4)” and inserting “section 3(u)(3)”.",
+			40,
+			16,
+		);
+		const instrs2 = extractAmendatoryInstructions([para2]);
+		expect(instrs2[0].rootQuery).toEqual([
+			{ type: "section", val: "16" },
+			{ type: "subsection", val: "c" },
+			{ type: "paragraph", val: "1" },
+			{ type: "subparagraph", val: "A" },
+			{ type: "clause", val: "ii" },
+			{ type: "subclause", val: "II" },
+		]);
+		expect(instrs2[0].tree[0].operation.type).toBe("replace");
+
+		// Instruction 8: Section 5(e)(6)(C)(iv)(I) (Page 21) - Testing "after"
+		const para8 = createMockParagraph(
+			"(a) STANDARD UTILITY ALLOWANCE.—Section 5(e)(6)(C)(iv)(I) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(e)(6)(C)(iv)(I)) is amended by inserting “with an elderly or disabled member” after “households”.",
+			20,
+			21,
+		);
+		const instrs8 = extractAmendatoryInstructions([para8]);
+		expect(instrs8[0].tree[0].operation.type).toBe("insert_after");
+
+		// Instruction 9: Section 5(k)(4) (Page 21) - Testing "before"
+		const paras9 = [
+			createMockParagraph(
+				"(b) THIRD-PARTY ENERGY ASSISTANCE PAYMENTS.— Section 5(k)(4) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(k)(4)) is amended—",
+				20,
+				21,
+			),
+			createMockParagraph(
+				"(1) in subparagraph (A), by inserting “without an elderly or disabled member” before “shall be”; and",
+				40,
+				21,
+			),
+		];
+		const instrs9 = extractAmendatoryInstructions(paras9);
+		const tree9 = instrs9[0].tree;
+		expect(tree9[0].children[0].operation.type).toBe("insert_before");
+		expect(tree9[0].children[0].operation.target).toEqual([
+			{ type: "subparagraph", val: "A" },
+		]);
+
+		// Instruction 7: Section 6(o) (Page 18) - Testing insert after paragraph
+		const paras7 = [
+			createMockParagraph(
+				"(c) WAIVER FOR NONCONTIGUOUS STATES.—Section 6(o) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(o)) is amended—",
+				20,
+				18,
+			),
+			createMockParagraph(
+				"(1) by redesignating paragraph (7) as paragraph (8); and",
+				40,
+				18,
+			),
+			createMockParagraph(
+				"(2) by inserting after paragraph (6) the following:",
+				40,
+				18,
+			),
+		];
+		const instrs7 = extractAmendatoryInstructions(paras7);
+		const tree7 = instrs7[0].tree;
+		expect(tree7[0].children[1].operation.type).toBe("insert_after");
+		expect(tree7[0].children[1].operation.target).toEqual([
+			{ type: "paragraph", val: "6" },
+		]);
+	});
+
+	it("parses target string correctly", () => {
+		const paras = [
+			createMockParagraph("SEC. 101. TEST.", 0),
+			createMockParagraph("Section 3(u)(4) of the Act is amended...", 0),
+		];
+		const instructions = extractAmendatoryInstructions(paras);
+		expect(instructions[0].rootQuery).toEqual([
+			{ type: "section", val: "3" },
+			{ type: "subsection", val: "u" },
+			{ type: "paragraph", val: "4" },
+		]);
+	});
+
+	it("captures strikingContent and content from quoted text", () => {
+		const para = createMockParagraph(
+			"(1) by striking “section 3(u)(4)” and inserting “section 3(u)(3)”.",
+			40,
+		);
+		// Wrap in a mock instruction context
+		const instructionLine = createMockParagraph("Section 16 is amended—", 20);
+		const instructions = extractAmendatoryInstructions([instructionLine, para]);
+
+		const op = instructions[0].tree[0].children[0].operation;
+		expect(op.type).toBe("replace");
+		expect(op.strikingContent).toBe("section 3(u)(4)");
+		expect(op.content).toBe("section 3(u)(3)");
+	});
+
+	it("stops extraction at top-level division headers", () => {
+		const paragraphs = [
+			createMockParagraph(
+				"Section 6(f) of the Food and Nutrition Act is amended to read as follows:",
+				20,
+			),
+			createMockParagraph("“(f) No individual ...", 20),
+			createMockParagraph("“(1) a resident of the United States; and", 40),
+			createMockParagraph("“(2) either—", 40),
+			createMockParagraph(
+				"“(A) a citizen or national of the United States",
+				60,
+			),
+			createMockParagraph(
+				"“(B) an alien lawfully admitted for ... in a foreign country;",
+				60,
+			),
+			createMockParagraph(
+				"“(C) an alien who ... section 501(e) of the Refugee Education Assistance Act of 1980 (Public Law 96–422); or",
+				60,
+			),
+			createMockParagraph(
+				"“(D) an individual who ... individual is a member.”.",
+				60,
+			),
+			createMockParagraph("Subtitle B—Forestry", 100, 1),
+		];
+		const instructions = extractAmendatoryInstructions(paragraphs);
+
+		expect(instructions).toHaveLength(1);
+		// Should not include the subtitle
+		expect(instructions[0].text).not.toContain("Subtitle B—Forestry");
+		expect(instructions[0].paragraphs).toHaveLength(8);
 	});
 });
