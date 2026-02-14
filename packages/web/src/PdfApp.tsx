@@ -7,13 +7,19 @@ import {
 	createMemo,
 	createSignal,
 	For,
+	onCleanup,
 	onMount,
 	Show,
 } from "solid-js";
 import { Header } from "./components/Header";
+import type { ParagraphDisplay } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
+import { extractAmendatoryInstructions } from "./lib/amendatory-instructions";
+import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
+
+const NUM_AMEND_COLORS = 6;
 
 const HASH_PREFIX_LENGTH = 8;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
@@ -79,7 +85,7 @@ const hashFile = async (file: File): Promise<string> => {
 export default function PdfApp() {
 	interface PageRowState {
 		pageNumber: number;
-		paragraphs: string[];
+		paragraphs: ParagraphDisplay[];
 	}
 
 	const [_file, setFile] = createSignal<File | null>(null);
@@ -136,6 +142,10 @@ export default function PdfApp() {
 		},
 	});
 
+	// On HMR, null out the scroll container so the virtualizer detaches its
+	// observers from the now-removed DOM element.
+	onCleanup(() => setScrollContainer(null));
+
 	const virtualRangeLabel = createMemo(() => {
 		const indexes = virtualIndexes();
 		if (indexes.length === 0) return "empty";
@@ -146,6 +156,30 @@ export default function PdfApp() {
 		if (!scrollContainer() || pageRows().length === 0) return;
 		pageRows();
 		requestAnimationFrame(() => rowVirtualizer.measure());
+	});
+
+	// Derive the topmost visible page from virtualizer state.
+	const currentPage = createMemo(() => {
+		const scrollTop = lastScrollTop();
+		const indexes = virtualIndexes();
+		const starts = virtualStarts();
+		const sizes = virtualSizes();
+
+		for (let i = 0; i < indexes.length; i++) {
+			if (starts[i] + sizes[i] > scrollTop) {
+				return indexes[i] + 1;
+			}
+		}
+		return indexes.length > 0 ? indexes[indexes.length - 1] + 1 : 1;
+	});
+
+	// Debounce-update #page= in the URL as the user scrolls.
+	// Skip updates until the initial scroll has been applied to avoid flashing #page=1.
+	createEffect(() => {
+		const page = currentPage();
+		if (!currentFileHash || !hasAppliedInitialScroll) return;
+		const timeout = setTimeout(() => replaceLocationHash(page), 150);
+		onCleanup(() => clearTimeout(timeout));
 	});
 
 	const reset = (keepHash = false) => {
@@ -269,7 +303,7 @@ export default function PdfApp() {
 			} else if (existingHash) {
 				currentFileHash = normalizeHashKey(existingHash);
 			}
-			replaceLocationHash(1);
+			replaceLocationHash(initialPage);
 
 			// Dynamic import
 			pdfjsLib = await import("pdfjs-dist");
@@ -302,12 +336,32 @@ export default function PdfApp() {
 				requestAnimationFrame(() => resolve()),
 			);
 			setupPageRows();
-			void extractParagraphs(currentPdf)
-				.then((paragraphsByPage) => {
+			const pdf = currentPdf;
+			void extractParagraphs(pdf)
+				.then((allParagraphs) => {
+					const instructions = extractAmendatoryInstructions(allParagraphs);
+					const colorMap = new Map<Paragraph, number>();
+					for (let i = 0; i < instructions.length; i++) {
+						for (const p of instructions[i].paragraphs) {
+							colorMap.set(p, i % NUM_AMEND_COLORS);
+						}
+					}
+
+					const displayByPage: ParagraphDisplay[][] = Array.from(
+						{ length: pdf.numPages },
+						() => [],
+					);
+					for (const p of allParagraphs) {
+						displayByPage[p.startPage - 1].push({
+							text: p.text,
+							colorIndex: colorMap.get(p) ?? null,
+						});
+					}
+
 					setPageRows((currentRows) =>
 						currentRows.map((row, index) => ({
 							...row,
-							paragraphs: paragraphsByPage[index] ?? [],
+							paragraphs: displayByPage[index] ?? [],
 						})),
 					);
 				})

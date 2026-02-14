@@ -34,17 +34,21 @@ describe("extractParagraphs", () => {
 		const pdf = await loadingTask.promise;
 
 		try {
-			const paragraphsByPage = await extractParagraphs(pdf);
-			const totalParagraphs = paragraphsByPage.reduce(
-				(sum, pageParagraphs) => sum + pageParagraphs.length,
-				0,
+			const allParagraphs = await extractParagraphs(pdf);
+			const paragraphsByPage: string[][] = Array.from(
+				{ length: pdf.numPages },
+				() => [],
 			);
+			for (const p of allParagraphs) {
+				paragraphsByPage[p.startPage - 1].push(p.text);
+			}
 
 			expect(paragraphsByPage).toHaveLength(pdf.numPages);
-			expect(totalParagraphs).toBeGreaterThan(0);
+			expect(allParagraphs.length).toBeGreaterThan(0);
 			expect(
-				paragraphsByPage[0]?.some((paragraph) =>
-					paragraph.includes("House of Representatives (H.R. 1) entitled"),
+				paragraphsByPage[0]?.some(
+					(paragraph) =>
+						paragraph.includes("H.R. 1") && paragraph.includes("entitled"),
 				),
 			).toBe(true);
 

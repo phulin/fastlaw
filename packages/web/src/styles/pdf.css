@@ -296,3 +296,39 @@ body {
 	width: 100%;
 	min-width: 0;
 }
+
+.pdf-page-row-text-pane p[class^="pdf-amend-color-"] {
+	border-left: 3px solid;
+	padding-left: 0.5rem;
+	margin-left: -0.75rem;
+}
+
+.pdf-amend-color-0 {
+	background: rgba(59, 130, 246, 0.08);
+	border-left-color: rgba(59, 130, 246, 0.5);
+}
+
+.pdf-amend-color-1 {
+	background: rgba(16, 185, 129, 0.08);
+	border-left-color: rgba(16, 185, 129, 0.5);
+}
+
+.pdf-amend-color-2 {
+	background: rgba(245, 158, 11, 0.08);
+	border-left-color: rgba(245, 158, 11, 0.5);
+}
+
+.pdf-amend-color-3 {
+	background: rgba(139, 92, 246, 0.08);
+	border-left-color: rgba(139, 92, 246, 0.5);
+}
+
+.pdf-amend-color-4 {
+	background: rgba(236, 72, 153, 0.08);
+	border-left-color: rgba(236, 72, 153, 0.5);
+}
+
+.pdf-amend-color-5 {
+	background: rgba(20, 184, 166, 0.08);
+	border-left-color: rgba(20, 184, 166, 0.5);
+}

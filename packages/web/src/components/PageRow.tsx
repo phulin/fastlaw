@@ -1,9 +1,14 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { createEffect, createSignal, For, onCleanup } from "solid-js";
 
+export interface ParagraphDisplay {
+	text: string;
+	colorIndex: number | null;
+}
+
 interface PageRowProps {
 	pageNumber: number;
-	paragraphs: string[];
+	paragraphs: ParagraphDisplay[];
 	pdf?: PDFDocumentProxy;
 	pdfjsLib?: Awaited<typeof import("pdfjs-dist")>;
 	onRenderSuccess: (pageNumber: number) => void;
@@ -107,7 +112,19 @@ export function PageRow(props: PageRowProps) {
 			</div>
 
 			<div class="pdf-page-row-text-pane">
-				<For each={props.paragraphs}>{(paragraph) => <p>{paragraph}</p>}</For>
+				<For each={props.paragraphs}>
+					{(paragraph) => (
+						<p
+							class={
+								paragraph.colorIndex !== null
+									? `pdf-amend-color-${paragraph.colorIndex}`
+									: undefined
+							}
+						>
+							{paragraph.text}
+						</p>
+					)}
+				</For>
 			</div>
 		</div>
 	);
