@@ -62,30 +62,49 @@ impl SourceAdapter for UscAdapter {
                 });
 
                 let section_level_idx = section_level_index() as i32;
-                let mut title_name_from_parser: Option<String> = None;
+                let mut title_name = format!("Title {}", title_num);
+                let mut title_emitted = false;
                 let mut event_count = 0;
-                let mut events = Vec::new();
 
                 while let Some(event) = rx.recv().await {
                     event_count += 1;
-                    if let USCStreamEvent::Title(ref name) = event {
-                        title_name_from_parser = Some(name.clone());
+                    if event_count % 1000 == 0 {
+                        info!(
+                            context,
+                            "Processing USC Title {}... ({} events)", title_num, event_count
+                        );
+                        // Yield to let the executor handle background tasks (like log callbacks)
+                        tokio::task::yield_now().await;
                     }
-                    events.push(event);
-                }
 
-                let title_name = title_name_from_parser
-                    .clone()
-                    .unwrap_or_else(|| format!("Title {}", title_num));
-
-                emit_title_node(url, context, title_num, &title_name, &mut seen_level_ids).await?;
-
-                for event in events {
                     match event {
-                        USCStreamEvent::Title(_) => {
-                            // Already handled
+                        USCStreamEvent::Title(name) => {
+                            title_name = name;
+                            if !title_emitted {
+                                emit_title_node(
+                                    url,
+                                    context,
+                                    title_num,
+                                    &title_name,
+                                    &mut seen_level_ids,
+                                )
+                                .await?;
+                                title_emitted = true;
+                            }
                         }
                         USCStreamEvent::Level(level) => {
+                            if !title_emitted {
+                                emit_title_node(
+                                    url,
+                                    context,
+                                    title_num,
+                                    &title_name,
+                                    &mut seen_level_ids,
+                                )
+                                .await?;
+                                title_emitted = true;
+                            }
+
                             if seen_level_ids.contains(&level.identifier) {
                                 continue;
                             }
@@ -128,6 +147,18 @@ impl SourceAdapter for UscAdapter {
                             seen_level_ids.insert(level.identifier.clone());
                         }
                         USCStreamEvent::Section(section) => {
+                            if !title_emitted {
+                                emit_title_node(
+                                    url,
+                                    context,
+                                    title_num,
+                                    &title_name,
+                                    &mut seen_level_ids,
+                                )
+                                .await?;
+                                title_emitted = true;
+                            }
+
                             if !seen_section_keys.insert(section.section_key.clone()) {
                                 continue;
                             }
