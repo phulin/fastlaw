@@ -337,33 +337,47 @@ export default function PdfApp() {
 			);
 			setupPageRows();
 			const pdf = currentPdf;
-			void extractParagraphs(pdf)
+			const applyParagraphs = (allParagraphs: Paragraph[]) => {
+				const instructions = extractAmendatoryInstructions(allParagraphs);
+				const colorMap = new Map<Paragraph, number>();
+				for (let i = 0; i < instructions.length; i++) {
+					for (const p of instructions[i].paragraphs) {
+						colorMap.set(p, i % NUM_AMEND_COLORS);
+					}
+				}
+
+				const displayByPage: ParagraphDisplay[][] = Array.from(
+					{ length: pdf.numPages },
+					() => [],
+				);
+				for (const p of allParagraphs) {
+					displayByPage[p.startPage - 1].push({
+						text: p.text,
+						colorIndex: colorMap.get(p) ?? null,
+					});
+				}
+
+				setPageRows((currentRows) =>
+					currentRows.map((row, index) => ({
+						...row,
+						paragraphs: displayByPage[index] ?? [],
+					})),
+				);
+			};
+
+			const windowStart = Math.max(1, targetPage - 4);
+			const windowEnd = Math.min(pdf.numPages, targetPage + 4);
+
+			void extractParagraphs(pdf, {
+				startPage: windowStart,
+				endPage: windowEnd,
+			})
+				.then((windowParagraphs) => {
+					applyParagraphs(windowParagraphs);
+					return extractParagraphs(pdf);
+				})
 				.then((allParagraphs) => {
-					const instructions = extractAmendatoryInstructions(allParagraphs);
-					const colorMap = new Map<Paragraph, number>();
-					for (let i = 0; i < instructions.length; i++) {
-						for (const p of instructions[i].paragraphs) {
-							colorMap.set(p, i % NUM_AMEND_COLORS);
-						}
-					}
-
-					const displayByPage: ParagraphDisplay[][] = Array.from(
-						{ length: pdf.numPages },
-						() => [],
-					);
-					for (const p of allParagraphs) {
-						displayByPage[p.startPage - 1].push({
-							text: p.text,
-							colorIndex: colorMap.get(p) ?? null,
-						});
-					}
-
-					setPageRows((currentRows) =>
-						currentRows.map((row, index) => ({
-							...row,
-							paragraphs: displayByPage[index] ?? [],
-						})),
-					);
+					applyParagraphs(allParagraphs);
 				})
 				.catch((err: unknown) => {
 					console.error("Error extracting text:", err);

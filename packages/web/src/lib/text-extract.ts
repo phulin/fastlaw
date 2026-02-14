@@ -552,7 +552,10 @@ export class PdfParagraphExtractor {
 
 export async function extractParagraphs(
 	pdf: PDFDocumentProxy,
+	options?: { startPage?: number; endPage?: number },
 ): Promise<Paragraph[]> {
+	const startPage = Math.max(1, options?.startPage ?? 1);
+	const endPage = Math.min(pdf.numPages, options?.endPage ?? pdf.numPages);
 	const waitForAnimationFrame = () =>
 		new Promise<void>((resolve) => {
 			if (typeof requestAnimationFrame === "function") {
@@ -578,7 +581,7 @@ export async function extractParagraphs(
 
 	const extractor = new PdfParagraphExtractor();
 
-	for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+	for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
 		if (pageNum % 25 === 0) await waitForAnimationFrame();
 		const page = await pdf.getPage(pageNum);
 		const textItems = await readStreamTextItems(page);
