@@ -32,6 +32,10 @@ function getSnippetRange(
 export function AmendedSnippet(props: AmendedSnippetProps) {
 	const insertionChanges = () =>
 		props.effect.changes.filter((change) => change.inserted.length > 0);
+	const hasUnappliedOperations = () =>
+		props.effect.debug.operationAttempts.some(
+			(attempt) => attempt.outcome !== "applied",
+		);
 
 	const hasUnresolvedInlineInsertions = () => {
 		const unchanged = props.effect.segments.find(
@@ -94,6 +98,13 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 
 	return (
 		<div class="pdf-amended-snippet">
+			{hasUnappliedOperations() ? (
+				<div class="pdf-amended-snippet-status">
+					<span class="pdf-amended-snippet-status-badge">
+						Partially applied
+					</span>
+				</div>
+			) : null}
 			<div
 				class="pdf-amended-snippet-main markdown"
 				innerHTML={renderMarkdown(highlightedSnippet())}

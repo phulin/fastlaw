@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
+import { assignIndentationLevels } from "./cluster-indentation";
 import { wordDictionary } from "./word-dictionary";
 
 /* ===========================
@@ -28,6 +29,7 @@ export interface Paragraph {
 	yStart: number; // start line top
 	yEnd: number; // start line bottom
 	pageHeight: number;
+	level?: number;
 }
 
 /* ===========================
@@ -647,5 +649,6 @@ export async function extractParagraphs(
 		extractor.ingestPage(pageNum, textItems, viewport.width, viewport.height);
 	}
 
-	return extractor.finish();
+	const paragraphs = extractor.finish();
+	return assignIndentationLevels(paragraphs);
 }

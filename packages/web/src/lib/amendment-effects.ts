@@ -403,12 +403,41 @@ function getBlockquoteDepthForLineAt(text: string, index: number): number {
 }
 
 function inferMarkerRank(marker: string): number {
-	if (/^\d+$/.test(marker)) return getLevelRank("paragraph");
-	if (/^[ivxlc]+$/.test(marker)) return getLevelRank("clause");
-	if (/^[IVXLCDM]+$/.test(marker)) return getLevelRank("subclause");
-	if (/^[a-z]+$/.test(marker)) return getLevelRank("subsection");
-	if (/^[A-Z]+$/.test(marker)) return getLevelRank("subparagraph");
-	return getLevelRank("item");
+	return getLevelRank(inferInsertionMarkerType(marker, undefined, 0));
+}
+
+function inferInsertionMarkerType(
+	marker: string,
+	previousType: string | undefined,
+	paragraphIndentationLevel: number,
+): string {
+	if (/^\d+$/.test(marker)) return "paragraph";
+
+	if (/^[ivxlc]+$/.test(marker)) {
+		if (previousType === "subsection") return "subsection";
+		if (
+			previousType !== undefined &&
+			getLevelRank(previousType) >= getLevelRank("subparagraph")
+		) {
+			return "clause";
+		}
+		return paragraphIndentationLevel > 1 ? "clause" : "subsection";
+	}
+
+	if (/^[IVXLCDM]+$/.test(marker)) {
+		if (previousType === "paragraph") return "subparagraph";
+		if (
+			previousType !== undefined &&
+			getLevelRank(previousType) >= getLevelRank("clause")
+		) {
+			return "subclause";
+		}
+		return paragraphIndentationLevel > 3 ? "subclause" : "subparagraph";
+	}
+
+	if (/^[a-z]+$/.test(marker)) return "subsection";
+	if (/^[A-Z]+$/.test(marker)) return "subparagraph";
+	return "item";
 }
 
 function quotePrefix(depth: number): string {
@@ -434,6 +463,7 @@ function formatInsertedMultilineContent(
 ): string {
 	if (!content.includes("\n")) return content;
 	const rawLines = content.split("\n");
+	const baseDepth = getBlockquoteDepthForLineAt(text, insertAt);
 	const markerLines = rawLines
 		.map((line) =>
 			line
@@ -445,12 +475,23 @@ function formatInsertedMultilineContent(
 		.filter((match): match is RegExpMatchArray => match !== null);
 	if (markerLines.length === 0) return content;
 
-	const minMarkerRank = Math.min(
-		...markerLines.map((match) => inferMarkerRank(match[1] ?? "")),
-	);
-	const baseDepth = getBlockquoteDepthForLineAt(text, insertAt);
+	const markerRanks: number[] = [];
+	let previousMarkerType: string | undefined;
+	for (const markerLine of markerLines) {
+		const marker = markerLine[1] ?? "";
+		const markerType = inferInsertionMarkerType(
+			marker,
+			previousMarkerType,
+			baseDepth,
+		);
+		markerRanks.push(getLevelRank(markerType));
+		previousMarkerType = markerType;
+	}
+
+	const minMarkerRank = Math.min(...markerRanks);
 	let activeDepth = baseDepth;
 	const formattedLines: string[] = [];
+	let markerIndex = 0;
 
 	for (const rawLine of rawLines) {
 		const trimmed = rawLine.trim();
@@ -469,7 +510,9 @@ function formatInsertedMultilineContent(
 
 		const marker = markerMatch[1] ?? "";
 		const rest = markerMatch[2] ?? "";
-		const markerDepth = baseDepth + (inferMarkerRank(marker) - minMarkerRank);
+		const markerRank = markerRanks[markerIndex] ?? inferMarkerRank(marker);
+		markerIndex += 1;
+		const markerDepth = baseDepth + (markerRank - minMarkerRank);
 		activeDepth = markerDepth;
 		const headingSplit = splitHeadingFromBody(rest);
 		if (headingSplit) {

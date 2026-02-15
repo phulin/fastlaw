@@ -371,6 +371,23 @@ body {
 	margin: 0;
 }
 
+.pdf-amended-snippet-status {
+	margin-bottom: 0.45rem;
+}
+
+.pdf-amended-snippet-status-badge {
+	display: inline-block;
+	padding: 0.1rem 0.5rem;
+	border-radius: 999px;
+	border: 1px solid rgba(159, 47, 31, 0.25);
+	background: rgba(159, 47, 31, 0.09);
+	color: #7a271a;
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.01em;
+	text-transform: uppercase;
+}
+
 ins,
 del {
 	text-decoration-thickness: 1px;

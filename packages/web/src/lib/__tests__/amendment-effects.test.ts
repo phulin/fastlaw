@@ -137,6 +137,83 @@ const USC_9062_MINIMUM_INVENTORY_TREE_NODE_1_TEXT = [
 ].join("\n");
 
 describe("computeAmendmentEffect target scoping", () => {
+	it("infers lowercase roman insert markers from predecessor subsection context", () => {
+		const instruction: AmendatoryInstruction = {
+			billSection: "SEC. 1.",
+			target: "Section 1",
+			uscCitation: "7 U.S.C. 1",
+			text: "(1) by inserting after subsection (b) the following:",
+			paragraphs: [],
+			startPage: 1,
+			endPage: 1,
+			rootQuery: [{ type: "section", val: "1" }],
+			tree: [
+				{
+					label: { type: "paragraph", val: "1" },
+					operation: {
+						type: "insert_after",
+						target: [{ type: "subsection", val: "b" }],
+						content: [
+							"(a) GENERAL.—Alpha.",
+							"(i) LOWER.—Beta.",
+							"(1) NUMERIC.—Gamma.",
+						].join("\n"),
+					},
+					children: [],
+					text: "(1) by inserting after subsection (b) the following:",
+				},
+			],
+		};
+
+		const effect = computeAmendmentEffect(
+			instruction,
+			"/statutes/usc/section/7/1",
+			["**(a)** Existing A.", "**(b)** Existing B."].join("\n"),
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.inserted[0]).toContain("**(a)** **GENERAL**");
+		expect(effect.inserted[0]).toContain("**(i)** **LOWER**");
+		expect(effect.inserted[0]).toContain("> **(1)** **NUMERIC**");
+		expect(effect.inserted[0]).not.toContain("> > > **(i)**");
+	});
+
+	it("infers uppercase roman insert markers from predecessor paragraph context", () => {
+		const instruction: AmendatoryInstruction = {
+			billSection: "SEC. 1.",
+			target: "Section 1",
+			uscCitation: "7 U.S.C. 1",
+			text: "(1) by inserting after subsection (b) the following:",
+			paragraphs: [],
+			startPage: 1,
+			endPage: 1,
+			rootQuery: [{ type: "section", val: "1" }],
+			tree: [
+				{
+					label: { type: "paragraph", val: "1" },
+					operation: {
+						type: "insert_after",
+						target: [{ type: "subsection", val: "b" }],
+						content: ["(1) BASE.—Alpha.", "(I) UPPER.—Beta."].join("\n"),
+					},
+					children: [],
+					text: "(1) by inserting after subsection (b) the following:",
+				},
+			],
+		};
+
+		const effect = computeAmendmentEffect(
+			instruction,
+			"/statutes/usc/section/7/1",
+			["**(a)** Existing A.", "**(b)** Existing B."].join("\n"),
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.inserted[0]).toContain("**(1)** **BASE**");
+		expect(effect.inserted[0]).toContain("> **(I)** **UPPER**");
+		expect(effect.inserted[0]).not.toContain("> > > **(I)**");
+	});
+
 	it("applies insert_before to the targeted subparagraph when anchors repeat", () => {
 		const instruction: AmendatoryInstruction = {
 			billSection: "SEC. 10103.",
