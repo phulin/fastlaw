@@ -1,15 +1,8 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.3.15/schema.json",
-	"files": {
-		"includes": [
-			"**/*",
-			"!.output",
-			"!data",
-			"!**/fixtures",
-			"!**/.wrangler",
-			"!**/dist",
-			"!**/node_modules",
-			"!**/target"
-		]
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
 	}
 }

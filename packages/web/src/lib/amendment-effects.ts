@@ -41,7 +41,7 @@ export interface SectionBodiesResponse {
 	>;
 }
 
-const USC_CITATION_PARSE_RE = /^(\d+)\s+U\.S\.C\.\s+([0-9A-Za-z-]+)/i;
+const USC_CITATION_PARSE_RE = /^(\d+)\s+U\.S\.C\.\s+([0-9A-Za-z-\u2013]+)/i;
 
 interface StringPatch {
 	start: number;
@@ -764,7 +764,7 @@ export function getSectionPathFromUscCitation(
 	const match = citation.match(USC_CITATION_PARSE_RE);
 	if (!match) return null;
 	const title = match[1];
-	const section = match[2];
+	const section = match[2].replace(/\u2013/g, "-");
 	return `/statutes/usc/section/${title}/${section}`;
 }
 
@@ -839,9 +839,10 @@ export function computeAmendmentEffect(
 				if (
 					!patch &&
 					!node.node.operation.strikingContent &&
-					(/\bis (?:further )?amended to read as follows\b/i.test(
-						node.node.text,
-					) ||
+					(hasExplicitTargetPath(node.target) ||
+						/\bis (?:further )?amended to read as follows\b/i.test(
+							node.node.text,
+						) ||
 						isScopedStrikeAndInsertFollowing(node.node.text))
 				) {
 					patch = patchFromScopedReplacement(

@@ -371,21 +371,21 @@ body {
 	margin: 0;
 }
 
-.pdf-amended-snippet-deleted,
-.pdf-amended-snippet-inserted {
-	text-decoration-thickness: 2px;
+ins,
+del {
+	text-decoration-thickness: 1px;
 }
 
-.pdf-amended-snippet-deleted {
-	color: #8f1d1d;
-	text-decoration: line-through;
-	background: rgba(220, 38, 38, 0.11);
-}
-
-.pdf-amended-snippet-inserted {
+ins {
 	color: #14532d;
 	text-decoration: underline;
 	background: rgba(22, 163, 74, 0.13);
+}
+
+del {
+	color: #8f1d1d;
+	text-decoration: line-through;
+	background: rgba(220, 38, 38, 0.11);
 }
 
 .pdf-column-annotations .markdown p {
@@ -396,7 +396,8 @@ body {
 	margin: 0;
 }
 
-.pdf-column-annotations .markdown > .pdf-amended-snippet-inserted {
+.pdf-column-annotations .markdown > ins,
+.pdf-column-annotations .markdown > del {
 	display: block;
 	margin-top: 0.45rem;
 }

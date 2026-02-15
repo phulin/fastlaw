@@ -66,9 +66,8 @@ function isNumeric(s: string): boolean {
 
 function endsWithHyphen(s: string): boolean {
 	const trimmed = s.trim();
-	// Only the standard hyphen is used for word joining.
-	// Em-dashes and en-dashes are typically punctuation.
-	return /-$/.test(trimmed);
+	// Standard hyphens, em-dashes, and en-dashes are used for word/line joining.
+	return /[-—–]$/.test(trimmed);
 }
 
 function endsWithPunctuation(s: string): boolean {

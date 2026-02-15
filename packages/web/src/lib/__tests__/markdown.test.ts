@@ -19,39 +19,55 @@ describe("renderMarkdown", () => {
 		expect(rendered).not.toContain('<div class="indent');
 	});
 
-	it("renders quoted paragraphs inside ins blocks as p.indentX", () => {
+	it("renders quoted paragraphs inside ++ blocks as p.indentX", () => {
 		const rendered = renderMarkdown(
 			[
-				'<ins class="pdf-amended-snippet-inserted">',
+				"++",
 				"> **(5)** **QUALIFIED PASS-THROUGH ENTITY**",
 				"> The term 'qualified pass-through entity' means—",
 				"> > **(A)** a partnership;",
 				"> > **(B)** an S corporation;",
 				"> > **(C)** a limited liability company; and",
 				"> > **(D)** a joint venture or general partnership.",
-				"</ins>",
+				"++",
 			].join("\n"),
 		);
 
 		expect(rendered).toContain('<ins class="pdf-amended-snippet-inserted">');
 		expect(rendered).toContain(
-			'<p class="indent1"><strong>(5)</strong> <strong>QUALIFIED PASS-THROUGH ENTITY</strong></p>',
+			"<strong>(5)</strong> <strong>QUALIFIED PASS-THROUGH ENTITY</strong>",
 		);
 		expect(rendered).toContain(
-			'<p class="indent1">The term &#39;qualified pass-through entity&#39; means—</p>',
+			"The term &#39;qualified pass-through entity&#39; means—",
+		);
+		expect(rendered).toContain("<strong>(A)</strong> a partnership;");
+		expect(rendered).toContain("<strong>(B)</strong> an S corporation;");
+		expect(rendered).toContain(
+			"<strong>(C)</strong> a limited liability company; and",
 		);
 		expect(rendered).toContain(
-			'<p class="indent2"><strong>(A)</strong> a partnership;</p>',
-		);
-		expect(rendered).toContain(
-			'<p class="indent2"><strong>(B)</strong> an S corporation;</p>',
-		);
-		expect(rendered).toContain(
-			'<p class="indent2"><strong>(C)</strong> a limited liability company; and</p>',
-		);
-		expect(rendered).toContain(
-			'<p class="indent2"><strong>(D)</strong> a joint venture or general partnership.</p>',
+			"<strong>(D)</strong> a joint venture or general partnership.",
 		);
 		expect(rendered).not.toContain('<div class="indent');
+	});
+
+	it("renders ~~ as del", () => {
+		const rendered = renderMarkdown("~~old text~~ ++new text++");
+		expect(rendered).toContain(
+			'<del class="pdf-amended-snippet-deleted">old text</del>',
+		);
+		expect(rendered).toContain(
+			'<ins class="pdf-amended-snippet-inserted">new text</ins>',
+		);
+	});
+
+	it("renders block ~~ and block ++ delimiters", () => {
+		const rendered = renderMarkdown("~~\nold block\n~~\n\n++\nnew block\n++");
+		expect(rendered).toContain(
+			'<del class="pdf-amended-snippet-deleted"><p class="indent0">old block</p>',
+		);
+		expect(rendered).toContain(
+			'<ins class="pdf-amended-snippet-inserted"><p class="indent0">new block</p>',
+		);
 	});
 });

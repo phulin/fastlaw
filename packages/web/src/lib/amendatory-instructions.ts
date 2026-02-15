@@ -18,6 +18,7 @@ export type AmendmentActionType =
 	| "insert_before"
 	| "insert_after"
 	| "add_at_end"
+	| "redesignate"
 	| "context"
 	| "unknown";
 
@@ -67,7 +68,7 @@ const DIVISION_HEADER_RE =
 const AMENDATORY_PHRASES = ["is amended", "is repealed", "is further amended"];
 const USC_CITATION_RE =
 	/(\d+)\s+U\.S\.C\.\s+\d+[A-Za-z0-9\u2013-]*(?:\([^)]*\))*/;
-const USC_CITATION_SECTION_RE = /^\d+\s+U\.S\.C\.\s+([0-9A-Za-z-]+)/i;
+const USC_CITATION_SECTION_RE = /^\d+\s+U\.S\.C\.\s+([0-9A-Za-z\u2013-]+)/i;
 const TITLE_SECTION_CITATION_RE =
 	/section\s+(\d+(?:[A-Za-z0-9-]*)(?:\([^)]*\))*)\s+of\s+title\s+(\d+),?\s+United States Code/i;
 
@@ -147,8 +148,9 @@ function extractTargetString(text: string): string {
 
 	// Strip leading subsection labels: (a), (b)(1), etc.
 	target = target.replace(/^(?:\([a-zA-Z0-9]+\)\s*)+/, "");
-	// Strip uppercase header before em-dash: "IN GENERAL.\u2014", "EXCEPTIONS.\u2014"
-	target = target.replace(/^[A-Z][^\u2014]*\u2014\s*/, "");
+	// Strip uppercase header before em-dash: "IN GENERAL.—", "EXCEPTIONS.—"
+	// We specifically look for the period-dash combo to avoid consuming citations with en-dashes
+	target = target.replace(/^[A-Z\s]{4,}[^\u2014]*\.\u2014\s*/, "");
 	return target.trim();
 }
 
@@ -205,7 +207,7 @@ function parseTarget(target: string): HierarchyLevel[] {
 
 		// consume common separators / noise words
 		const noiseMatch = current.match(
-			/^(?:in|of|and|the|by|striking|inserting|adding|redesignating|after|before|,|;)\s+/i,
+			/^(?:in|of|and|the|by|striking|inserting|adding|redesignating|after|before|is amended|is repealed|is further amended|Act|,|;|—|-|:)\s+/i,
 		);
 		if (noiseMatch) {
 			current = current.substring(noiseMatch[0].length);
@@ -221,7 +223,7 @@ function parseTarget(target: string): HierarchyLevel[] {
 
 		// Handle verbose types "subsection (a)", "paragraph (1)"
 		const verboseMatch = current.match(
-			/^(subsection|paragraph|subparagraph|clause|subclause|item)\s+\(([^)]+)\)/i,
+			/^(subsection|paragraph|subparagraph|clause|subclause|item)s?\s+\(([^)]+)\)/i,
 		);
 		if (verboseMatch) {
 			const typeStr = verboseMatch[1].toLowerCase();
@@ -384,12 +386,66 @@ function parseOperation(text: string): AmendatoryOperation {
 			}
 		} else if (lower.includes("by adding")) {
 			type = "add_at_end";
+		} else if (lower.includes("by redesignating")) {
+			type = "redesignate";
 		}
 
 		return { type, target: targetLevels, content, strikingContent };
 	}
 
 	return { type: "context", target: targetLevels, content, strikingContent };
+}
+
+function extractTrailingStructuralStrikeTarget(text: string): HierarchyLevel[] {
+	const trailingStrikeMatch = text.match(/by striking\s+(.+?)\s*(?:and)?\s*$/i);
+	if (!trailingStrikeMatch) return [];
+	const structuralTarget = trailingStrikeMatch[1]?.trim() ?? "";
+	if (structuralTarget.length === 0) return [];
+	return parseTarget(structuralTarget);
+}
+
+function mergeUniqueTargets(
+	base: HierarchyLevel[] | undefined,
+	extra: HierarchyLevel[],
+): HierarchyLevel[] {
+	const merged = [...(base ?? [])];
+	for (const level of extra) {
+		if (
+			level.type !== "none" &&
+			!merged.some(
+				(existing) =>
+					existing.type === level.type && existing.val === level.val,
+			)
+		) {
+			merged.push(level);
+		}
+	}
+	return merged;
+}
+
+function normalizeSplitStrikeAndInsert(nodes: InstructionNode[]): void {
+	for (const node of nodes) {
+		normalizeSplitStrikeAndInsert(node.children);
+
+		if (node.operation.type !== "delete" || node.operation.strikingContent) {
+			continue;
+		}
+		if (!/\bby striking\b/i.test(node.text)) continue;
+
+		const insertionChild = node.children.find((child) =>
+			/^\s*(?:\([A-Za-z0-9]+\)\s*)*inserting\s+the following\b/i.test(
+				child.text,
+			),
+		);
+		if (!insertionChild || !insertionChild.operation.content) continue;
+
+		node.operation.type = "replace";
+		node.operation.content = insertionChild.operation.content;
+		node.operation.target = mergeUniqueTargets(
+			node.operation.target,
+			extractTrailingStructuralStrikeTarget(node.text),
+		);
+	}
 }
 
 /**
@@ -443,24 +499,113 @@ function reconstructInstructionTree(nodes: TreeNode[]): InstructionNode[] {
 			}
 		}
 
-		const newNode: InstructionNode = {
-			label: label.type !== "none" ? label : undefined,
-			operation: parseOperation(text),
-			children: [],
-			text: text,
-		};
+		const operation = parseOperation(text);
+		const targets = operation.target ?? [];
 
-		// If stack is empty, it's a root
-		if (stack.length === 0) {
-			result.push(newNode);
+		// Detect plural targets like "subparagraphs (A) and (B)"
+		// We look for multiple levels of the SAME rank.
+		const rankCounts: Record<number, number> = {};
+		for (const t of targets) {
+			const r = getHierarchyRank(t);
+			rankCounts[r] = (rankCounts[r] || 0) + 1;
+		}
+		const pluralRank = Object.keys(rankCounts).find(
+			(r) => rankCounts[Number(r)] > 1,
+		);
+
+		const nodesToPush: InstructionNode[] = [];
+		const shouldSplit = [
+			"replace",
+			"delete",
+			"insert",
+			"insert_before",
+			"insert_after",
+			"add_at_end",
+		].includes(operation.type);
+
+		if (pluralRank !== undefined && shouldSplit) {
+			const rank = Number(pluralRank);
+			const sameRankTargets = targets.filter(
+				(t) => getHierarchyRank(t) === rank,
+			);
+			const commonPath = targets.filter((t) => getHierarchyRank(t) < rank);
+
+			for (const target of sameRankTargets) {
+				nodesToPush.push({
+					label: label.type !== "none" ? label : undefined,
+					operation: { ...operation, target: [...commonPath, target] },
+					children: [],
+					text: text,
+				});
+			}
 		} else {
-			stack[stack.length - 1].children.push(newNode);
+			nodesToPush.push({
+				label: label.type !== "none" ? label : undefined,
+				operation,
+				children: [],
+				text: text,
+			});
 		}
 
-		stack.push(newNode);
+		for (let i = 0; i < nodesToPush.length; i++) {
+			const newNode = nodesToPush[i];
+			if (stack.length === 0) {
+				result.push(newNode);
+			} else {
+				stack[stack.length - 1].children.push(newNode);
+			}
+
+			// Only the last one (or single one) becomes the active parent for potential children
+			if (i === nodesToPush.length - 1) {
+				stack.push(newNode);
+			}
+		}
 	}
 
+	normalizeSplitStrikeAndInsert(result);
 	return result;
+}
+
+/**
+ * Splits a paragraph into multiple virtual paragraphs if it contains multiple instructions.
+ * e.g. "(1) by ...; and (2) by ..."
+ */
+function splitCombinedParagraphs(p: Paragraph): Paragraph[] {
+	if (isQuotedText(p.text)) return [p];
+
+	const parts: Paragraph[] = [];
+	let currentText = p.text;
+
+	// Split after "is amended—" or similar if followed by a marker like (1)
+	const amendatoryHeaderMatch = currentText.match(
+		/^(.*(?:is amended|is repealed|is further amended)[\u2014\u2013:-])\s+(\(\d+\)|\([a-z]\)|\([A-Z]\))/i,
+	);
+
+	if (amendatoryHeaderMatch) {
+		parts.push({ ...p, text: amendatoryHeaderMatch[1].trim() });
+		currentText = currentText.substring(amendatoryHeaderMatch[1].length).trim();
+	}
+
+	// Now look for internal segments like "; (2) ", "; and (B) ", ". (ii) "
+	// We use a regex that matches the separator and the label.
+	const segmentRegex =
+		/([;.]\s+(?:and\s+)?)(?=\(\d+\)|\([a-z]\)|\([A-Z]\)|\([ivx]+\))/gi;
+
+	let lastIndex = 0;
+	for (const match of currentText.matchAll(segmentRegex)) {
+		const segment = currentText.substring(lastIndex, match.index).trim();
+		if (segment) {
+			parts.push({ ...p, text: segment });
+		}
+		lastIndex = match.index + match[1].length;
+	}
+
+	const remaining = currentText.substring(lastIndex).trim();
+	if (remaining) {
+		parts.push({ ...p, text: remaining });
+	}
+
+	return parts.length > 0 ? parts : [p];
 }
 
 /**
@@ -609,12 +754,12 @@ export function extractAmendatoryInstructions(
 					}
 				}
 
-				const rootSection = rootQuery.find(
+				const sectionLevelMatch = rootQuery.find(
 					(level): level is Extract<HierarchyLevel, { type: "section" }> =>
 						level.type === "section",
 				);
-				if (rootSection) {
-					lastSectionByBillSection.set(billSectionKey, rootSection);
+				if (sectionLevelMatch) {
+					lastSectionByBillSection.set(billSectionKey, sectionLevelMatch);
 				}
 				if (uscCitation) {
 					lastCitationByBillSection.set(billSectionKey, uscCitation);
@@ -622,7 +767,19 @@ export function extractAmendatoryInstructions(
 
 				// Reconstruct tree from the linear list of components
 				// The instruction node itself is the 'root' context.
-				const opTree = reconstructInstructionTree([node, ...nodesToProcess]);
+				const flattenedNodes: TreeNode[] = [];
+				for (const n of [node, ...nodesToProcess]) {
+					const split = splitCombinedParagraphs(n.paragraph);
+					for (const sp of split) {
+						flattenedNodes.push({
+							paragraph: sp,
+							children: [],
+							indent: n.indent,
+						});
+					}
+				}
+
+				const opTree = reconstructInstructionTree(flattenedNodes);
 
 				instructions.push({
 					billSection: currentBillSection,

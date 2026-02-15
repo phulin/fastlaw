@@ -1,1 +1,64 @@
-{"Code":"1","Name":"JURISDICTION OF THE COMMONWEALTH AND OF THE UNITED STATES","IsRepealed":false,"StrickenText":null,"Part":{"Code":"I","Details":"http://malegislature.gov/api/Parts/I"},"Sections":[{"Code":"1","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/1/"},{"Code":"2","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/2/"},{"Code":"3","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/3/"},{"Code":"4","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/4/"},{"Code":"5","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/5/"},{"Code":"6","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/6/"},{"Code":"7","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/7/"},{"Code":"7A","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/7A/"},{"Code":"8","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/8/"},{"Code":"9","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/9/"},{"Code":"10","ChapterCode":"1","Details":"http://malegislature.gov/api/Chapters/1/Sections/10/"}]}
+{
+	"Code": "1",
+	"Name": "JURISDICTION OF THE COMMONWEALTH AND OF THE UNITED STATES",
+	"IsRepealed": false,
+	"StrickenText": null,
+	"Part": { "Code": "I", "Details": "http://malegislature.gov/api/Parts/I" },
+	"Sections": [
+		{
+			"Code": "1",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/1/"
+		},
+		{
+			"Code": "2",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/2/"
+		},
+		{
+			"Code": "3",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/3/"
+		},
+		{
+			"Code": "4",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/4/"
+		},
+		{
+			"Code": "5",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/5/"
+		},
+		{
+			"Code": "6",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/6/"
+		},
+		{
+			"Code": "7",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/7/"
+		},
+		{
+			"Code": "7A",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/7A/"
+		},
+		{
+			"Code": "8",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/8/"
+		},
+		{
+			"Code": "9",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/9/"
+		},
+		{
+			"Code": "10",
+			"ChapterCode": "1",
+			"Details": "http://malegislature.gov/api/Chapters/1/Sections/10/"
+		}
+	]
+}

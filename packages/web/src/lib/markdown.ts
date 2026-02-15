@@ -31,6 +31,135 @@ type RenderMarkdownOptions = {
 };
 
 const STATUTES_PREFIX = "/statutes/";
+const INSERTED_CLASS = "pdf-amended-snippet-inserted";
+const DELETED_CLASS = "pdf-amended-snippet-deleted";
+
+marked.use({
+	extensions: [
+		{
+			name: "delBlock",
+			level: "block",
+			start(src: string) {
+				return src.indexOf("~~\n");
+			},
+			tokenizer(src: string) {
+				const canonicalMatch = /^~~\n([\s\S]+?)\n~~(?:\n|$)/.exec(src);
+				if (canonicalMatch) {
+					return {
+						type: "delBlock",
+						raw: canonicalMatch[0],
+						text: canonicalMatch[1] ?? "",
+					};
+				}
+				const fallbackMatch = /^~~\n([\s\S]+?)~~(?:\n|$)/.exec(src);
+				if (!fallbackMatch) return undefined;
+				return {
+					type: "delBlock",
+					raw: fallbackMatch[0],
+					text: fallbackMatch[1] ?? "",
+				};
+			},
+			renderer(token: unknown) {
+				const text =
+					typeof token === "object" &&
+					token !== null &&
+					"text" in token &&
+					typeof token.text === "string"
+						? token.text
+						: "";
+				return `<del class="${DELETED_CLASS}">${renderTokenizedMarkdown(text, {}, 0)}</del>`;
+			},
+		},
+		{
+			name: "insBlock",
+			level: "block",
+			start(src: string) {
+				return src.indexOf("++\n");
+			},
+			tokenizer(src: string) {
+				const match = /^\+\+\n([\s\S]+?)\n\+\+(?:\n|$)/.exec(src);
+				if (!match) return undefined;
+				return {
+					type: "insBlock",
+					raw: match[0],
+					text: match[1] ?? "",
+				};
+			},
+			renderer(token: unknown) {
+				const text =
+					typeof token === "object" &&
+					token !== null &&
+					"text" in token &&
+					typeof token.text === "string"
+						? token.text
+						: "";
+				return `<ins class="${INSERTED_CLASS}">${renderTokenizedMarkdown(text, {}, 0)}</ins>`;
+			},
+		},
+		{
+			name: "del",
+			level: "inline",
+			start(src: string) {
+				return src.indexOf("~~");
+			},
+			tokenizer(this: { lexer: typeof marked.Lexer.prototype }, src: string) {
+				const match = /^~~([^\n]+?)~~/.exec(src);
+				if (!match) return undefined;
+				const text = match[1] ?? "";
+				return {
+					type: "del",
+					raw: match[0],
+					text,
+					tokens: this.lexer.inlineTokens(text),
+				};
+			},
+			renderer(
+				this: { parser: typeof marked.Parser.prototype },
+				token: unknown,
+			) {
+				const tokens =
+					typeof token === "object" &&
+					token !== null &&
+					"tokens" in token &&
+					Array.isArray(token.tokens)
+						? (token.tokens as never)
+						: [];
+				return `<del class="${DELETED_CLASS}">${this.parser.parseInline(tokens)}</del>`;
+			},
+		},
+		{
+			name: "ins",
+			level: "inline",
+			start(src: string) {
+				return src.indexOf("++");
+			},
+			tokenizer(this: { lexer: typeof marked.Lexer.prototype }, src: string) {
+				const match = /^\+\+([\s\S]+?)\+\+/.exec(src);
+				if (!match) return undefined;
+				const text = match[1] ?? "";
+				return {
+					type: "ins",
+					raw: match[0],
+					text,
+					tokens: this.lexer.inlineTokens(text),
+				};
+			},
+			renderer(
+				this: { parser: typeof marked.Parser.prototype },
+				token: unknown,
+			) {
+				const tokens =
+					typeof token === "object" &&
+					token !== null &&
+					"tokens" in token &&
+					Array.isArray(token.tokens)
+						? (token.tokens as never)
+						: [];
+				return `<ins class="${INSERTED_CLASS}">${this.parser.parseInline(tokens)}</ins>`;
+			},
+		},
+	],
+});
 
 const rewriteStatuteHref = (
 	href: string,

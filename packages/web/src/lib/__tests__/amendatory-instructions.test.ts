@@ -217,7 +217,7 @@ describe("extractAmendatoryInstructions", () => {
 
 		const paragraphTwo = rootNode.children[1];
 		expect(paragraphTwo.label).toEqual({ type: "paragraph", val: "2" });
-		expect(paragraphTwo.operation.type).toBe("unknown");
+		expect(paragraphTwo.operation.type).toBe("redesignate");
 
 		const paragraphThree = rootNode.children[2];
 		expect(paragraphThree.label).toEqual({ type: "paragraph", val: "3" });
@@ -536,6 +536,30 @@ describe("extractAmendatoryInstructions", () => {
 		]);
 	});
 
+	it("normalizes split strike-and-insert-following instructions into a replace operation", () => {
+		const paragraphs = [
+			createParagraph(
+				"(b) REFERENCE PRICE.—Section 1111 of the Agricultural Act of 2014 (7 U.S.C. 9011) is amended by striking paragraph (19) and",
+				{ lines: [{ xStart: 20 }] },
+			),
+			createParagraph(
+				"inserting the following: “(19) REFERENCE PRICE.— “(A) IN GENERAL.—Effective beginning with the 2025 crop year.”.",
+				{ lines: [{ xStart: 20 }] },
+			),
+		];
+
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(1);
+		expect(instructions[0].tree[0]?.operation.type).toBe("replace");
+		expect(instructions[0].tree[0]?.operation.target).toEqual([
+			{ type: "section", val: "1111" },
+			{ type: "paragraph", val: "19" },
+		]);
+		expect(instructions[0].tree[0]?.operation.content).toContain(
+			"(19) REFERENCE PRICE.—",
+		);
+	});
+
 	it("stops extraction at top-level division headers", () => {
 		const paragraphs = [
 			createParagraph(
@@ -579,5 +603,91 @@ describe("extractAmendatoryInstructions", () => {
 			{ type: "section", val: "6" },
 			{ type: "subsection", val: "f" },
 		]);
+	});
+
+	describe("advanced features", () => {
+		it("handles plural labels in targets and citations", () => {
+			const text =
+				'Section 101 of the Act is amended in subparagraphs (A) and (B) by striking "old" and inserting "new".';
+			const paras = [createParagraph(text, { lines: [{ xStart: 20 }] })];
+			const instructions = extractAmendatoryInstructions(paras);
+
+			expect(instructions).toHaveLength(1);
+			expect(instructions[0].rootQuery).toEqual([
+				{ type: "section", val: "101" },
+			]);
+
+			// The tree should have two operations due to plural target splitting
+			const tree = instructions[0].tree;
+			expect(tree).toHaveLength(2);
+			expect(tree[0].operation.target).toContainEqual({
+				type: "subparagraph",
+				val: "A",
+			});
+			expect(tree[1].operation.target).toContainEqual({
+				type: "subparagraph",
+				val: "B",
+			});
+		});
+
+		it("splits combined instructions in a single paragraph", () => {
+			const text =
+				'Section 101 is amended— (1) in subsection (a), by striking "x"; and (2) in subsection (b), by striking "y".';
+			const paras = [createParagraph(text, { lines: [{ xStart: 20 }] })];
+			const instructions = extractAmendatoryInstructions(paras);
+
+			expect(instructions).toHaveLength(1);
+			const children = instructions[0].tree[0].children; // Under the "Section 101 is amended" context
+			expect(children).toHaveLength(2);
+			expect(children[0].label).toEqual({ type: "paragraph", val: "1" });
+			expect(children[1].label).toEqual({ type: "paragraph", val: "2" });
+			expect(children[0].text).toContain("subsection (a)");
+			expect(children[1].text).toContain("subsection (b)");
+		});
+
+		it("handles en-dashes in USC citations", () => {
+			const text =
+				"Section 1001A of the Food Security Act of 1985 (7 U.S.C. 1308–1) is amended...";
+			const paras = [createParagraph(text, { lines: [{ xStart: 20 }] })];
+			const instructions = extractAmendatoryInstructions(paras);
+
+			expect(instructions).toHaveLength(1);
+			expect(instructions[0].uscCitation).toBe("7 U.S.C. 1308–1");
+			expect(instructions[0].rootQuery).toContainEqual({
+				type: "section",
+				val: "1001A",
+			});
+		});
+
+		it("handles complex combined instruction with plural labels and en-dashes", () => {
+			const text =
+				"(c) PERSONS ACTIVELY ENGAGED IN FARMING.—Section 1001A(b)(2) of the Food Security Act of 1985 (7 U.S.C. 1308–1(b)(2)) is amended— (1) subparagraphs (A) and (B), by striking “a general partnership, a participant in a joint venture” each place it appears and inserting “a qualified passthrough entity”; and (2) in subparagraph (C), by striking “a general partnership, joint venture, or similar entity” and inserting “a qualified pass-through entity or a similar entity”.";
+			const paras = [createParagraph(text, { lines: [{ xStart: 20 }] })];
+			const instructions = extractAmendatoryInstructions(paras);
+
+			expect(instructions).toHaveLength(1);
+			expect(instructions[0].uscCitation).toBe("7 U.S.C. 1308–1(b)(2)");
+
+			const root = instructions[0].tree[0];
+			expect(root.children).toHaveLength(3); // (1)A, (1)B, and (2)
+
+			expect(root.children[0].label).toEqual({ type: "paragraph", val: "1" });
+			expect(root.children[0].operation.target).toContainEqual({
+				type: "subparagraph",
+				val: "A",
+			});
+
+			expect(root.children[1].label).toEqual({ type: "paragraph", val: "1" });
+			expect(root.children[1].operation.target).toContainEqual({
+				type: "subparagraph",
+				val: "B",
+			});
+
+			expect(root.children[2].label).toEqual({ type: "paragraph", val: "2" });
+			expect(root.children[2].operation.target).toContainEqual({
+				type: "subparagraph",
+				val: "C",
+			});
+		});
 	});
 });

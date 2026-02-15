@@ -15,17 +15,16 @@ interface InjectInlineReplacementOptions {
 	addSpaceBeforeIfNeeded?: boolean;
 }
 
-export interface TextReplacementRange extends TextRange {
-	deletedText: string;
+function escapeMarkdownDelimiters(input: string): string {
+	return input.replaceAll("~~", "\\~\\~").replaceAll("++", "\\+\\+");
 }
 
-function escapeHtml(input: string): string {
-	return input
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;")
-		.replaceAll("'", "&#39;");
+function normalizeBlockText(input: string): string {
+	return input.replace(/^\n+|\n+$/g, "");
+}
+
+export interface TextReplacementRange extends TextRange {
+	deletedText: string;
 }
 
 function rangesOverlap(a: TextRange, b: TextRange): boolean {
@@ -164,27 +163,38 @@ export function injectInlineReplacements(
 			previousChar.length > 0 &&
 			!/\s/.test(previousChar);
 
-		const insertedClass = options.insertedClassName
-			? ` class="${options.insertedClassName}"`
-			: "";
-		const deletedClass = options.deletedClassName
-			? ` class="${options.deletedClassName}"`
-			: "";
 		const insertedText = result.slice(range.start, range.end);
+		const normalizedDeletedText = normalizeBlockText(range.deletedText);
+		const escapedDeletedText = escapeMarkdownDelimiters(normalizedDeletedText);
+		const normalizedInsertedText = normalizeBlockText(insertedText);
+		const escapedInsertedText = escapeMarkdownDelimiters(
+			normalizedInsertedText,
+		);
 		const isMultilineInsertion = insertedText.includes("\n");
-		const deletedPrefix = range.deletedText
-			? `<del${deletedClass}>${escapeHtml(range.deletedText)}</del> `
+		const isMultilineDeletion = normalizedDeletedText.includes("\n");
+		const deletedInline = normalizedDeletedText
+			? `~~${escapedDeletedText}~~`
+			: "";
+		const deletedBlock = normalizedDeletedText
+			? `~~\n${escapedDeletedText}\n~~`
 			: "";
 		const wrapped = isMultilineInsertion
 			? (() => {
-					const body = insertedText.replace(/^\n+|\n+$/g, "");
-					return (
-						`\n\n${deletedPrefix}<ins${insertedClass}>\n` +
-						body +
-						"\n</ins>\n\n"
-					);
+					const deletedPrefix =
+						normalizedDeletedText.length > 0
+							? `${isMultilineDeletion ? deletedBlock : deletedInline}\n\n`
+							: "";
+					return `\n\n${deletedPrefix}++\n${escapedInsertedText}\n++\n\n`;
 				})()
-			: `${needsLeadingSpace ? " " : ""}${deletedPrefix}<ins${insertedClass}>${insertedText}</ins>`;
+			: (() => {
+					const prefix = needsLeadingSpace ? " " : "";
+					if (isMultilineDeletion) {
+						return `${prefix}${deletedBlock}\n\n++${escapeMarkdownDelimiters(insertedText)}++`;
+					}
+					const deletedPrefix =
+						deletedInline.length > 0 ? `${deletedInline} ` : "";
+					return `${prefix}${deletedPrefix}++${escapeMarkdownDelimiters(insertedText)}++`;
+				})();
 
 		result = result.slice(0, range.start) + wrapped + result.slice(range.end);
 	}
