@@ -144,6 +144,21 @@ export async function getSourceVersionById(
 		.first<SourceVersionRecord>();
 }
 
+export async function listSourceVersions(
+	sourceId: string,
+): Promise<SourceVersionRecord[]> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			`SELECT * FROM source_versions
+			WHERE source_id = ?
+			ORDER BY version_date DESC`,
+		)
+		.bind(sourceId)
+		.all<SourceVersionRecord>();
+	return result.results;
+}
+
 const INGEST_JOB_COLUMNS = `
 	id, source_code, source_version_id, status,
 	total_titles, processed_titles, total_nodes, processed_nodes,

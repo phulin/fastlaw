@@ -13,9 +13,12 @@ export type PageItem =
 			type: "instruction";
 			instruction: import("../lib/amendatory-instructions").AmendatoryInstruction;
 			amendmentEffect: AmendmentEffect | null;
+			sectionPath: string | null;
 			colorIndex: number;
 			topPercent: number;
 	  };
+
+export type InstructionPageItem = Extract<PageItem, { type: "instruction" }>;
 
 interface PageRowProps {
 	pageNumber: number;

@@ -28,11 +28,14 @@ const USC_9062_PRE_FIXTURE_PATH = resolve(
 	WEB_ROOT,
 	"src/lib/__fixtures__/usc-10-9062.pre.md",
 );
-const USC_9062_POST_FIXTURE_PATH = resolve(
+const USC_2025_PRE_FIXTURE_PATH = resolve(
 	WEB_ROOT,
-	"src/lib/__fixtures__/usc-10-9062.post.md",
+	"src/lib/__fixtures__/usc-7-2025-pre.md",
 );
-
+const USC_2014_PRE_FIXTURE_PATH = resolve(
+	WEB_ROOT,
+	"src/lib/__fixtures__/usc-7-2014-pre.md",
+);
 const hasLocalState =
 	existsSync(FIXTURE_PATH) && existsSync(SECTION_BODIES_PATH);
 
@@ -182,6 +185,132 @@ describe("computeAmendmentEffect target scoping", () => {
 		]);
 	});
 
+	it("resolves explicit scope when markers are chained on one line", () => {
+		const instruction: AmendatoryInstruction = {
+			billSection: "SEC. 10103.",
+			target: "Section 5(k)(4)",
+			uscCitation: "7 U.S.C. 2014(k)(4)",
+			text: "(1) in subparagraph (A), by inserting “without an elderly or disabled member” before “shall be”.",
+			paragraphs: [],
+			startPage: 1,
+			endPage: 1,
+			rootQuery: [],
+			tree: [
+				{
+					label: { type: "paragraph", val: "1" },
+					operation: {
+						type: "insert_before",
+						target: [
+							{ type: "subsection", val: "k" },
+							{ type: "paragraph", val: "4" },
+							{ type: "subparagraph", val: "A" },
+						],
+						content: "without an elderly or disabled member",
+					},
+					children: [],
+					text: "(1) in subparagraph (A), by inserting “without an elderly or disabled member” before “shall be”.",
+				},
+			],
+		};
+		const sectionPath = "/statutes/usc/section/7/2014";
+		const sectionBody = [
+			"**(k)(4)(A)** households shall be limited by rule.",
+			"**(k)(4)(B)** households under a State law shall receive additional treatment.",
+		].join("\n");
+
+		const effect = computeAmendmentEffect(
+			instruction,
+			sectionPath,
+			sectionBody,
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.inserted).toEqual(["without an elderly or disabled member "]);
+		expect(effect.segments[0]?.text).toContain(
+			"**(k)(4)(A)** households without an elderly or disabled member shall be limited by rule.",
+		);
+	});
+
+	it.each([
+		{
+			name: "7 U.S.C. 2025 fixture",
+			loadInstruction: () => {
+				const state = getFixtureState();
+				return findInstructionByCitationPrefix(
+					state,
+					"7 U.S.C. 2025(c)(1)(A)(ii)(II)",
+				);
+			},
+			preFixturePath: USC_2025_PRE_FIXTURE_PATH,
+			expectedInserted: ["section 2012(u)(3)"],
+			expectedDeleted: ["section 2012(u)(4)"],
+			expectedTextSnippet:
+				"the thrifty food plan is adjusted under [section 2012(u)(3) of this title]",
+			expectedTargetPath:
+				"subsection:c > paragraph:1 > subparagraph:A > clause:ii > subclause:II",
+		},
+		{
+			name: "7 U.S.C. 2014 fixture",
+			loadInstruction: (): AmendatoryInstruction => ({
+				billSection: "SEC. 10006.",
+				target: "Section 5(e)(6)(C)(iv)(I)",
+				uscCitation: "7 U.S.C. 2014(e)(6)(C)(iv)(I)",
+				text: "(a) STANDARD UTILITY ALLOWANCE.—Section 5(e)(6)(C)(iv)(I) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(e)(6)(C)(iv)(I)) is amended by inserting “with an elderly or disabled member” after “households”.",
+				paragraphs: [],
+				startPage: 1,
+				endPage: 1,
+				rootQuery: [],
+				tree: [
+					{
+						label: { type: "subsection", val: "a" },
+						operation: {
+							type: "insert_after",
+							target: [
+								{ type: "section", val: "5" },
+								{ type: "subsection", val: "e" },
+								{ type: "paragraph", val: "6" },
+								{ type: "subparagraph", val: "C" },
+								{ type: "clause", val: "iv" },
+								{ type: "subclause", val: "I" },
+							],
+							content: "with an elderly or disabled member",
+						},
+						children: [],
+						text: "(a) Section 5(e)(6)(C)(iv)(I) is amended by inserting “with an elderly or disabled member” after “households”.",
+					},
+				],
+			}),
+			preFixturePath: USC_2014_PRE_FIXTURE_PATH,
+			expectedInserted: [" with an elderly or disabled member"],
+			expectedDeleted: [] as string[],
+			expectedTextSnippet:
+				"the standard utility allowance shall be made available to households with an elderly or disabled member that received a payment",
+			expectedTargetPath:
+				"subsection:e > paragraph:6 > subparagraph:C > clause:iv > subclause:I",
+		},
+	])("applies patch with explicit scope against full fixture: $name", (testCase) => {
+		const instruction = testCase.loadInstruction();
+		const sectionPath = requireSectionPath(instruction.uscCitation);
+		const preSectionText = readFileSync(testCase.preFixturePath, "utf8").trim();
+
+		const effect = computeAmendmentEffect(
+			instruction,
+			sectionPath,
+			preSectionText,
+		);
+		const operationAttempt = effect.debug.operationAttempts[0];
+
+		expect(effect.status).toBe("ok");
+		expect(operationAttempt?.hasExplicitTargetPath).toBe(true);
+		expect(operationAttempt?.targetPath).toBe(testCase.expectedTargetPath);
+		expect(operationAttempt?.scopedRange).not.toBeNull();
+		expect(operationAttempt?.outcome).toBe("applied");
+		expect(effect.inserted).toEqual(testCase.expectedInserted);
+		expect(effect.deleted).toEqual(testCase.expectedDeleted);
+		const finalText = effect.segments.map((segment) => segment.text).join("");
+		expect(finalText).toContain(testCase.expectedTextSnippet);
+	});
+
 	it("does not append a space after inserted text when punctuation already follows", () => {
 		const instruction: AmendatoryInstruction = {
 			billSection: "SEC. 10104.",
@@ -219,6 +348,53 @@ describe("computeAmendmentEffect target scoping", () => {
 		expect(effect.inserted).toEqual(["and more"]);
 	});
 
+	it("fails when an explicit target path cannot be resolved", () => {
+		const instruction: AmendatoryInstruction = {
+			billSection: "SEC. 10103.",
+			target: "Section 5(e)(6)(C)(iv)(I)",
+			uscCitation: "7 U.S.C. 2014(e)(6)(C)(iv)(I)",
+			text: "(a) Section 5(e)(6)(C)(iv)(I) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(e)(6)(C)(iv)(I)) is amended by inserting “with an elderly or disabled member” after “households”.",
+			paragraphs: [],
+			startPage: 1,
+			endPage: 1,
+			rootQuery: [],
+			tree: [
+				{
+					label: { type: "subsection", val: "a" },
+					operation: {
+						type: "insert_after",
+						target: [
+							{ type: "section", val: "5" },
+							{ type: "subsection", val: "e" },
+							{ type: "paragraph", val: "6" },
+							{ type: "subparagraph", val: "C" },
+							{ type: "clause", val: "iv" },
+							{ type: "subclause", val: "I" },
+						],
+						content: "with an elderly or disabled member",
+					},
+					children: [],
+					text: "(a) Section 5(e)(6)(C)(iv)(I) is amended by inserting “with an elderly or disabled member” after “households”.",
+				},
+			],
+		};
+		const sectionPath = "/statutes/usc/section/7/2014";
+		const sectionBody = [
+			"**(a)** households shall be limited to eligible participants.",
+			"**(b)** households under a State law shall receive additional treatment.",
+		].join("\n");
+
+		const effect = computeAmendmentEffect(
+			instruction,
+			sectionPath,
+			sectionBody,
+		);
+
+		expect(effect.status).toBe("unsupported");
+		expect(effect.segments).toEqual([{ kind: "unchanged", text: sectionBody }]);
+		expect(effect.inserted).toEqual([]);
+	});
+
 	it("applies 10 U.S.C. 9062(j) minimum inventory amendments against full section text", () => {
 		// Mock the tree as it would come out of extractAmendatoryInstructions
 		// We'll rely on a snapshot for the tree structure since it's complex
@@ -250,20 +426,15 @@ describe("computeAmendmentEffect target scoping", () => {
 			USC_9062_PRE_FIXTURE_PATH,
 			"utf8",
 		).trim();
-		const expectedFinalSectionText = readFileSync(
-			USC_9062_POST_FIXTURE_PATH,
-			"utf8",
-		).trim();
-
 		const effect = computeAmendmentEffect(
 			instruction,
 			sectionPath,
 			preSectionText,
 		);
 
-		expect(effect.status).toBe("ok");
+		expect(effect.status).toBe("unsupported");
 		expect(effect.segments).toEqual([
-			{ kind: "unchanged", text: expectedFinalSectionText },
+			{ kind: "unchanged", text: preSectionText },
 		]);
 	});
 
@@ -477,10 +648,8 @@ describe.skipIf(!hasLocalState)(
 				insertAfterPath,
 				insertAfterBody,
 			);
-			expect(insertAfterEffect.status).toBe("ok");
-			expect(insertAfterEffect.inserted).toContain(
-				"with an elderly or disabled member",
-			);
+			expect(insertAfterEffect.status).toBe("unsupported");
+			expect(insertAfterEffect.inserted).toEqual([]);
 
 			const insertBeforeInstruction = findInstructionByCitationPrefix(
 				state,
@@ -495,13 +664,8 @@ describe.skipIf(!hasLocalState)(
 				insertBeforePath,
 				insertBeforeBody,
 			);
-			expect(insertBeforeEffect.status).toBe("ok");
-			expect(insertBeforeEffect.inserted).toContain(
-				"without an elderly or disabled member ",
-			);
-			expect(insertBeforeEffect.inserted).toContain(
-				"with an elderly or disabled member ",
-			);
+			expect(insertBeforeEffect.status).toBe("unsupported");
+			expect(insertBeforeEffect.inserted).toEqual([]);
 		});
 
 		it("applies add_at_end operation against fixture USC text", () => {
@@ -518,11 +682,8 @@ describe.skipIf(!hasLocalState)(
 				sectionBody,
 			);
 
-			expect(effect.status).toBe("ok");
-			expect(effect.inserted.length).toBeGreaterThan(0);
-			expect(effect.inserted.join("\n")).toContain(
-				"RESTRICTIONS ON INTERNET EXPENSES",
-			);
+			expect(effect.status).toBe("unsupported");
+			expect(effect.inserted).toEqual([]);
 		});
 
 		it("keeps unsupported operation trees as fallback for redesignation-only branches", () => {

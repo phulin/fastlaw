@@ -15,6 +15,7 @@ import {
 	getSourceVersionById,
 	listIngestJobs,
 	listIngestJobUnits,
+	listSourceVersions,
 	setEnv,
 } from "./lib/db";
 import {
@@ -79,6 +80,15 @@ app.get("/api/ingest/jobs/:jobId/units", async (c) => {
 	const units = await listIngestJobUnits(c.req.param("jobId"));
 	return c.json({ units });
 });
+app.get("/api/sources/:sourceId/versions", async (c) => {
+	const source = await getSourceByCode(c.req.param("sourceId"));
+	if (!source) {
+		return c.json({ error: "Source not found" }, 404);
+	}
+
+	const versions = await listSourceVersions(source.id);
+	return c.json({ versions });
+});
 app.post("/api/ingest/jobs/:jobId/abort", async (c) => {
 	try {
 		const job = await abortIngestJob(c.req.param("jobId"));
@@ -94,19 +104,34 @@ app.post("/api/ingest/jobs/:jobId/abort", async (c) => {
 	}
 });
 app.post("/api/statutes/section-bodies", async (c) => {
-	const payload = await c.req.json<{ paths?: unknown }>().catch(() => null);
+	const payload = await c.req
+		.json<{
+			paths?: unknown;
+			sourceVersionId?: unknown;
+		}>()
+		.catch(() => null);
 	if (
 		!payload ||
 		!Array.isArray(payload.paths) ||
-		payload.paths.some((path) => typeof path !== "string")
+		payload.paths.some((path) => typeof path !== "string") ||
+		(payload.sourceVersionId != null &&
+			typeof payload.sourceVersionId !== "string")
 	) {
 		return c.json(
-			{ error: "Invalid payload. Expected { paths: string[] }" },
+			{
+				error:
+					"Invalid payload. Expected { paths: string[]; sourceVersionId?: string }",
+			},
 			400,
 		);
 	}
 
 	const paths = payload.paths as string[];
+	const sourceVersionIdParam =
+		typeof payload.sourceVersionId === "string" &&
+		payload.sourceVersionId.trim().length > 0
+			? payload.sourceVersionId.trim()
+			: null;
 	const uniquePaths = [...new Set(paths)];
 
 	const uniqueResults = await Promise.all(
@@ -125,7 +150,9 @@ app.post("/api/statutes/section-bodies", async (c) => {
 				if (!source) return { path, status: "not_found" as const };
 				const sourceVersion = route.sourceVersionId
 					? await getSourceVersionById(route.sourceVersionId)
-					: await getLatestSourceVersion(source.id);
+					: sourceVersionIdParam
+						? await getSourceVersionById(sourceVersionIdParam)
+						: await getLatestSourceVersion(source.id);
 				if (!sourceVersion) return { path, status: "not_found" as const };
 				if (sourceVersion.source_id !== source.id) {
 					return { path, status: "not_found" as const };

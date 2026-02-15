@@ -13,7 +13,7 @@ import {
 } from "solid-js";
 import { AnnotationLayer, type PageLayout } from "./components/AnnotationLayer";
 import { Header } from "./components/Header";
-import type { PageItem } from "./components/PageRow";
+import type { InstructionPageItem, PageItem } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
 import {
@@ -26,9 +26,10 @@ import {
 	getSectionPathFromUscCitation,
 	type SectionBodiesResponse,
 } from "./lib/amendment-effects";
+import { renderMarkdown } from "./lib/markdown";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
-import type { NodeContent } from "./lib/types";
+import type { NodeContent, SourceVersionRecord } from "./lib/types";
 
 const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
@@ -94,11 +95,20 @@ const hashFile = async (file: File): Promise<string> => {
 
 const fetchSectionBodies = async (
 	paths: string[],
+	sourceVersionId?: string,
 ): Promise<Map<string, NodeContent>> => {
+	const requestBody: {
+		paths: string[];
+		sourceVersionId?: string;
+	} = { paths };
+	if (sourceVersionId && sourceVersionId.length > 0) {
+		requestBody.sourceVersionId = sourceVersionId;
+	}
+
 	const response = await fetch("/api/statutes/section-bodies", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ paths }),
+		body: JSON.stringify(requestBody),
 	});
 
 	if (!response.ok) {
@@ -113,6 +123,10 @@ const fetchSectionBodies = async (
 	}
 	return sectionBodies;
 };
+
+interface SourceVersionsResponse {
+	versions: SourceVersionRecord[];
+}
 
 export default function PdfApp() {
 	interface PageRowState {
@@ -144,21 +158,18 @@ export default function PdfApp() {
 		[0, 1, 2].map(() => DEFAULT_ITEM_SIZE),
 	);
 	const [isVirtualDebugEnabled, setIsVirtualDebugEnabled] = createSignal(false);
-	const [selectedInstruction, setSelectedInstruction] =
-		createSignal<AmendatoryInstruction | null>(null);
+	const [selectedInstructionItem, setSelectedInstructionItem] =
+		createSignal<InstructionPageItem | null>(null);
+	const [uscSourceVersions, setUscSourceVersions] = createSignal<
+		SourceVersionRecord[]
+	>([]);
+	const [selectedUscSourceVersionId, setSelectedUscSourceVersionId] =
+		createSignal("");
 
 	const [pageLayouts, setPageLayouts] = createSignal<PageLayout[]>([]);
 	const [allItems, setAllItems] = createSignal<
 		{ item: PageItem; pageNumber: number }[]
 	>([]);
-	const selectedInstructionTreeJson = createMemo(() => {
-		const instruction = selectedInstruction();
-		if (!instruction) return "";
-		const { paragraphs: _paragraphs, ...instructionWithoutParagraphs } =
-			instruction;
-		return JSON.stringify(instructionWithoutParagraphs, null, 2);
-	});
-
 	const visibleItems = createMemo(() => {
 		const indexes = virtualIndexes();
 		if (indexes.length === 0) return [];
@@ -257,10 +268,10 @@ export default function PdfApp() {
 	});
 
 	createEffect(() => {
-		if (!selectedInstruction()) return;
+		if (!selectedInstructionItem()) return;
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
-				setSelectedInstruction(null);
+				setSelectedInstructionItem(null);
 			}
 		};
 		window.addEventListener("keydown", onKeyDown);
@@ -306,6 +317,15 @@ export default function PdfApp() {
 	const handleHashChange = () => {
 		const parsed = parseHashState();
 		if (!parsed || !currentFileHash) return;
+		if (
+			parsed.sourceVersionId &&
+			parsed.sourceVersionId !== selectedUscSourceVersionId() &&
+			uscSourceVersions().some(
+				(version) => version.id === parsed.sourceVersionId,
+			)
+		) {
+			setSelectedUscSourceVersionId(parsed.sourceVersionId);
+		}
 
 		// If the document hash matches but the page is different, scroll to it.
 		if (parsed.hash === currentFileHash && parsed.page !== currentPage()) {
@@ -319,7 +339,7 @@ export default function PdfApp() {
 		setStatus("idle");
 		setError(null);
 		setFileName("");
-		setSelectedInstruction(null);
+		setSelectedInstructionItem(null);
 		if (fileInput) fileInput.value = "";
 		currentPdf = null;
 		currentFileHash = null;
@@ -346,7 +366,8 @@ export default function PdfApp() {
 
 		const parsedPage = Number(params.get("page") ?? "1");
 		const page = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1;
-		return { hash, page };
+		const sourceVersionId = params.get("sourceVersionId")?.trim() || null;
+		return { hash, page, sourceVersionId };
 	};
 
 	const replaceLocationHash = (page: number) => {
@@ -354,6 +375,9 @@ export default function PdfApp() {
 		const params = new URLSearchParams();
 		params.set("page", String(page));
 		params.set("hash", currentFileHash);
+		if (selectedUscSourceVersionId()) {
+			params.set("sourceVersionId", selectedUscSourceVersionId());
+		}
 		history.replaceState(
 			"",
 			document.title,
@@ -380,6 +404,25 @@ export default function PdfApp() {
 		if (typeof window !== "undefined") {
 			const search = new URLSearchParams(window.location.search);
 			setIsVirtualDebugEnabled(search.get(VIRTUAL_DEBUG_SEARCH_PARAM) === "1");
+			const hashVersionId = parseHashState()?.sourceVersionId;
+			try {
+				const response = await fetch("/api/sources/usc/versions");
+				if (response.ok) {
+					const payload = (await response.json()) as SourceVersionsResponse;
+					setUscSourceVersions(payload.versions);
+
+					const defaultVersionId =
+						hashVersionId &&
+						payload.versions.some((v) => v.id === hashVersionId)
+							? hashVersionId
+							: payload.versions[0]?.id;
+					if (defaultVersionId) {
+						setSelectedUscSourceVersionId(defaultVersionId);
+					}
+				}
+			} catch (err) {
+				console.error("Failed to load USC source versions:", err);
+			}
 		}
 
 		window.addEventListener("hashchange", handleHashChange);
@@ -531,7 +574,10 @@ export default function PdfApp() {
 
 				if (unresolvedPaths.length > 0) {
 					const dedupedPaths = [...new Set(unresolvedPaths)];
-					const fetched = await fetchSectionBodies(dedupedPaths);
+					const fetched = await fetchSectionBodies(
+						dedupedPaths,
+						selectedUscSourceVersionId(),
+					);
 					if (applyVersion !== paragraphApplyVersion) return;
 					for (const [path, content] of fetched.entries()) {
 						sectionBodyCache.set(path, content);
@@ -576,8 +622,8 @@ export default function PdfApp() {
 								item: {
 									type: "instruction",
 									instruction: instr,
-									amendmentEffect:
-										amendmentEffect?.status === "ok" ? amendmentEffect : null,
+									amendmentEffect,
+									sectionPath,
 									colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
 									topPercent,
 								},
@@ -661,6 +707,19 @@ export default function PdfApp() {
 		e.preventDefault();
 	};
 
+	const handleDropzoneClick = (event: MouseEvent) => {
+		const target = event.target as HTMLElement | null;
+		if (target?.closest(".pdf-upload-options")) return;
+		fileInput?.click();
+	};
+
+	createEffect(() => {
+		const sourceVersionId = selectedUscSourceVersionId();
+		if (!sourceVersionId || !currentFileHash || !hasAppliedInitialScroll)
+			return;
+		replaceLocationHash(currentPage());
+	});
+
 	return (
 		<MetaProvider>
 			<Title>PDF Viewer - fast.law</Title>
@@ -690,7 +749,7 @@ export default function PdfApp() {
 							class="pdf-dropzone"
 							onDragOver={handleDragOver}
 							onDrop={handleDrop}
-							onClick={() => fileInput?.click()}
+							onClick={handleDropzoneClick}
 							onKeyPress={(e) => {
 								if (e.key === "Enter" || e.key === " ") fileInput?.click();
 							}}
@@ -699,6 +758,26 @@ export default function PdfApp() {
 						>
 							<h1 class="pdf-dropzone-title">Upload PDF</h1>
 							<p>Drag and drop a PDF file here, or click to select</p>
+							<div class="pdf-upload-options">
+								<label class="pdf-upload-field">
+									<span>USC source version</span>
+									<select
+										class="pdf-upload-select"
+										value={selectedUscSourceVersionId()}
+										onChange={(event) =>
+											setSelectedUscSourceVersionId(event.currentTarget.value)
+										}
+									>
+										<For each={uscSourceVersions()}>
+											{(version) => (
+												<option value={version.id}>
+													{version.id} ({version.version_date})
+												</option>
+											)}
+										</For>
+									</select>
+								</label>
+							</div>
 							<input
 								type="file"
 								accept="application/pdf"
@@ -805,33 +884,197 @@ export default function PdfApp() {
 								items={visibleItems()}
 								totalHeight={rowVirtualizer.getTotalSize()}
 								width={0} // handled by CSS
-								onInstructionClick={(instruction) =>
-									setSelectedInstruction(instruction)
+								onInstructionClick={(instructionItem) =>
+									setSelectedInstructionItem(instructionItem)
 								}
 							/>
 						</div>
 					</div>
-					<Show when={selectedInstruction()}>
+					<Show when={selectedInstructionItem()}>
 						<div class="pdf-instruction-modal-backdrop">
 							<div
 								class="pdf-instruction-modal"
 								role="dialog"
 								aria-modal="true"
-								aria-label="Parsed instruction tree"
+								aria-label="Instruction match details"
 							>
 								<header class="pdf-instruction-modal-header">
-									<h2 class="pdf-instruction-modal-title">Parsed Tree</h2>
+									<h2 class="pdf-instruction-modal-title">
+										Instruction Match Details
+									</h2>
 									<button
 										type="button"
 										class="pdf-secondary-button"
-										onClick={() => setSelectedInstruction(null)}
+										onClick={() => setSelectedInstructionItem(null)}
 									>
 										Close
 									</button>
 								</header>
-								<pre class="pdf-instruction-modal-code">
-									{selectedInstructionTreeJson()}
-								</pre>
+								<Show when={selectedInstructionItem()}>
+									{(selected) => {
+										const item = selected();
+										const instruction = item.instruction;
+										const effect = item.amendmentEffect;
+										const instructionPageRange = `${instruction.startPage}-${instruction.endPage}`;
+										const hierarchyPath = instruction.rootQuery
+											.map((level) =>
+												level.type === "none"
+													? null
+													: `${level.type}:${level.val}`,
+											)
+											.filter(
+												(value): value is Exclude<typeof value, null> =>
+													value !== null,
+											)
+											.join(" > ");
+
+										return (
+											<div class="pdf-instruction-modal-content">
+												<div class="pdf-instruction-modal-grid">
+													<div class="pdf-instruction-modal-kv">
+														<span>Bill section</span>
+														<code>{instruction.billSection ?? "n/a"}</code>
+													</div>
+													<div class="pdf-instruction-modal-kv">
+														<span>USC citation</span>
+														<code>{instruction.uscCitation ?? "n/a"}</code>
+													</div>
+													<div class="pdf-instruction-modal-kv">
+														<span>Section path</span>
+														<code>{item.sectionPath ?? "n/a"}</code>
+													</div>
+													<div class="pdf-instruction-modal-kv">
+														<span>Status</span>
+														<code>{effect?.status ?? "uncomputed"}</code>
+													</div>
+													<div class="pdf-instruction-modal-kv">
+														<span>Instruction pages</span>
+														<code>{instructionPageRange}</code>
+													</div>
+													<div class="pdf-instruction-modal-kv">
+														<span>Root target path</span>
+														<code>{hierarchyPath || "n/a"}</code>
+													</div>
+												</div>
+
+												<section class="pdf-instruction-modal-section">
+													<h3>Instruction Text</h3>
+													<div
+														class="pdf-instruction-modal-markdown markdown"
+														innerHTML={renderMarkdown(instruction.text)}
+													/>
+												</section>
+
+												<Show
+													when={effect}
+													fallback={
+														<section class="pdf-instruction-modal-section">
+															<h3>Match Attempts</h3>
+															<p>No section body was available for matching.</p>
+														</section>
+													}
+												>
+													{(resolvedEffect) => (
+														<section class="pdf-instruction-modal-section">
+															<h3>Match Attempts</h3>
+															<div class="pdf-instruction-modal-grid">
+																<div class="pdf-instruction-modal-kv">
+																	<span>Failure reason</span>
+																	<code>
+																		{resolvedEffect().debug.failureReason ??
+																			"none"}
+																	</code>
+																</div>
+																<div class="pdf-instruction-modal-kv">
+																	<span>Section text length</span>
+																	<code>
+																		{String(
+																			resolvedEffect().debug.sectionTextLength,
+																		)}
+																	</code>
+																</div>
+																<div class="pdf-instruction-modal-kv">
+																	<span>Operation count</span>
+																	<code>
+																		{String(
+																			resolvedEffect().debug.operationCount,
+																		)}
+																	</code>
+																</div>
+															</div>
+															<For
+																each={resolvedEffect().debug.operationAttempts}
+															>
+																{(attempt, index) => (
+																	<article class="pdf-instruction-attempt">
+																		<h4>Attempt {index() + 1}</h4>
+																		<div class="pdf-instruction-modal-grid">
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Operation</span>
+																				<code>{attempt.operationType}</code>
+																			</div>
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Outcome</span>
+																				<code>{attempt.outcome}</code>
+																			</div>
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Target path</span>
+																				<code>
+																					{attempt.targetPath ?? "n/a"}
+																				</code>
+																			</div>
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Scoped range</span>
+																				<code>
+																					{attempt.scopedRange
+																						? `${attempt.scopedRange.start}-${attempt.scopedRange.end} (${attempt.scopedRange.length} chars)`
+																						: "none"}
+																				</code>
+																			</div>
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Search kind</span>
+																				<code>{attempt.searchTextKind}</code>
+																			</div>
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Search index</span>
+																				<code>
+																					{attempt.searchIndex === null
+																						? "none"
+																						: String(attempt.searchIndex)}
+																				</code>
+																			</div>
+																		</div>
+
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Search text</span>
+																			<pre class="pdf-instruction-modal-code">
+																				{attempt.searchText ?? "n/a"}
+																			</pre>
+																		</div>
+
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Scoped text preview</span>
+																			<pre class="pdf-instruction-modal-code">
+																				{attempt.scopedRange?.preview ?? "n/a"}
+																			</pre>
+																		</div>
+
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Operation text</span>
+																			<pre class="pdf-instruction-modal-code">
+																				{attempt.nodeText}
+																			</pre>
+																		</div>
+																	</article>
+																)}
+															</For>
+														</section>
+													)}
+												</Show>
+											</div>
+										);
+									}}
+								</Show>
 							</div>
 						</div>
 					</Show>

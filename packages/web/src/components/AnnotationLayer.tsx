@@ -1,8 +1,7 @@
 import { createEffect, For, Show } from "solid-js";
-import type { AmendatoryInstruction } from "../lib/amendatory-instructions";
 import { renderMarkdown } from "../lib/markdown";
 import { AmendedSnippet } from "./AmendedSnippet";
-import type { PageItem } from "./PageRow";
+import type { InstructionPageItem, PageItem } from "./PageRow";
 
 export interface PageLayout {
 	pageOffset: number;
@@ -14,7 +13,7 @@ interface AnnotationLayerProps {
 	items: { item: PageItem; globalTop: number; pageNumber: number }[];
 	totalHeight: number;
 	width: number; // The width of the annotation column
-	onInstructionClick: (instruction: AmendatoryInstruction) => void;
+	onInstructionClick: (instructionItem: InstructionPageItem) => void;
 }
 
 const ITEM_GAP = 0;
@@ -114,11 +113,9 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 									<button
 										type="button"
 										class="pdf-instruction-button"
-										onClick={() =>
-											props.onInstructionClick(instructionItem.instruction)
-										}
+										onClick={() => props.onInstructionClick(instructionItem)}
 									>
-										{instructionItem.amendmentEffect ? (
+										{instructionItem.amendmentEffect?.status === "ok" ? (
 											<div
 												class={`pdf-amend-color-${instructionItem.colorIndex}`}
 											>
