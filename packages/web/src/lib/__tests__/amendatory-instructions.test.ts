@@ -333,6 +333,108 @@ describe("extractAmendatoryInstructions", () => {
 		expect(op.content).toBe("section 3(u)(3)");
 	});
 
+	it("parses title-based United States Code citation and subsection target order", () => {
+		const paragraphs = [
+			createMockParagraph(
+				"SEC. 211. MODIFICATION TO AUTHORITY TO AWARD PRIZES FOR ADVANCED TECHNOLOGY ACHIEVEMENTS.",
+				0,
+				101,
+			),
+			createMockParagraph(
+				"(a) AUTHORITY.—Subsection (a) of section 4025 of title 10, United States Code, is amended by inserting after “the Under Secretary of Defense for Acquisition and Sustainment,” the following: “the Director of the Defense Innovation Unit,”.",
+				20,
+				101,
+			),
+		];
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(1);
+
+		const instruction = instructions[0];
+		expect(instruction.uscCitation).toBe("10 U.S.C. 4025");
+		expect(instruction.rootQuery).toEqual([
+			{ type: "section", val: "4025" },
+			{ type: "subsection", val: "a" },
+		]);
+		expect(instruction.tree[0].operation.type).toBe("insert_after");
+		expect(instruction.tree[0].operation.target).toEqual([
+			{ type: "section", val: "4025" },
+			{ type: "subsection", val: "a" },
+		]);
+		expect(instruction.tree[0].operation.content).toBe(
+			"the Director of the Defense Innovation Unit,",
+		);
+	});
+
+	it("resolves 'such section' for subsection prize updates and parses replace operations", () => {
+		const paragraphs = [
+			createMockParagraph(
+				"SEC. 211. MODIFICATION TO AUTHORITY TO AWARD PRIZES FOR ADVANCED TECHNOLOGY ACHIEVEMENTS.",
+				0,
+				101,
+			),
+			createMockParagraph(
+				"(a) AUTHORITY.—Subsection (a) of section 4025 of title 10, United States Code, is amended by inserting after “the Under Secretary of Defense for Acquisition and Sustainment,” the following: “the Director of the Defense Innovation Unit,”.",
+				20,
+				101,
+			),
+			createMockParagraph(
+				"(b) MAXIMUM AMOUNT OF AWARD PRIZES.—Subsection (c) of such section is amended—",
+				20,
+				101,
+			),
+			createMockParagraph(
+				"(1) in paragraph (1) by striking “$10,000,000” and inserting “$20,000,000”;",
+				40,
+				101,
+			),
+			createMockParagraph(
+				"(2) in paragraph (2) by striking “$1,000,000” and inserting “$2,000,000”; and",
+				40,
+				101,
+			),
+			createMockParagraph(
+				"(3) in paragraph (3) by striking “$10,000” and inserting “$20,000”.",
+				40,
+				101,
+			),
+		];
+
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(2);
+
+		const instruction = instructions[1];
+		expect(instruction.uscCitation).toBe("10 U.S.C. 4025");
+		expect(instruction.rootQuery).toEqual([
+			{ type: "section", val: "4025" },
+			{ type: "subsection", val: "c" },
+		]);
+
+		const root = instruction.tree[0];
+		expect(root?.operation.type).toBe("context");
+		expect(root?.children).toHaveLength(3);
+
+		expect(root?.children[0]?.operation.type).toBe("replace");
+		expect(root?.children[0]?.operation.target).toEqual([
+			{ type: "paragraph", val: "1" },
+		]);
+		expect(root?.children[0]?.operation.strikingContent).toBe("$10,000,000");
+		expect(root?.children[0]?.operation.content).toBe("$20,000,000");
+
+		expect(root?.children[1]?.operation.type).toBe("replace");
+		expect(root?.children[1]?.operation.target).toEqual([
+			{ type: "paragraph", val: "2" },
+		]);
+		expect(root?.children[1]?.operation.strikingContent).toBe("$1,000,000");
+		expect(root?.children[1]?.operation.content).toBe("$2,000,000");
+
+		expect(root?.children[2]?.operation.type).toBe("replace");
+		expect(root?.children[2]?.operation.target).toEqual([
+			{ type: "paragraph", val: "3" },
+		]);
+		expect(root?.children[2]?.operation.strikingContent).toBe("$10,000");
+		expect(root?.children[2]?.operation.content).toBe("$20,000");
+	});
+
 	it("stops extraction at top-level division headers", () => {
 		const paragraphs = [
 			createMockParagraph(

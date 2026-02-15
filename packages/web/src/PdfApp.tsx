@@ -16,7 +16,10 @@ import { Header } from "./components/Header";
 import type { PageItem } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { extractAmendatoryInstructions } from "./lib/amendatory-instructions";
+import {
+	type AmendatoryInstruction,
+	extractAmendatoryInstructions,
+} from "./lib/amendatory-instructions";
 import {
 	computeAmendmentEffect,
 	getSectionBodyText,
@@ -141,11 +144,20 @@ export default function PdfApp() {
 		[0, 1, 2].map(() => DEFAULT_ITEM_SIZE),
 	);
 	const [isVirtualDebugEnabled, setIsVirtualDebugEnabled] = createSignal(false);
+	const [selectedInstruction, setSelectedInstruction] =
+		createSignal<AmendatoryInstruction | null>(null);
 
 	const [pageLayouts, setPageLayouts] = createSignal<PageLayout[]>([]);
 	const [allItems, setAllItems] = createSignal<
 		{ item: PageItem; pageNumber: number }[]
 	>([]);
+	const selectedInstructionTreeJson = createMemo(() => {
+		const instruction = selectedInstruction();
+		if (!instruction) return "";
+		const { paragraphs: _paragraphs, ...instructionWithoutParagraphs } =
+			instruction;
+		return JSON.stringify(instructionWithoutParagraphs, null, 2);
+	});
 
 	const visibleItems = createMemo(() => {
 		const indexes = virtualIndexes();
@@ -244,6 +256,17 @@ export default function PdfApp() {
 		}
 	});
 
+	createEffect(() => {
+		if (!selectedInstruction()) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				setSelectedInstruction(null);
+			}
+		};
+		window.addEventListener("keydown", onKeyDown);
+		onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+	});
+
 	const virtualRangeLabel = createMemo(() => {
 		const indexes = virtualIndexes();
 		if (indexes.length === 0) return "empty";
@@ -296,6 +319,7 @@ export default function PdfApp() {
 		setStatus("idle");
 		setError(null);
 		setFileName("");
+		setSelectedInstruction(null);
 		if (fileInput) fileInput.value = "";
 		currentPdf = null;
 		currentFileHash = null;
@@ -489,7 +513,7 @@ export default function PdfApp() {
 				const applyVersion = ++paragraphApplyVersion;
 				const instructions = extractAmendatoryInstructions(allParagraphs);
 				const sectionPathByInstruction = new Map<
-					import("./lib/amendatory-instructions").AmendatoryInstruction,
+					AmendatoryInstruction,
 					string
 				>();
 				const unresolvedPaths: string[] = [];
@@ -515,10 +539,7 @@ export default function PdfApp() {
 				}
 
 				const instructionParagraphs = new Set<Paragraph>();
-				const instructionMap = new Map<
-					Paragraph,
-					import("./lib/amendatory-instructions").AmendatoryInstruction
-				>();
+				const instructionMap = new Map<Paragraph, AmendatoryInstruction>();
 
 				for (const instr of instructions) {
 					for (const p of instr.paragraphs) {
@@ -784,9 +805,36 @@ export default function PdfApp() {
 								items={visibleItems()}
 								totalHeight={rowVirtualizer.getTotalSize()}
 								width={0} // handled by CSS
+								onInstructionClick={(instruction) =>
+									setSelectedInstruction(instruction)
+								}
 							/>
 						</div>
 					</div>
+					<Show when={selectedInstruction()}>
+						<div class="pdf-instruction-modal-backdrop">
+							<div
+								class="pdf-instruction-modal"
+								role="dialog"
+								aria-modal="true"
+								aria-label="Parsed instruction tree"
+							>
+								<header class="pdf-instruction-modal-header">
+									<h2 class="pdf-instruction-modal-title">Parsed Tree</h2>
+									<button
+										type="button"
+										class="pdf-secondary-button"
+										onClick={() => setSelectedInstruction(null)}
+									>
+										Close
+									</button>
+								</header>
+								<pre class="pdf-instruction-modal-code">
+									{selectedInstructionTreeJson()}
+								</pre>
+							</div>
+						</div>
+					</Show>
 				</main>
 			</div>
 		</MetaProvider>

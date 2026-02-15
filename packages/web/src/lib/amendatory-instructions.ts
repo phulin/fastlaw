@@ -66,6 +66,9 @@ const DIVISION_HEADER_RE =
 // Heuristic phrases that trigger an instruction block
 const AMENDATORY_PHRASES = ["is amended", "is repealed", "is further amended"];
 const USC_CITATION_RE = /(\d+)\s+U\.S\.C\.\s+\d+(?:\([^)]*\))*/;
+const USC_CITATION_SECTION_RE = /^\d+\s+U\.S\.C\.\s+([0-9A-Za-z-]+)/i;
+const TITLE_SECTION_CITATION_RE =
+	/section\s+(\d+(?:[A-Za-z0-9-]*)(?:\([^)]*\))*)\s+of\s+title\s+(\d+),?\s+United States Code/i;
 
 function isQuotedText(text: string): boolean {
 	return /^[""\u201c'']/.test(text.trimStart());
@@ -150,7 +153,29 @@ function extractTargetString(text: string): string {
 
 function extractUscCitation(text: string): string | null {
 	const match = text.match(USC_CITATION_RE);
-	return match ? match[0] : null;
+	if (match) return match[0];
+
+	const titleSectionMatch = text.match(TITLE_SECTION_CITATION_RE);
+	if (titleSectionMatch) {
+		const section = titleSectionMatch[1];
+		const title = titleSectionMatch[2];
+		return `${title} U.S.C. ${section}`;
+	}
+
+	return null;
+}
+
+function getSectionLevelFromCitation(
+	citation: string | null,
+): HierarchyLevel | null {
+	if (!citation) return null;
+	const match = citation.match(USC_CITATION_SECTION_RE);
+	if (!match) return null;
+	return { type: "section", val: match[1] };
+}
+
+function hasSectionLevel(levels: HierarchyLevel[]): boolean {
+	return levels.some((level) => level.type === "section");
 }
 
 /**
@@ -171,13 +196,16 @@ function stripInstructionLabel(text: string): string {
 
 function parseTarget(target: string): HierarchyLevel[] {
 	const levels: HierarchyLevel[] = [];
-	let current = target;
+	let current = target.replace(/^[A-Z][^\u2014]*\u2014\s*/, "").trim();
 
-	// Regex for "Section X"
-	const secMatch = current.match(/^Section\s+(\w+)/i);
+	// Handle cases where section appears after a lead-in, e.g.
+	// "Subsection (a) of section 4025 of title 10, United States Code"
+	const secMatch = current.match(/\bsection\s+(\w+)/i);
 	if (secMatch) {
 		levels.push({ type: "section", val: secMatch[1] });
-		current = current.substring(secMatch[0].length);
+		const secIndex = secMatch.index ?? 0;
+		const secEnd = secIndex + secMatch[0].length;
+		current = `${current.slice(0, secIndex)} ${current.slice(secEnd)}`.trim();
 	}
 
 	while (true) {
@@ -281,6 +309,12 @@ function parseOperation(text: string): AmendatoryOperation {
 		/inserting\s+["\u201c‘']([^"\u201d’']+)/i,
 	);
 	if (insertingMatch) content = insertingMatch[1];
+	if (!content) {
+		const followingMatch = stripped.match(
+			/the following:\s*["\u201c‘']([^"\u201d’']+)/i,
+		);
+		if (followingMatch) content = followingMatch[1];
+	}
 
 	if (
 		lower.includes("by striking") ||
@@ -419,6 +453,8 @@ export function extractAmendatoryInstructions(
 ): AmendatoryInstruction[] {
 	const instructions: AmendatoryInstruction[] = [];
 	let currentBillSection: string | null = null;
+	const lastSectionByBillSection = new Map<string | null, HierarchyLevel>();
+	const lastCitationByBillSection = new Map<string | null, string>();
 
 	const roots = buildTree(paragraphs);
 
@@ -505,7 +541,37 @@ export function extractAmendatoryInstructions(
 				i = j - 1;
 
 				const targetStr = extractTargetString(text);
-				const rootQuery = parseTarget(targetStr);
+				let rootQuery = parseTarget(targetStr);
+				let uscCitation = extractUscCitation(text);
+				const billSectionKey = currentBillSection;
+				const usesSuchSection = /\bsuch section\b/i.test(targetStr);
+
+				if (!uscCitation && usesSuchSection) {
+					const priorCitation = lastCitationByBillSection.get(billSectionKey);
+					if (priorCitation) {
+						uscCitation = priorCitation;
+					}
+				}
+
+				if (usesSuchSection && !hasSectionLevel(rootQuery)) {
+					const priorSection = lastSectionByBillSection.get(billSectionKey);
+					const citedSection = getSectionLevelFromCitation(uscCitation);
+					const resolvedSection = priorSection ?? citedSection;
+					if (resolvedSection) {
+						rootQuery = [resolvedSection, ...rootQuery];
+					}
+				}
+
+				const rootSection = rootQuery.find(
+					(level): level is Extract<HierarchyLevel, { type: "section" }> =>
+						level.type === "section",
+				);
+				if (rootSection) {
+					lastSectionByBillSection.set(billSectionKey, rootSection);
+				}
+				if (uscCitation) {
+					lastCitationByBillSection.set(billSectionKey, uscCitation);
+				}
 
 				// Reconstruct tree from the linear list of components
 				// The instruction node itself is the 'root' context.
@@ -514,7 +580,7 @@ export function extractAmendatoryInstructions(
 				instructions.push({
 					billSection: currentBillSection,
 					target: targetStr,
-					uscCitation: extractUscCitation(text),
+					uscCitation,
 					text: instructionParagraphs.map((p) => p.text).join("\n"),
 					paragraphs: instructionParagraphs,
 					startPage: instructionParagraphs[0].startPage,

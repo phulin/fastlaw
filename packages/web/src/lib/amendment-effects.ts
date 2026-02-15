@@ -16,6 +16,7 @@ export interface AmendmentEffect {
 	status: "ok" | "unsupported";
 	sectionPath: string;
 	segments: AmendmentEffectSegment[];
+	changes: Array<{ deleted: string; inserted: string }>;
 	deleted: string[];
 	inserted: string[];
 }
@@ -86,6 +87,30 @@ function getLevelRank(type: string): number {
 	}
 }
 
+function mergeHierarchyTargets(
+	baseTarget: HierarchyLevel[] | undefined,
+	nodeTarget: HierarchyLevel[] | undefined,
+): HierarchyLevel[] | undefined {
+	if (!baseTarget && !nodeTarget) return undefined;
+	if (!baseTarget || baseTarget.length === 0) return nodeTarget;
+	if (!nodeTarget || nodeTarget.length === 0) return baseTarget;
+
+	const merged = [...baseTarget];
+	for (const level of nodeTarget) {
+		if (level.type === "none") continue;
+		const levelRank = getLevelRank(level.type);
+		for (let i = merged.length - 1; i >= 0; i--) {
+			const existing = merged[i];
+			if (existing.type === "none") continue;
+			if (getLevelRank(existing.type) >= levelRank) {
+				merged.splice(i, 1);
+			}
+		}
+		merged.push(level);
+	}
+	return merged;
+}
+
 function isLowerRoman(value: string): boolean {
 	return /^[ivxlcdm]+$/.test(value);
 }
@@ -101,7 +126,7 @@ function markerMatchesLevel(
 	if (marker.label !== level.val) return false;
 	switch (level.type) {
 		case "subsection":
-			return /^[a-z]+$/.test(marker.label) && !isLowerRoman(marker.label);
+			return /^[a-z]+$/.test(marker.label);
 		case "paragraph":
 			return /^\d+$/.test(marker.label);
 		case "subparagraph":
@@ -131,6 +156,8 @@ function collectStructureMarkers(text: string): StructureMarker[] {
 		if (!label) continue;
 		let inferredType: string;
 		if (/^\d+$/.test(label)) inferredType = "paragraph";
+		else if (/^[a-z]$/.test(label)) inferredType = "subsection";
+		else if (/^[A-Z]$/.test(label)) inferredType = "subparagraph";
 		else if (isLowerRoman(label)) inferredType = "clause";
 		else if (isUpperRoman(label)) inferredType = "subclause";
 		else if (/^[a-z]+$/.test(label)) inferredType = "subsection";
@@ -201,6 +228,18 @@ function firstIndexOfOrNull(
 	return index === -1 ? null : index;
 }
 
+function normalizeInsertedText(
+	insertedText: string,
+	followingChar: string | undefined,
+): string {
+	if (insertedText.length === 0) return insertedText;
+	if (/\s$/.test(insertedText)) return insertedText;
+	if (!followingChar) return insertedText;
+	if (/\s/.test(followingChar)) return insertedText;
+	if (/\p{P}/u.test(followingChar)) return insertedText;
+	return `${insertedText} `;
+}
+
 function patchFromReplace(
 	text: string,
 	strikingContent: string | undefined,
@@ -263,11 +302,12 @@ function patchFromInsertRelative(
 	const anchorStart = offset + localAnchorStart;
 	const start =
 		direction === "before" ? anchorStart : anchorStart + anchor.length;
+	const followingChar = text[start];
 	return {
 		start,
 		end: start,
 		deleted: "",
-		inserted: content,
+		inserted: normalizeInsertedText(content, followingChar),
 	};
 }
 
@@ -306,17 +346,32 @@ function patchFromAddAtEnd(
 	};
 }
 
-function collectOperations(root: InstructionNode[]): InstructionNode[] {
-	const nodes: InstructionNode[] = [];
-	const walk = (list: InstructionNode[]) => {
+interface ResolvedInstructionNode {
+	node: InstructionNode;
+	target: HierarchyLevel[] | undefined;
+}
+
+function collectOperations(root: InstructionNode[]): ResolvedInstructionNode[] {
+	const nodes: ResolvedInstructionNode[] = [];
+	const walk = (
+		list: InstructionNode[],
+		inheritedTarget: HierarchyLevel[] | undefined,
+	) => {
 		for (const node of list) {
-			nodes.push(node);
+			const resolvedTarget = mergeHierarchyTargets(
+				inheritedTarget,
+				node.operation.target,
+			);
+			nodes.push({
+				node,
+				target: resolvedTarget,
+			});
 			if (node.children.length > 0) {
-				walk(node.children);
+				walk(node.children, resolvedTarget);
 			}
 		}
 	};
-	walk(root);
+	walk(root, undefined);
 	return nodes;
 }
 
@@ -353,42 +408,43 @@ export function computeAmendmentEffect(
 
 	for (const node of operations) {
 		let patch: StringPatch | null = null;
-		const searchRange = getTargetRange(workingText, node.operation.target);
-		switch (node.operation.type) {
+		const searchRange = getTargetRange(workingText, node.target);
+		switch (node.node.operation.type) {
 			case "replace":
 				patch = patchFromReplace(
 					workingText,
-					node.operation.strikingContent,
-					node.operation.content,
+					node.node.operation.strikingContent,
+					node.node.operation.content,
 					searchRange,
 				);
 				break;
 			case "delete":
 				patch = patchFromDelete(
 					workingText,
-					node.operation.strikingContent,
+					node.node.operation.strikingContent,
 					searchRange,
 				);
 				break;
 			case "insert": {
-				if (!node.operation.content) {
+				if (!node.node.operation.content) {
 					break;
 				}
 				const insertAt = searchRange ? searchRange.end : workingText.length;
+				const followingChar = workingText[insertAt];
 				const beforeInsert = workingText.slice(0, insertAt);
 				patch = {
 					start: insertAt,
 					end: insertAt,
 					deleted: "",
-					inserted: `${beforeInsert.endsWith("\n") ? "" : "\n"}${node.operation.content}`,
+					inserted: `${beforeInsert.endsWith("\n") ? "" : "\n"}${normalizeInsertedText(node.node.operation.content, followingChar)}`,
 				};
 				break;
 			}
 			case "insert_before":
 				patch = patchFromInsertRelative(
 					workingText,
-					node.text,
-					node.operation.content,
+					node.node.text,
+					node.node.operation.content,
 					"before",
 					searchRange,
 				);
@@ -396,14 +452,14 @@ export function computeAmendmentEffect(
 			case "insert_after":
 				patch = patchFromInsertRelative(
 					workingText,
-					node.text,
-					node.operation.content,
+					node.node.text,
+					node.node.operation.content,
 					"after",
 					searchRange,
 				);
 				break;
 			case "add_at_end":
-				patch = patchFromAddAtEnd(workingText, node, searchRange);
+				patch = patchFromAddAtEnd(workingText, node.node, searchRange);
 				break;
 			default:
 				break;
@@ -419,6 +475,7 @@ export function computeAmendmentEffect(
 			status: "unsupported",
 			sectionPath,
 			segments: [{ kind: "unchanged", text: sectionBody }],
+			changes: [],
 			deleted: [],
 			inserted: [],
 		};
@@ -428,6 +485,10 @@ export function computeAmendmentEffect(
 		status: "ok",
 		sectionPath,
 		segments: [{ kind: "unchanged", text: workingText }],
+		changes: patches.map((patch) => ({
+			deleted: patch.deleted,
+			inserted: patch.inserted,
+		})),
 		deleted: patches
 			.map((patch) => patch.deleted)
 			.filter((text) => text.length > 0),
