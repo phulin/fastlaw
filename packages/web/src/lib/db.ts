@@ -448,7 +448,8 @@ export const getLevelByPath = async (
 	const parts = path.slice(1).split("/");
 	if (parts.length < 4) return null;
 
-	const sourceCode = parts[1]; // e.g., "cgs" or "usc"
+	const sourceSegment = parts[1] ?? "";
+	const sourceCode = sourceSegment.split("@")[0]; // e.g., "cgs" or "usc"
 	const source = await getSourceByCode(sourceCode);
 	if (!source) return null;
 
@@ -459,7 +460,7 @@ export const getLevelByPath = async (
 	let node = await getNodeByPath(sourceVersion.id, path);
 	if (!node) {
 		// Try with just the identifying part
-		const slugPart = parts.slice(2).join("/");
+		const slugPart = `/${parts.slice(2).join("/")}`;
 		node = await getNodeByPath(sourceVersion.id, slugPart);
 	}
 	return node;

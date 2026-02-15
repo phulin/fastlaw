@@ -18,7 +18,7 @@ async fn test_discover_usc_root_relative_href() {
     let mut fetcher = MockFetcher::new();
     fetcher.add_fixture(USC_DOWNLOAD_PAGE_URL, mock_html);
 
-    let result = discover_usc_root(&fetcher, USC_DOWNLOAD_PAGE_URL)
+    let result = discover_usc_root(&fetcher, USC_DOWNLOAD_PAGE_URL, None)
         .await
         .expect("Discovery failed");
 

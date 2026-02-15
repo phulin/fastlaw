@@ -504,6 +504,6 @@ fn build_reference(mention: &SectionMention) -> SectionCrossReference {
         section: mention.section.clone(),
         offset: mention.offset,
         length: mention.length,
-        link: format!("/statutes/cgs/section/{}", mention.section),
+        link: format!("/statutes/section/{}", mention.section),
     }
 }

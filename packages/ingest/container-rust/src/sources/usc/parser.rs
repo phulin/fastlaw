@@ -813,7 +813,7 @@ where
                     section.capture.num.clone()
                 };
 
-                let base_path = format!("/statutes/usc/section/{}/{}", state.title_num, base_num);
+                let base_path = format!("/section/{}/{}", state.title_num, base_num);
                 let path = uniquify(&mut state.section_path_counts, &base_path);
 
                 let base_key = format!("{}:{}", state.title_num, base_num);
@@ -873,7 +873,7 @@ where
                     .as_deref()
                     .and_then(|f| f.strip_prefix(&format!("title-{}/", state.title_num)))
                     .unwrap_or(&identifier);
-                let path = format!("/statutes/usc/{}/{}", state.title_num, path_suffix);
+                let path = format!("/{}/{}", state.title_num, path_suffix);
 
                 let usc_level = USCLevel {
                     title_num: state.title_num.clone(),
@@ -1201,10 +1201,7 @@ fn usc_section_link_from_href(href: &str) -> Option<String> {
         }
     }
 
-    Some(format!(
-        "/statutes/usc/section/{}/{}",
-        title_num?, section_num?
-    ))
+    Some(format!("/statutes/section/{}/{}", title_num?, section_num?))
 }
 
 fn finalize_ref(section: &mut ActiveSection, open_ref: OpenRef) {

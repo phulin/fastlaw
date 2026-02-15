@@ -247,6 +247,7 @@ app.post("/api/ingest/:source", async (c) => {
 			.split(",")
 			.map((v) => v.trim())
 			.filter((v) => v.length > 0);
+		const manualStartUrl = c.req.query("startUrl")?.trim();
 
 		const sourceId = await getOrCreateSource(
 			c.env.DB,
@@ -285,6 +286,10 @@ app.post("/api/ingest/:source", async (c) => {
 						source: sourceCode,
 						sourceId,
 						selectors: unitSelectors.length > 0 ? unitSelectors : undefined,
+						manualStartUrl:
+							manualStartUrl && manualStartUrl.length > 0
+								? manualStartUrl
+								: undefined,
 						callbackBase,
 						callbackToken,
 					}),

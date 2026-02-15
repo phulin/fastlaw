@@ -96,6 +96,7 @@ export type PageData =
 	| {
 			status: "found";
 			path: string;
+			statuteRoutePrefix: string;
 			node: NodeRecord;
 			source: SourceRecord;
 			sourceVersion: SourceVersionRecord;

@@ -684,5 +684,5 @@ fn build_reference(mention: &SectionMention) -> SectionCrossReference {
 }
 
 fn build_section_link(section: &str, title_num: Option<&str>) -> Option<String> {
-    title_num.map(|t| format!("/statutes/usc/section/{t}/{section}"))
+    title_num.map(|t| format!("/statutes/section/{t}/{section}"))
 }

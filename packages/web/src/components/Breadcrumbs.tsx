@@ -1,9 +1,11 @@
 import { For, Show } from "solid-js";
+import { toStatuteRoutePath } from "~/lib/routes";
 import type { NodeRecord, SourceRecord } from "~/lib/types";
 
 interface BreadcrumbsProps {
 	source: SourceRecord;
 	ancestors: NodeRecord[];
+	routePrefix: string;
 	showHome?: boolean;
 }
 
@@ -36,7 +38,13 @@ export function Breadcrumbs(props: BreadcrumbsProps) {
 							when={index() < props.ancestors.length - 1}
 							fallback={formatAncestorLabel(ancestor)}
 						>
-							<a href={ancestor.path ?? ""}>{formatAncestorLabel(ancestor)}</a>
+							<a
+								href={
+									toStatuteRoutePath(props.routePrefix, ancestor.path) ?? ""
+								}
+							>
+								{formatAncestorLabel(ancestor)}
+							</a>
 						</Show>
 					</>
 				)}

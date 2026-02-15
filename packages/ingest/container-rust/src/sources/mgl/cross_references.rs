@@ -27,7 +27,7 @@ fn normalize_designator(value: &str) -> String {
 
 fn make_link(chapter: &str, section: &str) -> String {
     format!(
-        "/statutes/mgl/chapter/{}/section/{}",
+        "/statutes/chapter/{}/section/{}",
         chapter.to_lowercase(),
         section.to_lowercase()
     )

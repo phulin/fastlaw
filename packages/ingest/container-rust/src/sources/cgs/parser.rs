@@ -549,7 +549,7 @@ fn build_sections_from_parsed_data(
             level_name: "section".to_string(),
             level_index: 2,
             name: section_name,
-            path: format!("/statutes/cgs/section/{normalized_number}"),
+            path: format!("/section/{normalized_number}"),
             readable_id,
             body,
             history_short,

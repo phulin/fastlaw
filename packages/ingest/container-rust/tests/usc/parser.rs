@@ -352,7 +352,7 @@ fn extracts_section_1_with_correct_structure() {
     );
 
     // Paths and IDs
-    assert_eq!(section1.path, "/statutes/usc/section/1/1");
+    assert_eq!(section1.path, "/section/1/1");
     assert_eq!(section1.section_key, "1:1");
 
     // Parent linkage (sections in chapter 1 should have chapter parent)
@@ -573,7 +573,7 @@ fn handles_nested_sections_and_dashes_and_newlines() {
         .iter()
         .find(|s| s.section_num == "1437f-1")
         .unwrap();
-    assert_eq!(s2.path, "/statutes/usc/section/99/1437f-1");
+    assert_eq!(s2.path, "/section/99/1437f-1");
 }
 
 #[test]
@@ -625,8 +625,8 @@ fn test_url_collision_overlapping_parts() {
 
     // Check paths
     assert_ne!(parts[0].path, parts[1].path, "Part paths should be unique");
-    assert_eq!(parts[0].path, "/statutes/usc/10/subtitle-A/part-I");
-    assert_eq!(parts[1].path, "/statutes/usc/10/subtitle-B/part-I");
+    assert_eq!(parts[0].path, "/10/subtitle-A/part-I");
+    assert_eq!(parts[1].path, "/10/subtitle-B/part-I");
 
     // Check sections
     assert_eq!(result.sections.len(), 2);
@@ -634,6 +634,6 @@ fn test_url_collision_overlapping_parts() {
         result.sections[0].path, result.sections[1].path,
         "Section paths should be unique"
     );
-    assert_eq!(result.sections[0].path, "/statutes/usc/section/10/101");
-    assert_eq!(result.sections[1].path, "/statutes/usc/section/10/101-2");
+    assert_eq!(result.sections[0].path, "/section/10/101");
+    assert_eq!(result.sections[1].path, "/section/10/101-2");
 }

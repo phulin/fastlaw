@@ -486,9 +486,9 @@ fn extracts_section_cross_references() {
 fn inlines_cgs_cross_references() {
     let text = "See section 1-1 and sections 1-2 to 1-3, inclusive.";
     let inlined = inline_section_cross_references(text);
-    assert!(inlined.contains("[1-1](/statutes/cgs/section/1-1)"));
-    assert!(inlined.contains("[1-2](/statutes/cgs/section/1-2)"));
-    assert!(inlined.contains("[1-3](/statutes/cgs/section/1-3)"));
+    assert!(inlined.contains("[1-1](/statutes/section/1-1)"));
+    assert!(inlined.contains("[1-2](/statutes/section/1-2)"));
+    assert!(inlined.contains("[1-3](/statutes/section/1-3)"));
 }
 
 // ============================================================

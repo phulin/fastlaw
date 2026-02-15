@@ -39,7 +39,7 @@ async fn adapter_emits_title_chapter_and_sections() {
 
     let first = t
         .expect_node("root/title-20/chapter-377a/section-20-86aa")
-        .path("/statutes/cgs/section/20-86aa")
+        .path("/section/20-86aa")
         .parent("root/title-20/chapter-377a");
 
     let content = first
@@ -93,9 +93,9 @@ async fn adapter_inlines_cross_references_in_body_markdown() {
     t.run_item(item).await;
 
     t.expect_node("root/title-1/chapter-001/section-1-1a")
-        .path("/statutes/cgs/section/1-1a")
-        .content_contains("[42a-1-201](/statutes/cgs/section/42a-1-201)")
-        .content_contains("[42a-9-109](/statutes/cgs/section/42a-9-109)");
+        .path("/section/1-1a")
+        .content_contains("[42a-1-201](/statutes/section/42a-1-201)")
+        .content_contains("[42a-9-109](/statutes/section/42a-9-109)");
 }
 
 #[tokio::test]
@@ -121,6 +121,6 @@ async fn adapter_handles_article_units() {
     t.expect_node("root/title-42a/article-1").level("article");
 
     t.expect_node("root/title-42a/article-1/section-42a-1-101")
-        .path("/statutes/cgs/section/42a-1-101")
+        .path("/section/42a-1-101")
         .parent("root/title-42a/article-1");
 }

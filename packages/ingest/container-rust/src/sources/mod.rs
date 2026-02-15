@@ -11,7 +11,12 @@ pub mod usc;
 
 #[async_trait]
 pub trait SourceAdapter: Send + Sync {
-    async fn discover(&self, fetcher: &dyn Fetcher, url: &str) -> Result<DiscoveryResult, String>;
+    async fn discover(
+        &self,
+        fetcher: &dyn Fetcher,
+        url: &str,
+        manual_start_url: Option<&str>,
+    ) -> Result<DiscoveryResult, String>;
 
     async fn process_url(
         &self,

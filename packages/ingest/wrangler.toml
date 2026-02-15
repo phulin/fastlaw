@@ -72,7 +72,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [[env.production.containers]]
 class_name = "IngestContainer"
-image = "./container-rust/Dockerfile"
+image = "./Dockerfile"
 instance_type = "basic"
 max_instances = 60
 image_vars = { RUST_PROFILE = "release" }

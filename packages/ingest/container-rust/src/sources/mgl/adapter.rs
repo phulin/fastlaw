@@ -17,7 +17,12 @@ pub const MGL_ADAPTER: MglAdapter = MglAdapter;
 
 #[async_trait]
 impl SourceAdapter for MglAdapter {
-    async fn discover(&self, fetcher: &dyn Fetcher, url: &str) -> Result<DiscoveryResult, String> {
+    async fn discover(
+        &self,
+        fetcher: &dyn Fetcher,
+        url: &str,
+        _manual_start_url: Option<&str>,
+    ) -> Result<DiscoveryResult, String> {
         crate::sources::mgl::discover::discover_mgl_root(fetcher, url).await
     }
 
@@ -57,7 +62,7 @@ impl SourceAdapter for MglAdapter {
                             level_index: 0,
                             sort_order: parsed_part.sort_order,
                             name: Some(parsed_part.part_name.clone()),
-                            path: Some(format!("/statutes/mgl/part/{}", title_num.to_lowercase())),
+                            path: Some(format!("/part/{}", title_num.to_lowercase())),
                             readable_id: Some(title_num.to_string()),
                             heading_citation: Some(format!("Part {}", title_num)),
                             source_url: Some(url.to_string()),
@@ -116,7 +121,7 @@ impl SourceAdapter for MglAdapter {
                             sort_order: parsed_chapter.sort_order,
                             name: Some(parsed_chapter.chapter_name.clone()),
                             path: Some(format!(
-                                "/statutes/mgl/part/{}/chapter/{}",
+                                "/part/{}/chapter/{}",
                                 title_num.to_lowercase(),
                                 parsed_chapter.chapter_code.to_lowercase()
                             )),
@@ -226,7 +231,7 @@ impl SourceAdapter for MglAdapter {
                             sort_order,
                             name: Some(section_name),
                             path: Some(format!(
-                                "/statutes/mgl/part/{}/chapter/{}/section/{}",
+                                "/part/{}/chapter/{}/section/{}",
                                 title_num.to_lowercase(),
                                 chapter_code.to_lowercase(),
                                 section_code.to_lowercase()

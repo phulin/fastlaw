@@ -230,7 +230,9 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
             .to_string();
 
         let fetcher = HttpFetcher::new(client.clone());
-        let discovery = adapter.discover(&fetcher, &root_url).await?;
+        let discovery = adapter
+            .discover(&fetcher, &root_url, config.manual_start_url.as_deref())
+            .await?;
 
         let full_version_id = format!("{}-{}", config.source_id, discovery.version_id);
         source_version_id = Some(full_version_id.clone());

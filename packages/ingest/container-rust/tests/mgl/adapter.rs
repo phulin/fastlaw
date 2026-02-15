@@ -96,7 +96,7 @@ async fn test_adapter_mock_integration() {
     t.expect_node("mgl/v1/root/part-i/chapter-1/section-1")
         .level("section")
         .readable_id("1")
-        .path("/statutes/mgl/part/i/chapter/1/section/1")
+        .path("/part/i/chapter/1/section/1")
         .heading_citation("MGL c.1 §1")
         .name("Citizens of commonwealth defined")
         .content_contains("All persons who are citizens of the United States");
@@ -151,7 +151,7 @@ async fn test_adapter_mock_integration_multiple_sections() {
         .level("part")
         .parent("mgl/v1/root")
         .name("ADMINISTRATION OF THE GOVERNMENT")
-        .path("/statutes/mgl/part/i")
+        .path("/part/i")
         .readable_id("I")
         .heading_citation("Part I");
 
@@ -159,7 +159,7 @@ async fn test_adapter_mock_integration_multiple_sections() {
         .level("chapter")
         .parent("mgl/v1/root/part-i")
         .name("JURISDICTION OF THE COMMONWEALTH AND OF THE UNITED STATES")
-        .path("/statutes/mgl/part/i/chapter/1")
+        .path("/part/i/chapter/1")
         .readable_id("1")
         .heading_citation("Chapter 1");
 
@@ -168,7 +168,7 @@ async fn test_adapter_mock_integration_multiple_sections() {
         .parent("mgl/v1/root/part-i/chapter-1")
         .readable_id("1")
         .name("Citizens of commonwealth defined")
-        .path("/statutes/mgl/part/i/chapter/1/section/1")
+        .path("/part/i/chapter/1/section/1")
         .heading_citation("MGL c.1 §1")
         .content_contains("citizens of the United States");
 
@@ -177,7 +177,7 @@ async fn test_adapter_mock_integration_multiple_sections() {
         .parent("mgl/v1/root/part-i/chapter-1")
         .readable_id("2")
         .name("Sovereignty and jurisdiction of commonwealth")
-        .path("/statutes/mgl/part/i/chapter/1/section/2")
+        .path("/part/i/chapter/1/section/2")
         .heading_citation("MGL c.1 §2")
         .content_contains("The sovereignty and jurisdiction of the commonwealth");
 }

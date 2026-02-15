@@ -68,7 +68,7 @@ pub async fn discover_mgl_root(
         level_index: -1,
         sort_order: 0,
         name: Some("Massachusetts General Laws".to_string()),
-        path: Some("/statutes/mgl".to_string()),
+        path: Some("/".to_string()),
         readable_id: Some("MGL".to_string()),
         heading_citation: Some("MGL".to_string()),
         source_url: Some(parts_url.to_string()),

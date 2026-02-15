@@ -73,7 +73,7 @@ async fn test_adapter_matches_42_usc_302_nodepayload() {
         .expect_node("root/t42/ch7/schI/section-302")
         .level("section")
         .parent("root/t42/ch7/schI")
-        .path("/statutes/usc/section/42/302")
+        .path("/section/42/302")
         .readable_id("42 USC 302")
         .heading_citation("42 USC 302")
         .name("State old-age plans");

@@ -18,8 +18,13 @@ pub const USC_ADAPTER: UscAdapter = UscAdapter;
 
 #[async_trait]
 impl SourceAdapter for UscAdapter {
-    async fn discover(&self, fetcher: &dyn Fetcher, url: &str) -> Result<DiscoveryResult, String> {
-        crate::sources::usc::discover::discover_usc_root(fetcher, url).await
+    async fn discover(
+        &self,
+        fetcher: &dyn Fetcher,
+        url: &str,
+        manual_start_url: Option<&str>,
+    ) -> Result<DiscoveryResult, String> {
+        crate::sources::usc::discover::discover_usc_root(fetcher, url, manual_start_url).await
     }
 
     async fn process_url(
@@ -267,7 +272,7 @@ async fn emit_title_node(
                 level_index: 0,
                 sort_order: context.build.unit_sort_order,
                 name: Some(title_name.to_string()),
-                path: Some(format!("/statutes/usc/title/{title_num}")),
+                path: Some(format!("/title/{title_num}")),
                 readable_id: Some(title_num.to_string()),
                 heading_citation: Some(format!("Title {title_num}")),
                 source_url: Some(url.to_string()),

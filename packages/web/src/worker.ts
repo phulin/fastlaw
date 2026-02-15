@@ -12,11 +12,16 @@ import {
 	getNodeContent,
 	getSiblingNodes,
 	getSourceByCode,
+	getSourceVersionById,
 	listIngestJobs,
 	listIngestJobUnits,
 	setEnv,
 } from "./lib/db";
-import { isDocumentRoute, isKnownPageRoute } from "./lib/routes";
+import {
+	isDocumentRoute,
+	isKnownPageRoute,
+	parseStatuteRoute,
+} from "./lib/routes";
 import type { Env } from "./lib/types";
 import { handleQuickSearch, handleSearch } from "./server/search";
 
@@ -107,7 +112,8 @@ app.post("/api/statutes/section-bodies", async (c) => {
 	const uniqueResults = await Promise.all(
 		uniquePaths.map(async (path) => {
 			try {
-				if (!path.startsWith("/statutes/")) {
+				const route = parseStatuteRoute(path);
+				if (!route) {
 					return {
 						path,
 						status: "error" as const,
@@ -115,20 +121,16 @@ app.post("/api/statutes/section-bodies", async (c) => {
 					};
 				}
 
-				const sourceCode = path.split("/")[2];
-				if (!sourceCode) {
-					return {
-						path,
-						status: "error" as const,
-						error: "Unable to determine source code from path",
-					};
-				}
-
-				const source = await getSourceByCode(sourceCode);
+				const source = await getSourceByCode(route.sourceCode);
 				if (!source) return { path, status: "not_found" as const };
-				const sourceVersion = await getLatestSourceVersion(source.id);
+				const sourceVersion = route.sourceVersionId
+					? await getSourceVersionById(route.sourceVersionId)
+					: await getLatestSourceVersion(source.id);
 				if (!sourceVersion) return { path, status: "not_found" as const };
-				const node = await getNodeByPath(sourceVersion.id, path);
+				if (sourceVersion.source_id !== source.id) {
+					return { path, status: "not_found" as const };
+				}
+				const node = await getNodeByPath(sourceVersion.id, route.nodePath);
 				if (!node) return { path, status: "not_found" as const };
 				const content = await getNodeContent(node);
 				if (!content) return { path, status: "not_found" as const };
@@ -197,40 +199,41 @@ app.get("*", async (c) => {
 
 	let pageData: PageData | null = null;
 
-	// Parse URL to extract source code and node path
-	// Format: /statutes/{source}/{level_name}/{path} or /statutes/{source}/section/{title}/{section}
-	const pathParts = url.pathname.replace(/^\/+/, "").split("/");
-	const sourceCode = pathParts[1]; // e.g., "cgs", "usc"
-
 	if (isDocumentRoute(url.pathname)) {
 		const path = url.pathname;
+		const route = parseStatuteRoute(path);
 
 		// Get source and version
-		const source = sourceCode ? await getSourceByCode(sourceCode) : null;
+		const source = route ? await getSourceByCode(route.sourceCode) : null;
 		if (!source) {
 			pageData = { status: "missing", path };
 		} else {
-			const sourceVersion = await getLatestSourceVersion(source.id);
+			const sourceVersion = route?.sourceVersionId
+				? await getSourceVersionById(route.sourceVersionId)
+				: await getLatestSourceVersion(source.id);
 			if (!sourceVersion) {
 				pageData = { status: "missing", path };
+			} else if (sourceVersion.source_id !== source.id) {
+				pageData = { status: "missing", path };
 			} else {
+				const nodePath = route?.nodePath ?? "/";
 				if (path.endsWith(".json")) {
-					const basePath = path.slice(0, path.length - 5);
+					const basePath = nodePath.slice(0, nodePath.length - 5);
 
 					const node = await getNodeByPath(sourceVersion.id, basePath);
 					if (!node) {
-						return c.json({ status: "missing", path: basePath }, 404);
+						return c.json({ status: "missing", path }, 404);
 					}
 
 					const content = await getNodeContent(node);
 					if (!content) {
-						return c.json({ status: "missing", path: basePath }, 404);
+						return c.json({ status: "missing", path }, 404);
 					}
 
 					return c.json(content);
 				}
 
-				const node = await getNodeByPath(sourceVersion.id, path);
+				const node = await getNodeByPath(sourceVersion.id, nodePath);
 				if (!node) {
 					pageData = { status: "missing", path };
 				} else {
@@ -249,6 +252,7 @@ app.get("*", async (c) => {
 					pageData = {
 						status: "found",
 						path,
+						statuteRoutePrefix: route?.routePrefix ?? `/statutes/${source.id}`,
 						node,
 						source,
 						sourceVersion,

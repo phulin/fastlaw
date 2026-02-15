@@ -4,6 +4,7 @@ import { Breadcrumbs } from "~/components/Breadcrumbs";
 import { Footer } from "~/components/Footer";
 import { Header } from "~/components/Header";
 import { renderMarkdown } from "~/lib/markdown";
+import { toStatuteRoutePath } from "~/lib/routes";
 import { capitalizeWords, pluralize } from "~/lib/text";
 import type { NodeRecord, PageData } from "~/lib/types";
 
@@ -30,6 +31,7 @@ export function NodePage(props: NodePageProps) {
 	const ancestors = () => props.data.ancestors ?? [];
 	const nav = () => props.data.nav;
 	const siblings = () => props.data.siblings ?? [];
+	const statuteRoutePrefix = () => props.data.statuteRoutePrefix;
 
 	const isSection = () => node().level_name === "section";
 
@@ -126,6 +128,10 @@ export function NodePage(props: NodePageProps) {
 
 	const prevNode = () => nav()?.prev ?? null;
 	const nextNode = () => nav()?.next ?? null;
+	const markdownOptions = () => ({
+		statuteRoutePrefix: statuteRoutePrefix(),
+		sourceCode: source().id,
+	});
 
 	let tocListRef: HTMLDivElement | undefined;
 	onMount(() => {
@@ -149,7 +155,12 @@ export function NodePage(props: NodePageProps) {
 									{(sibling) => (
 										<a
 											class={`toc-item${sibling.id === node().id ? " active" : ""}`}
-											href={sibling.path ?? "#"}
+											href={
+												toStatuteRoutePath(
+													statuteRoutePrefix(),
+													sibling.path,
+												) ?? "#"
+											}
 										>
 											<span class="toc-title">
 												{sibling.readable_id ?? sibling.id}
@@ -183,6 +194,7 @@ export function NodePage(props: NodePageProps) {
 						<Breadcrumbs
 							source={source()}
 							ancestors={ancestors()}
+							routePrefix={statuteRoutePrefix()}
 							showHome={!isSection()}
 						/>
 						<h1>{heading()}</h1>
@@ -196,7 +208,10 @@ export function NodePage(props: NodePageProps) {
 									return (
 										<div
 											class="markdown"
-											innerHTML={renderMarkdown(block.content ?? "")}
+											innerHTML={renderMarkdown(
+												block.content ?? "",
+												markdownOptions(),
+											)}
 										/>
 									);
 								}}
@@ -222,7 +237,10 @@ export function NodePage(props: NodePageProps) {
 												<Show when={block.content}>
 													<div
 														class="markdown"
-														innerHTML={renderMarkdown(block.content ?? "")}
+														innerHTML={renderMarkdown(
+															block.content ?? "",
+															markdownOptions(),
+														)}
 													/>
 												</Show>
 											</div>
@@ -240,7 +258,13 @@ export function NodePage(props: NodePageProps) {
 							<div class="section-list">
 								<For each={children()}>
 									{(child) => (
-										<a class="section-row" href={child.path ?? "#"}>
+										<a
+											class="section-row"
+											href={
+												toStatuteRoutePath(statuteRoutePrefix(), child.path) ??
+												"#"
+											}
+										>
 											<span class="section-number">
 												{child.readable_id ?? child.id}
 											</span>
@@ -256,13 +280,29 @@ export function NodePage(props: NodePageProps) {
 					<Show when={nav()}>
 						<div class="statute-nav">
 							<Show when={prevNode()}>
-								<a class="statute-nav-link" href={prevNode()?.path ?? "#"}>
+								<a
+									class="statute-nav-link"
+									href={
+										toStatuteRoutePath(
+											statuteRoutePrefix(),
+											prevNode()?.path,
+										) ?? "#"
+									}
+								>
 									<span class="statute-nav-label">Previous</span>
 									<span>{navLabel(prevNode())}</span>
 								</a>
 							</Show>
 							<Show when={nextNode()}>
-								<a class="statute-nav-link" href={nextNode()?.path ?? "#"}>
+								<a
+									class="statute-nav-link"
+									href={
+										toStatuteRoutePath(
+											statuteRoutePrefix(),
+											nextNode()?.path,
+										) ?? "#"
+									}
+								>
 									<span class="statute-nav-label">Next</span>
 									<span>{navLabel(nextNode())}</span>
 								</a>

@@ -19,7 +19,12 @@ pub const CGS_ADAPTER: CgsAdapter = CgsAdapter;
 
 #[async_trait]
 impl SourceAdapter for CgsAdapter {
-    async fn discover(&self, fetcher: &dyn Fetcher, url: &str) -> Result<DiscoveryResult, String> {
+    async fn discover(
+        &self,
+        fetcher: &dyn Fetcher,
+        url: &str,
+        _manual_start_url: Option<&str>,
+    ) -> Result<DiscoveryResult, String> {
         crate::sources::cgs::discover::discover_cgs_root(fetcher, url).await
     }
 
@@ -58,7 +63,7 @@ impl SourceAdapter for CgsAdapter {
                             level_index: 0,
                             sort_order: designator_sort_order(&normalized_title_id),
                             name: Some(title_name),
-                            path: Some(format!("/statutes/cgs/title/{normalized_title_id}")),
+                            path: Some(format!("/title/{normalized_title_id}")),
                             readable_id: Some(normalized_title_id.clone()),
                             heading_citation: Some(format!("Title {normalized_title_id}")),
                             source_url: Some(url.to_string()),
@@ -123,7 +128,7 @@ impl SourceAdapter for CgsAdapter {
                             sort_order: designator_sort_order(&chapter_id),
                             name: parsed.chapter_title.clone(),
                             path: Some(format!(
-                                "/statutes/cgs/{}/{}/{}",
+                                "/{}/{}/{}",
                                 unit_kind.as_str(),
                                 normalized_title_id,
                                 chapter_id

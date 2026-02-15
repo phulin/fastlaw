@@ -70,7 +70,7 @@ pub async fn discover_cgs_root(
         level_index: -1,
         sort_order: 0,
         name: Some(SOURCE_NAME.to_string()),
-        path: Some("/statutes/cgs".to_string()),
+        path: Some("/".to_string()),
         readable_id: Some("CGS".to_string()),
         heading_citation: Some("CGS".to_string()),
         source_url: Some(start_url.to_string()),

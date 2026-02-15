@@ -10,13 +10,15 @@ const SOURCE_NAME: &str = "United States Code";
 
 pub async fn discover_usc_root(
     fetcher: &dyn crate::runtime::fetcher::Fetcher,
-    download_base: &str,
+    _download_base: &str,
+    manual_start_url: Option<&str>,
 ) -> Result<DiscoveryResult, String> {
-    let html = fetcher.fetch(USC_DOWNLOAD_PAGE_URL).await?;
+    let start_url = manual_start_url.unwrap_or(USC_DOWNLOAD_PAGE_URL);
+    let html = fetcher.fetch(start_url).await?;
     let hrefs = extract_href_links(&html);
 
-    let base_url = Url::parse(USC_DOWNLOAD_PAGE_URL)
-        .map_err(|e| format!("Failed to parse USC download page URL: {e}"))?;
+    let base_url = Url::parse(start_url)
+        .map_err(|e| format!("Failed to parse USC start URL `{start_url}`: {e}"))?;
 
     let xml_link_re = Regex::new(r"(?i)xml_usc(\d{2}[a-z]?)@")
         .map_err(|e| format!("Failed to compile USC XML link regex: {e}"))?;
@@ -96,10 +98,10 @@ pub async fn discover_usc_root(
         level_index: -1,
         sort_order: 0,
         name: Some(SOURCE_NAME.to_string()),
-        path: Some("/statutes/usc".to_string()),
+        path: Some("/".to_string()),
         readable_id: Some("USC".to_string()),
         heading_citation: Some("USC".to_string()),
-        source_url: Some(download_base.to_string()),
+        source_url: Some(start_url.to_string()),
         accessed_at: Some(chrono::Utc::now().to_rfc3339()),
     };
 

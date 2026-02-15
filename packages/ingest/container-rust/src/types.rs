@@ -53,6 +53,7 @@ pub struct IngestConfig {
     pub source_id: String,
     pub selectors: Option<Vec<String>>,
     pub units: Option<Vec<UnitEntry>>,
+    pub manual_start_url: Option<String>,
     pub callback_base: String,
     pub callback_token: String,
     pub source_version_id: Option<String>,
