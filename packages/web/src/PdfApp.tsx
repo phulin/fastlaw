@@ -729,7 +729,9 @@ export default function PdfApp() {
 							item: {
 								type: "paragraph",
 								text: p.text,
+								isBold: p.isBold,
 								colorIndex: null,
+								level: p.level ?? null,
 								topPercent,
 							},
 							pageNumber: p.startPage,

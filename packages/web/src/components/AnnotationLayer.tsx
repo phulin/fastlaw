@@ -17,8 +17,23 @@ interface AnnotationLayerProps {
 }
 
 const ITEM_GAP = 0;
+const LEADING_MARKER_RE = /^\(([^)]+)\)/;
 
-const renderFailedInstructionMarkdown = (
+const extractLeadingMarkers = (text: string): string[] => {
+	const markers: string[] = [];
+	let remaining = text.trimStart();
+
+	while (remaining.startsWith("(")) {
+		const markerMatch = remaining.match(LEADING_MARKER_RE);
+		if (!markerMatch) break;
+		markers.push(markerMatch[0]);
+		remaining = remaining.slice(markerMatch[0].length).trimStart();
+	}
+
+	return markers;
+};
+
+const renderInstructionMarkdown = (
 	instruction: InstructionPageItem["instruction"],
 ): string => {
 	if (instruction.paragraphs.length === 0) {
@@ -37,6 +52,65 @@ const renderFailedInstructionMarkdown = (
 			return `${marker}${paragraph.text}`;
 		})
 		.join("\n\n");
+};
+
+const getInstructionLocationHeader = (
+	instruction: InstructionPageItem["instruction"],
+	locationMarkers: string[],
+): string => {
+	const billSection = instruction.billSection?.trim() ?? "Instruction";
+	const location =
+		locationMarkers.length > 0
+			? `${billSection} ${locationMarkers.join("")}:`
+			: billSection;
+	const citation =
+		instruction.uscCitation?.replace(/U\.S\.C\./g, "USC") ?? instruction.target;
+	return `${location} Edit ${citation}.`;
+};
+
+const getInstructionLocationMarkers = (
+	items: AnnotationLayerProps["items"],
+	instructionIndex: number,
+): string[] => {
+	const instructionItem = items[instructionIndex]?.item;
+	if (!instructionItem || instructionItem.type !== "instruction") {
+		return [];
+	}
+
+	const firstInstructionParagraph = instructionItem.instruction.paragraphs[0];
+	const instructionMarkers = extractLeadingMarkers(
+		firstInstructionParagraph?.text ?? "",
+	);
+	const firstInstructionLevel = firstInstructionParagraph?.level ?? 0;
+
+	if (instructionMarkers.length === 0 || firstInstructionLevel <= 0) {
+		return instructionMarkers;
+	}
+
+	const ancestorByLevel = new Map<number, string>();
+	for (let i = instructionIndex - 1; i >= 0; i--) {
+		const item = items[i]?.item;
+		if (!item || item.type !== "paragraph" || item.level === null) continue;
+		if (item.level < 0 || item.level >= firstInstructionLevel) continue;
+		if (ancestorByLevel.has(item.level)) continue;
+		const marker = extractLeadingMarkers(item.text)[0];
+		if (!marker) continue;
+		ancestorByLevel.set(item.level, marker);
+		if (ancestorByLevel.size === firstInstructionLevel) break;
+	}
+
+	const ancestorMarkers: string[] = [];
+	for (let level = 0; level < firstInstructionLevel; level++) {
+		const marker = ancestorByLevel.get(level);
+		if (marker) {
+			ancestorMarkers.push(marker);
+		}
+	}
+
+	const instructionMarkerPath = ancestorMarkers.concat(instructionMarkers);
+	return instructionMarkerPath.length > 0
+		? instructionMarkerPath
+		: instructionMarkers;
 };
 
 export function AnnotationLayer(props: AnnotationLayerProps) {
@@ -99,7 +173,7 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 			}}
 		>
 			<For each={props.items}>
-				{(entry) => (
+				{(entry, index) => (
 					<div
 						style={{
 							position: "absolute",
@@ -120,6 +194,11 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 											? `pdf-amend-color-${entry.item.colorIndex}`
 											: undefined
 									}
+									style={
+										entry.item.type === "paragraph" && entry.item.isBold
+											? { "font-weight": 700 }
+											: undefined
+									}
 								>
 									{entry.item.type === "paragraph" ? entry.item.text : ""}
 								</p>
@@ -130,6 +209,10 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 									PageItem,
 									{ type: "instruction" }
 								>;
+								const locationMarkers = getInstructionLocationMarkers(
+									props.items,
+									index(),
+								);
 								return (
 									<button
 										type="button"
@@ -142,17 +225,36 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 											>
 												<AmendedSnippet
 													effect={instructionItem.amendmentEffect}
+													instructionHeader={getInstructionLocationHeader(
+														instructionItem.instruction,
+														locationMarkers,
+													)}
+													instructionMarkdown={renderInstructionMarkdown(
+														instructionItem.instruction,
+													)}
 												/>
 											</div>
 										) : (
 											<div
-												class={`pdf-amend-color-${instructionItem.colorIndex} markdown`}
-												innerHTML={renderMarkdown(
-													renderFailedInstructionMarkdown(
-														instructionItem.instruction,
-													),
-												)}
-											/>
+												class={`pdf-amend-color-${instructionItem.colorIndex}`}
+											>
+												<header class="pdf-amended-snippet-header">
+													<h4>
+														{getInstructionLocationHeader(
+															instructionItem.instruction,
+															locationMarkers,
+														)}
+													</h4>
+												</header>
+												<div
+													class="pdf-amended-snippet-instruction markdown"
+													innerHTML={renderMarkdown(
+														renderInstructionMarkdown(
+															instructionItem.instruction,
+														),
+													)}
+												/>
+											</div>
 										)}
 									</button>
 								);

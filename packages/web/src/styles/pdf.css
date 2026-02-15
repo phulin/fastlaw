@@ -322,7 +322,9 @@ body {
 	background-color: white;
 	position: relative;
 	padding: 0 2rem;
-	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+	font-family:
+		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+		sans-serif;
 	font-size: 0.9rem;
 }
 
@@ -382,6 +384,24 @@ body {
 	font-weight: 700;
 	letter-spacing: 0.01em;
 	text-transform: uppercase;
+}
+
+.pdf-amended-snippet-header {
+	margin: 0 0 0.4rem;
+}
+
+.pdf-amended-snippet-header h4 {
+	margin: 0;
+	font-weight: 700;
+	font-size: 1rem;
+}
+
+.pdf-amended-snippet-instruction {
+	margin-bottom: 0.55rem;
+}
+
+.pdf-amended-snippet-main {
+	margin-top: 0.35rem;
 }
 
 ins {

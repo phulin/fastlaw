@@ -18,6 +18,7 @@ export function createParagraph(
 		items: [],
 		page,
 		pageHeight: 800,
+		isBold: false,
 	};
 
 	const lines = (options.lines || [defaultLine]).map((l) => ({
@@ -35,6 +36,7 @@ export function createParagraph(
 		yStart: y,
 		yEnd: y + 10,
 		pageHeight: 800,
+		isBold: false,
 		...options,
 	} as Paragraph;
 }

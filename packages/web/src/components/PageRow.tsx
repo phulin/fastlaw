@@ -6,7 +6,9 @@ export type PageItem =
 	| {
 			type: "paragraph";
 			text: string;
+			isBold: boolean;
 			colorIndex: number | null;
+			level: number | null;
 			topPercent: number;
 	  }
 	| {

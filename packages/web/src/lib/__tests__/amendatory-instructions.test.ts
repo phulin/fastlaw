@@ -463,7 +463,7 @@ describe("extractAmendatoryInstructions", () => {
 
 		const instructions = extractAmendatoryInstructions(paragraphs);
 		expect(instructions).toHaveLength(1);
-		expect(instructions[0].paragraphs).toHaveLength(5);
+		expect(instructions[0].paragraphs).toHaveLength(9);
 
 		const operations = instructions[0].tree;
 		expect(operations).toHaveLength(2);

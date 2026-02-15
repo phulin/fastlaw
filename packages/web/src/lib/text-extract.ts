@@ -17,6 +17,7 @@ export interface Line {
 	text: string;
 	items: TextItem[];
 	pageHeight: number;
+	isBold: boolean;
 }
 
 export interface Paragraph {
@@ -29,6 +30,7 @@ export interface Paragraph {
 	yStart: number; // start line top
 	yEnd: number; // start line bottom
 	pageHeight: number;
+	isBold: boolean;
 	level?: number;
 }
 
@@ -51,6 +53,14 @@ interface LineNumberColumnState {
 	seen: number;
 	active: boolean;
 }
+
+interface TextStyleLike {
+	fontFamily?: string;
+	fontWeight?: string | number;
+	fontStyle?: string;
+}
+
+type TextStylesByFontName = Record<string, TextStyleLike | undefined>;
 
 /* ===========================
  * Utilities
@@ -204,6 +214,31 @@ function isTextItem(item: unknown): item is TextItem {
 	);
 }
 
+function isBoldTextStyle(
+	style: TextStyleLike | undefined,
+	fontName: string | undefined,
+): boolean {
+	if (style) {
+		if (typeof style.fontWeight === "number" && style.fontWeight >= 600) {
+			return true;
+		}
+		if (
+			typeof style.fontWeight === "string" &&
+			/(bold|black|heavy|demi|semibold|[6-9]00)/i.test(style.fontWeight)
+		) {
+			return true;
+		}
+		if (
+			typeof style.fontFamily === "string" &&
+			/(bold|black|heavy|demi|semibold)/i.test(style.fontFamily)
+		) {
+			return true;
+		}
+	}
+	if (!fontName) return false;
+	return /(bold|black|heavy|demi|semibold|sb)/i.test(fontName);
+}
+
 /* ===========================
  * Extractor class
  * =========================== */
@@ -227,8 +262,15 @@ export class PdfParagraphExtractor {
 		items: TextItem[],
 		pageWidth: number,
 		pageHeight: number,
+		textStyles: TextStylesByFontName = {},
 	): void {
-		const lines = this.detectLines(items, pageNumber, pageWidth, pageHeight);
+		const lines = this.detectLines(
+			items,
+			pageNumber,
+			pageWidth,
+			pageHeight,
+			textStyles,
+		);
 		for (const rawLine of lines) {
 			this.processLine(rawLine);
 		}
@@ -300,6 +342,7 @@ export class PdfParagraphExtractor {
 		pageNumber: number,
 		pageWidth: number,
 		pageHeight: number,
+		textStyles: TextStylesByFontName,
 	): Line[] {
 		const enriched = items
 			.filter(
@@ -314,6 +357,7 @@ export class PdfParagraphExtractor {
 				h: item.height || 10,
 				yStart: item.transform[5] + (item.height || 10), // PDF space is Y-up, so top is y + height
 				yEnd: item.transform[5],
+				style: textStyles[item.fontName],
 			}));
 
 		if (enriched.length === 0) return [];
@@ -358,6 +402,7 @@ export class PdfParagraphExtractor {
 			h: number;
 			yStart: number;
 			yEnd: number;
+			style?: TextStyleLike;
 		}[],
 		page: number,
 		pageHeight: number,
@@ -374,6 +419,10 @@ export class PdfParagraphExtractor {
 			text += enriched[i].item.str;
 		}
 		text = normalizeDoubleQuotes(text);
+		const boldItemCount = enriched.filter((entry) =>
+			isBoldTextStyle(entry.style, entry.item.fontName),
+		).length;
+		const isBold = boldItemCount > enriched.length / 2;
 
 		return {
 			page,
@@ -385,6 +434,7 @@ export class PdfParagraphExtractor {
 			text,
 			items: enriched.map((e) => e.item),
 			pageHeight,
+			isBold,
 		};
 	}
 
@@ -596,6 +646,8 @@ export class PdfParagraphExtractor {
 	}
 
 	private finalizeParagraph(p: ParagraphBuilder): Paragraph {
+		const boldLineCount = p.lines.filter((line) => line.isBold).length;
+		const isBold = boldLineCount > p.lines.length / 2;
 		return {
 			startPage: p.startPage,
 			endPage: p.lastLine.page,
@@ -606,6 +658,7 @@ export class PdfParagraphExtractor {
 			yStart: p.lines[0].yStart,
 			yEnd: p.lines[0].yEnd,
 			pageHeight: p.lines[0].pageHeight,
+			isBold,
 		};
 	}
 }
@@ -624,19 +677,13 @@ export async function extractParagraphs(
 			}
 			setTimeout(() => resolve(), 0);
 		});
-	const readStreamTextItems = async (
+	const readPageTextContent = async (
 		page: Awaited<ReturnType<PDFDocumentProxy["getPage"]>>,
-	): Promise<TextItem[]> => {
-		const reader = page.streamTextContent().getReader();
-		const items: TextItem[] = [];
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			const chunk = value as { items?: unknown[] } | undefined;
-			if (!chunk?.items) continue;
-			items.push(...chunk.items.filter(isTextItem));
-		}
-		return items;
+	): Promise<{ items: TextItem[]; styles: TextStylesByFontName }> => {
+		const textContent = await page.getTextContent();
+		const items = textContent.items.filter(isTextItem);
+		const styles = textContent.styles as TextStylesByFontName;
+		return { items, styles };
 	};
 
 	const extractor = new PdfParagraphExtractor();
@@ -644,9 +691,15 @@ export async function extractParagraphs(
 	for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
 		if (pageNum % 25 === 0) await waitForAnimationFrame();
 		const page = await pdf.getPage(pageNum);
-		const textItems = await readStreamTextItems(page);
+		const { items, styles } = await readPageTextContent(page);
 		const viewport = page.getViewport({ scale: 1 });
-		extractor.ingestPage(pageNum, textItems, viewport.width, viewport.height);
+		extractor.ingestPage(
+			pageNum,
+			items,
+			viewport.width,
+			viewport.height,
+			styles,
+		);
 	}
 
 	const paragraphs = extractor.finish();
