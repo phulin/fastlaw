@@ -1,0 +1,151 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`computeAmendmentEffect target scoping > applies 10 U.S.C. 9062(j) minimum inventory amendments against full section text 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [],
+        "label": {
+          "type": "paragraph",
+          "val": "1",
+        },
+        "operation": {
+          "content": "a total aircraft inventory of air refueling tanker aircraft—
+“(A) of not less than 466 aircraft during the period ending on September 30, 2026;
+“(B) of not less than 478 aircraft during the period beginning on October 1, 2026, and ending on September 30, 2027;
+“(C) of not less than 490 aircraft during the period beginning on October 1, 2027, and ending on September 30, 2028; and
+“(D) of not less than 502 aircraft beginning on October 1, 2028.",
+          "strikingContent": "a total aircraft inventory of air refueling tanker aircraft of not less than 466 aircraft.",
+          "target": [
+            {
+              "type": "paragraph",
+              "val": "1",
+            },
+          ],
+          "type": "replace",
+        },
+        "text": "(1) in paragraph (1), by striking “a total aircraft inventory of air refueling tanker aircraft of not less than 466 aircraft.” and inserting “a total aircraft inventory of air refueling tanker aircraft—
+“(A) of not less than 466 aircraft during the period ending on September 30, 2026;
+“(B) of not less than 478 aircraft during the period beginning on October 1, 2026, and ending on September 30, 2027;
+“(C) of not less than 490 aircraft during the period beginning on October 1, 2027, and ending on September 30, 2028; and
+“(D) of not less than 502 aircraft beginning on October 1, 2028.”; and",
+      },
+      {
+        "children": [],
+        "label": {
+          "type": "paragraph",
+          "val": "2",
+        },
+        "operation": {
+          "content": "below the applicable level specified in paragraph (1)",
+          "strikingContent": "below 466",
+          "target": [
+            {
+              "type": "paragraph",
+              "val": "2",
+            },
+          ],
+          "type": "replace",
+        },
+        "text": "(2) in paragraph (2), by striking “below 466” and inserting “below the applicable level specified in paragraph (1)”.",
+      },
+    ],
+    "label": {
+      "type": "subsection",
+      "val": "a",
+    },
+    "operation": {
+      "content": undefined,
+      "strikingContent": undefined,
+      "target": [
+        {
+          "type": "section",
+          "val": "9062",
+        },
+        {
+          "type": "subsection",
+          "val": "j",
+        },
+      ],
+      "type": "context",
+    },
+    "text": "(a) MINIMUM INVENTORY REQUIREMENT.—Section 9062(j) of title 10, United States Code, is amended—",
+  },
+]
+`;
+
+exports[`computeAmendmentEffect target scoping > parses 10 U.S.C. 9062(j) minimum inventory amendment into the expected operation tree 1`] = `
+[
+  {
+    "children": [
+      {
+        "children": [],
+        "label": {
+          "type": "paragraph",
+          "val": "1",
+        },
+        "operation": {
+          "content": "a total aircraft inventory of air refueling tanker aircraft—
+“(A) of not less than 466 aircraft during the period ending on September 30, 2026;
+“(B) of not less than 478 aircraft during the period beginning on October 1, 2026, and ending on September 30, 2027;
+“(C) of not less than 490 aircraft during the period beginning on October 1, 2027, and ending on September 30, 2028; and
+“(D) of not less than 502 aircraft beginning on October 1, 2028.",
+          "strikingContent": "a total aircraft inventory of air refueling tanker aircraft of not less than 466 aircraft.",
+          "target": [
+            {
+              "type": "paragraph",
+              "val": "1",
+            },
+          ],
+          "type": "replace",
+        },
+        "text": "(1) in paragraph (1), by striking “a total aircraft inventory of air refueling tanker aircraft of not less than 466 aircraft.” and inserting “a total aircraft inventory of air refueling tanker aircraft—
+“(A) of not less than 466 aircraft during the period ending on September 30, 2026;
+“(B) of not less than 478 aircraft during the period beginning on October 1, 2026, and ending on September 30, 2027;
+“(C) of not less than 490 aircraft during the period beginning on October 1, 2027, and ending on September 30, 2028; and
+“(D) of not less than 502 aircraft beginning on October 1, 2028.”; and",
+      },
+      {
+        "children": [],
+        "label": {
+          "type": "paragraph",
+          "val": "2",
+        },
+        "operation": {
+          "content": "below the applicable level specified in paragraph (1)",
+          "strikingContent": "below 466",
+          "target": [
+            {
+              "type": "paragraph",
+              "val": "2",
+            },
+          ],
+          "type": "replace",
+        },
+        "text": "(2) in paragraph (2), by striking “below 466” and inserting “below the applicable level specified in paragraph (1)”.",
+      },
+    ],
+    "label": {
+      "type": "subsection",
+      "val": "a",
+    },
+    "operation": {
+      "content": undefined,
+      "strikingContent": undefined,
+      "target": [
+        {
+          "type": "section",
+          "val": "9062",
+        },
+        {
+          "type": "subsection",
+          "val": "j",
+        },
+      ],
+      "type": "context",
+    },
+    "text": "(a) MINIMUM INVENTORY REQUIREMENT.—Section 9062(j) of title 10, United States Code, is amended—",
+  },
+]
+`;

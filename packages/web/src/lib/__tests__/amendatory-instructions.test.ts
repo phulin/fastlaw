@@ -1,46 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { extractAmendatoryInstructions } from "../amendatory-instructions";
 import type { Paragraph } from "../text-extract";
-
-function createMockParagraph(
-	text: string,
-	xStart: number = 0,
-	startPage: number = 1,
-): Paragraph {
-	return {
-		text,
-		lines: [
-			{
-				xStart,
-				text,
-				page: startPage,
-				y: 100,
-				yStart: 100,
-				yEnd: 110,
-				xEnd: xStart + 50,
-				items: [],
-				pageHeight: 800,
-			},
-		],
-		startPage,
-		endPage: startPage,
-		confidence: 1,
-		y: 100,
-		yStart: 100,
-		yEnd: 110,
-		pageHeight: 800,
-	} as Paragraph;
-}
+import { createParagraph } from "./test-utils";
 
 describe("extractAmendatoryInstructions", () => {
 	it("coalesces multi-level instructions when parent has 'is amended'", () => {
 		const paras = [
-			createMockParagraph("SEC. 101. SOMETHING.", 72),
-			createMockParagraph("(a) IN GENERAL.—Section 123 is amended—", 90),
-			createMockParagraph('(1) in subsection (a), by striking "foo"; and', 108),
-			createMockParagraph("(2) in subsection (b)—", 108),
-			createMockParagraph('(A) by striking "bar"; and', 126),
-			createMockParagraph('(B) by inserting "baz".', 126),
+			createParagraph("SEC. 101. SOMETHING.", {
+				lines: [{ xStart: 72 }],
+			}),
+			createParagraph("(a) IN GENERAL.—Section 123 is amended—", {
+				lines: [{ xStart: 90 }],
+			}),
+			createParagraph('(1) in subsection (a), by striking "foo"; and', {
+				lines: [{ xStart: 108 }],
+			}),
+			createParagraph("(2) in subsection (b)—", {
+				lines: [{ xStart: 108 }],
+			}),
+			createParagraph('(A) by striking "bar"; and', {
+				lines: [{ xStart: 126 }],
+			}),
+			createParagraph('(B) by inserting "baz".', {
+				lines: [{ xStart: 126 }],
+			}),
 		];
 
 		const instructions = extractAmendatoryInstructions(paras);
@@ -86,10 +69,18 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("keeps siblings distinct when parent is just a header", () => {
 		const paras = [
-			createMockParagraph("SEC. 102. ANOTHER THING.", 72),
-			createMockParagraph("(b) CONFORMING AMENDMENTS.—", 90), // No "is amended"
-			createMockParagraph('(1) Section 456 is amended by striking "x".', 108),
-			createMockParagraph("(2) Section 789 is repealed.", 108),
+			createParagraph("SEC. 102. ANOTHER THING.", {
+				lines: [{ xStart: 72 }],
+			}),
+			createParagraph("(b) CONFORMING AMENDMENTS.—", {
+				lines: [{ xStart: 90 }],
+			}), // No "is amended"
+			createParagraph('(1) Section 456 is amended by striking "x".', {
+				lines: [{ xStart: 108 }],
+			}),
+			createParagraph("(2) Section 789 is repealed.", {
+				lines: [{ xStart: 108 }],
+			}),
 		];
 
 		const instructions = extractAmendatoryInstructions(paras);
@@ -108,12 +99,14 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("handles 'is further amended'", () => {
 		const paras = [
-			createMockParagraph("SEC. 104. FURTHER.", 72),
-			createMockParagraph(
+			createParagraph("SEC. 104. FURTHER.", { lines: [{ xStart: 72 }] }),
+			createParagraph(
 				"Section 123 of Something (1 U.S.C. 1) is further amended—",
-				90,
+				{ lines: [{ xStart: 90 }] },
 			),
-			createMockParagraph('(1) by striking "old".', 108),
+			createParagraph('(1) by striking "old".', {
+				lines: [{ xStart: 108 }],
+			}),
 		];
 		const instructions = extractAmendatoryInstructions(paras);
 		expect(instructions).toHaveLength(1);
@@ -128,19 +121,23 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("handles the case with (A) and (i)", () => {
 		const paras = [
-			createMockParagraph(
+			createParagraph(
 				"(a) IN GENERAL.—Section 1115 of the Agricultural Act of 2014 (7 U.S.C. 9015) is amended—",
-				90,
+				{ lines: [{ xStart: 90 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(1) in subsection (a), in the matter preceding paragraph (1), by striking “2023” and inserting “2031”;",
-				108,
+				{ lines: [{ xStart: 108 }] },
 			),
-			createMockParagraph("(2) in subsection (c)—", 108),
-			createMockParagraph("(A) in the matter preceding paragraph (1)—", 126),
-			createMockParagraph(
+			createParagraph("(2) in subsection (c)—", {
+				lines: [{ xStart: 108 }],
+			}),
+			createParagraph("(A) in the matter preceding paragraph (1)—", {
+				lines: [{ xStart: 126 }],
+			}),
+			createParagraph(
 				"(i) by striking “crop year or” and inserting “crop year,”; and",
-				144,
+				{ lines: [{ xStart: 144 }] },
 			),
 		];
 
@@ -169,32 +166,42 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("groups indented and dedented quoted text correctly based on hierarchy", () => {
 		const paragraphs: Paragraph[] = [
-			createMockParagraph("SEC. 10105. MATCHING FUNDS REQUIREMENTS.", 0),
+			createParagraph("SEC. 10105. MATCHING FUNDS REQUIREMENTS.", {
+				lines: [{ xStart: 0 }],
+			}),
 			// (a) Subsection - Instruction Root
-			createMockParagraph(
+			createParagraph(
 				"(a) IN GENERAL.—Section 4(a) of the Food and Nutrition Act of 2008 (7 U.S.C. 2013(a)) is amended—",
-				20,
+				{ lines: [{ xStart: 20 }] },
 			),
 			// (1) Paragraph - Child of (a)
-			createMockParagraph(
+			createParagraph(
 				"(1) by striking “(a) Subject to” and inserting the following:",
-				40,
+				{ lines: [{ xStart: 40 }] },
 			),
 			// Quoted text
-			createMockParagraph("“(a) PROGRAM.—", 20),
-			createMockParagraph("“(1) ESTABLISHMENT.—Subject to”; and", 20),
+			createParagraph("“(a) PROGRAM.—", { lines: [{ xStart: 20 }] }),
+			createParagraph("“(1) ESTABLISHMENT.—Subject to”; and", {
+				lines: [{ xStart: 20 }],
+			}),
 
 			// (2) Paragraph - Sibling of (1), Child of (a)
-			createMockParagraph("(2) by adding at the end the following:", 40),
+			createParagraph("(2) by adding at the end the following:", {
+				lines: [{ xStart: 40 }],
+			}),
 
 			// Quoted text block
-			createMockParagraph("“(2) STATE QUALITY CONTROL INCENTIVE.—", 20),
-			createMockParagraph("“(3) MAXIMUM FEDERAL PAYMENT.—...", 20),
+			createParagraph("“(2) STATE QUALITY CONTROL INCENTIVE.—", {
+				lines: [{ xStart: 20 }],
+			}),
+			createParagraph("“(3) MAXIMUM FEDERAL PAYMENT.—...", {
+				lines: [{ xStart: 20 }],
+			}),
 
 			// (b) Subsection - Sibling of (a). Should close the previous instruction.
-			createMockParagraph(
+			createParagraph(
 				"(b) LIMITATION ON AUTHORITY.—Section 13(a)(1) ... is amended ...",
-				20,
+				{ lines: [{ xStart: 20 }] },
 			),
 		];
 
@@ -224,20 +231,18 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("parses test cases from hr1-abridged-output.txt", () => {
 		// Instruction 1: Section 3 (Page 13)
-		const para1 = createMockParagraph(
+		const para1 = createParagraph(
 			"(a) IN GENERAL.—Section 3 of the Food and Nutrition Act of 2008 (7 U.S.C. 2012) is amended by striking subsection (u) and inserting the following:",
-			20,
-			13,
+			{ startPage: 13, lines: [{ xStart: 20 }] },
 		);
 		const instrs1 = extractAmendatoryInstructions([para1]);
 		expect(instrs1[0].rootQuery).toEqual([{ type: "section", val: "3" }]);
 		expect(instrs1[0].tree[0].operation.type).toBe("replace");
 
 		// Instruction 2: Section 16(c)(1)(A)(ii)(II) (Page 16)
-		const para2 = createMockParagraph(
+		const para2 = createParagraph(
 			"(1) Section 16(c)(1)(A)(ii)(II) of the Food and Nutrition Act of 2008 (7 U.S.C. 2025(c)(1)(A)(ii)(II)) is amended by striking “section 3(u)(4)” and inserting “section 3(u)(3)”.",
-			40,
-			16,
+			{ startPage: 16, lines: [{ xStart: 40 }] },
 		);
 		const instrs2 = extractAmendatoryInstructions([para2]);
 		expect(instrs2[0].rootQuery).toEqual([
@@ -251,25 +256,22 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instrs2[0].tree[0].operation.type).toBe("replace");
 
 		// Instruction 8: Section 5(e)(6)(C)(iv)(I) (Page 21) - Testing "after"
-		const para8 = createMockParagraph(
+		const para8 = createParagraph(
 			"(a) STANDARD UTILITY ALLOWANCE.—Section 5(e)(6)(C)(iv)(I) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(e)(6)(C)(iv)(I)) is amended by inserting “with an elderly or disabled member” after “households”.",
-			20,
-			21,
+			{ startPage: 21, lines: [{ xStart: 20 }] },
 		);
 		const instrs8 = extractAmendatoryInstructions([para8]);
 		expect(instrs8[0].tree[0].operation.type).toBe("insert_after");
 
 		// Instruction 9: Section 5(k)(4) (Page 21) - Testing "before"
 		const paras9 = [
-			createMockParagraph(
+			createParagraph(
 				"(b) THIRD-PARTY ENERGY ASSISTANCE PAYMENTS.— Section 5(k)(4) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(k)(4)) is amended—",
-				20,
-				21,
+				{ startPage: 21, lines: [{ xStart: 20 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(1) in subparagraph (A), by inserting “without an elderly or disabled member” before “shall be”; and",
-				40,
-				21,
+				{ startPage: 21, lines: [{ xStart: 40 }] },
 			),
 		];
 		const instrs9 = extractAmendatoryInstructions(paras9);
@@ -281,21 +283,18 @@ describe("extractAmendatoryInstructions", () => {
 
 		// Instruction 7: Section 6(o) (Page 18) - Testing insert after paragraph
 		const paras7 = [
-			createMockParagraph(
+			createParagraph(
 				"(c) WAIVER FOR NONCONTIGUOUS STATES.—Section 6(o) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(o)) is amended—",
-				20,
-				18,
+				{ startPage: 18, lines: [{ xStart: 20 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(1) by redesignating paragraph (7) as paragraph (8); and",
-				40,
-				18,
+				{ startPage: 18, lines: [{ xStart: 40 }] },
 			),
-			createMockParagraph(
-				"(2) by inserting after paragraph (6) the following:",
-				40,
-				18,
-			),
+			createParagraph("(2) by inserting after paragraph (6) the following:", {
+				startPage: 18,
+				lines: [{ xStart: 40 }],
+			}),
 		];
 		const instrs7 = extractAmendatoryInstructions(paras7);
 		const tree7 = instrs7[0].tree;
@@ -307,8 +306,10 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("parses target string correctly", () => {
 		const paras = [
-			createMockParagraph("SEC. 101. TEST.", 0),
-			createMockParagraph("Section 3(u)(4) of the Act is amended...", 0),
+			createParagraph("SEC. 101. TEST.", { lines: [{ xStart: 0 }] }),
+			createParagraph("Section 3(u)(4) of the Act is amended...", {
+				lines: [{ xStart: 0 }],
+			}),
 		];
 		const instructions = extractAmendatoryInstructions(paras);
 		expect(instructions[0].rootQuery).toEqual([
@@ -319,12 +320,14 @@ describe("extractAmendatoryInstructions", () => {
 	});
 
 	it("captures strikingContent and content from quoted text", () => {
-		const para = createMockParagraph(
+		const para = createParagraph(
 			"(1) by striking “section 3(u)(4)” and inserting “section 3(u)(3)”.",
-			40,
+			{ lines: [{ xStart: 40 }] },
 		);
 		// Wrap in a mock instruction context
-		const instructionLine = createMockParagraph("Section 16 is amended—", 20);
+		const instructionLine = createParagraph("Section 16 is amended—", {
+			lines: [{ xStart: 20 }],
+		});
 		const instructions = extractAmendatoryInstructions([instructionLine, para]);
 
 		const op = instructions[0].tree[0].children[0].operation;
@@ -335,15 +338,13 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("parses title-based United States Code citation and subsection target order", () => {
 		const paragraphs = [
-			createMockParagraph(
+			createParagraph(
 				"SEC. 211. MODIFICATION TO AUTHORITY TO AWARD PRIZES FOR ADVANCED TECHNOLOGY ACHIEVEMENTS.",
-				0,
-				101,
+				{ startPage: 101, lines: [{ xStart: 0 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(a) AUTHORITY.—Subsection (a) of section 4025 of title 10, United States Code, is amended by inserting after “the Under Secretary of Defense for Acquisition and Sustainment,” the following: “the Director of the Defense Innovation Unit,”.",
-				20,
-				101,
+				{ startPage: 101, lines: [{ xStart: 20 }] },
 			),
 		];
 		const instructions = extractAmendatoryInstructions(paragraphs);
@@ -367,35 +368,29 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("resolves 'such section' for subsection prize updates and parses replace operations", () => {
 		const paragraphs = [
-			createMockParagraph(
+			createParagraph(
 				"SEC. 211. MODIFICATION TO AUTHORITY TO AWARD PRIZES FOR ADVANCED TECHNOLOGY ACHIEVEMENTS.",
-				0,
-				101,
+				{ startPage: 101, lines: [{ xStart: 0 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(a) AUTHORITY.—Subsection (a) of section 4025 of title 10, United States Code, is amended by inserting after “the Under Secretary of Defense for Acquisition and Sustainment,” the following: “the Director of the Defense Innovation Unit,”.",
-				20,
-				101,
+				{ startPage: 101, lines: [{ xStart: 20 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(b) MAXIMUM AMOUNT OF AWARD PRIZES.—Subsection (c) of such section is amended—",
-				20,
-				101,
+				{ startPage: 101, lines: [{ xStart: 20 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(1) in paragraph (1) by striking “$10,000,000” and inserting “$20,000,000”;",
-				40,
-				101,
+				{ startPage: 101, lines: [{ xStart: 40 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(2) in paragraph (2) by striking “$1,000,000” and inserting “$2,000,000”; and",
-				40,
-				101,
+				{ startPage: 101, lines: [{ xStart: 40 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"(3) in paragraph (3) by striking “$10,000” and inserting “$20,000”.",
-				40,
-				101,
+				{ startPage: 101, lines: [{ xStart: 40 }] },
 			),
 		];
 
@@ -437,30 +432,35 @@ describe("extractAmendatoryInstructions", () => {
 
 	it("stops extraction at top-level division headers", () => {
 		const paragraphs = [
-			createMockParagraph(
+			createParagraph(
 				"Section 6(f) of the Food and Nutrition Act is amended to read as follows:",
-				20,
+				{ lines: [{ xStart: 20 }] },
 			),
-			createMockParagraph("“(f) No individual ...", 20),
-			createMockParagraph("“(1) a resident of the United States; and", 40),
-			createMockParagraph("“(2) either—", 40),
-			createMockParagraph(
-				"“(A) a citizen or national of the United States",
-				60,
-			),
-			createMockParagraph(
+			createParagraph("“(f) No individual ...", {
+				lines: [{ xStart: 20 }],
+			}),
+			createParagraph("“(1) a resident of the United States; and", {
+				lines: [{ xStart: 40 }],
+			}),
+			createParagraph("“(2) either—", { lines: [{ xStart: 40 }] }),
+			createParagraph("“(A) a citizen or national of the United States", {
+				lines: [{ xStart: 60 }],
+			}),
+			createParagraph(
 				"“(B) an alien lawfully admitted for ... in a foreign country;",
-				60,
+				{ lines: [{ xStart: 60 }] },
 			),
-			createMockParagraph(
+			createParagraph(
 				"“(C) an alien who ... section 501(e) of the Refugee Education Assistance Act of 1980 (Public Law 96–422); or",
-				60,
+				{ lines: [{ xStart: 60 }] },
 			),
-			createMockParagraph(
-				"“(D) an individual who ... individual is a member.”.",
-				60,
-			),
-			createMockParagraph("Subtitle B—Forestry", 100, 1),
+			createParagraph("“(D) an individual who ... individual is a member.”.", {
+				lines: [{ xStart: 60 }],
+			}),
+			createParagraph("Subtitle B—Forestry", {
+				startPage: 1,
+				lines: [{ xStart: 100 }],
+			}),
 		];
 		const instructions = extractAmendatoryInstructions(paragraphs);
 
