@@ -86,4 +86,27 @@ describe("injectInlineReplacements", () => {
 		expect(rendered).toContain("~~BLOCK_TEXT~~");
 		expect(rendered).not.toContain("~~\nBLOCK_TEXT~~");
 	});
+
+	it("injects deletion-only text at zero-width anchor ranges", () => {
+		const source = "alpha beta";
+		const anchor = source.indexOf("beta");
+		const rendered = injectInlineReplacements(
+			source,
+			[
+				{
+					start: anchor,
+					end: anchor,
+					deletedText: "deleted words",
+				},
+			],
+			{
+				insertedClassName: "pdf-amended-snippet-inserted",
+				deletedClassName: "pdf-amended-snippet-deleted",
+				addSpaceBeforeIfNeeded: true,
+			},
+		);
+
+		expect(rendered).toContain("alpha ~~deleted words~~beta");
+		expect(rendered).not.toContain("++++");
+	});
 });

@@ -112,7 +112,7 @@ export function injectInlineTag(
 		if (
 			range.start < 0 ||
 			range.end > result.length ||
-			range.end <= range.start
+			range.end < range.start
 		) {
 			continue;
 		}
@@ -151,7 +151,7 @@ export function injectInlineReplacements(
 		if (
 			range.start < 0 ||
 			range.end > result.length ||
-			range.end <= range.start
+			range.end < range.start
 		) {
 			continue;
 		}
@@ -165,6 +165,9 @@ export function injectInlineReplacements(
 
 		const insertedText = result.slice(range.start, range.end);
 		const normalizedDeletedText = normalizeBlockText(range.deletedText);
+		if (insertedText.length === 0 && normalizedDeletedText.length === 0) {
+			continue;
+		}
 		const escapedDeletedText = escapeMarkdownDelimiters(normalizedDeletedText);
 		const normalizedInsertedText = normalizeBlockText(insertedText);
 		const escapedInsertedText = escapeMarkdownDelimiters(
@@ -178,23 +181,31 @@ export function injectInlineReplacements(
 		const deletedBlock = normalizedDeletedText
 			? `~~\n${escapedDeletedText}\n~~`
 			: "";
-		const wrapped = isMultilineInsertion
-			? (() => {
-					const deletedPrefix =
-						normalizedDeletedText.length > 0
-							? `${isMultilineDeletion ? deletedBlock : deletedInline}\n\n`
+		const wrapped =
+			insertedText.length === 0
+				? (() => {
+						const prefix = needsLeadingSpace ? " " : "";
+						return normalizedDeletedText.length > 0
+							? `${prefix}${isMultilineDeletion ? deletedBlock : deletedInline}`
 							: "";
-					return `\n\n${deletedPrefix}++\n${escapedInsertedText}\n++\n\n`;
-				})()
-			: (() => {
-					const prefix = needsLeadingSpace ? " " : "";
-					if (isMultilineDeletion) {
-						return `${prefix}${deletedBlock}\n\n++${escapeMarkdownDelimiters(insertedText)}++`;
-					}
-					const deletedPrefix =
-						deletedInline.length > 0 ? `${deletedInline} ` : "";
-					return `${prefix}${deletedPrefix}++${escapeMarkdownDelimiters(insertedText)}++`;
-				})();
+					})()
+				: isMultilineInsertion
+					? (() => {
+							const deletedPrefix =
+								normalizedDeletedText.length > 0
+									? `${isMultilineDeletion ? deletedBlock : deletedInline}\n\n`
+									: "";
+							return `\n\n${deletedPrefix}++\n${escapedInsertedText}\n++\n\n`;
+						})()
+					: (() => {
+							const prefix = needsLeadingSpace ? " " : "";
+							if (isMultilineDeletion) {
+								return `${prefix}${deletedBlock}\n\n++${escapeMarkdownDelimiters(insertedText)}++`;
+							}
+							const deletedPrefix =
+								deletedInline.length > 0 ? `${deletedInline} ` : "";
+							return `${prefix}${deletedPrefix}++${escapeMarkdownDelimiters(insertedText)}++`;
+						})();
 
 		result = result.slice(0, range.start) + wrapped + result.slice(range.end);
 	}

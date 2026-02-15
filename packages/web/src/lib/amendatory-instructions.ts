@@ -1,4 +1,3 @@
-import { buildInferredMarkerLevels } from "./marker-level-inference";
 import type { Paragraph } from "./text-extract";
 
 export type HierarchyLevel =
@@ -79,7 +78,7 @@ function isQuotedText(text: string): boolean {
 
 function getHierarchyLevel(
 	text: string,
-	options?: { indentationHint?: number },
+	_options?: { indentationHint?: number },
 ): HierarchyLevel {
 	const trimmed = text.trim();
 	if (SEC_HEADER_RE.test(trimmed)) {
@@ -87,18 +86,32 @@ function getHierarchyLevel(
 		return { type: "section", val: match ? match[1] : "" };
 	}
 
-	const markerMatch = trimmed.match(/^\(([A-Za-z0-9]+)\)/);
-	const marker = markerMatch?.[1];
-	if (!marker) return { type: "none" };
+	const clauseMatch = trimmed.match(/^\(([ivx]+)\)/);
+	if (clauseMatch) {
+		return { type: "clause", val: clauseMatch[1] };
+	}
 
-	const inferred = buildInferredMarkerLevels([
-		{
-			markers: [marker],
-			indentationHint: options?.indentationHint ?? 0,
-		},
-	])[0]?.[0];
-	if (!inferred) return { type: "none" };
-	return { type: inferred.type, val: marker };
+	const subclauseMatch = trimmed.match(/^\(([IVX]+)\)/);
+	if (subclauseMatch) {
+		return { type: "subclause", val: subclauseMatch[1] };
+	}
+
+	const subsectionMatch = trimmed.match(/^\(([a-z]+)\)/);
+	if (subsectionMatch) {
+		return { type: "subsection", val: subsectionMatch[1] };
+	}
+
+	const paragraphMatch = trimmed.match(/^\((\d+)\)/);
+	if (paragraphMatch) {
+		return { type: "paragraph", val: paragraphMatch[1] };
+	}
+
+	const subparagraphMatch = trimmed.match(/^\(([A-Z]+)\)/);
+	if (subparagraphMatch) {
+		return { type: "subparagraph", val: subparagraphMatch[1] };
+	}
+
+	return { type: "none" };
 }
 
 function getHierarchyRank(level: HierarchyLevel): number {
@@ -461,11 +474,49 @@ function normalizeSplitStrikeAndInsert(nodes: InstructionNode[]): void {
 function reconstructInstructionTree(nodes: TreeNode[]): InstructionNode[] {
 	const result: InstructionNode[] = [];
 	const stack: InstructionNode[] = [];
+	let activeSplitRecipients: InstructionNode[] = [];
+
+	const getDeepestTarget = (
+		node: InstructionNode,
+	): Exclude<HierarchyLevel, { type: "none" }> | null => {
+		const target = node.operation.target;
+		if (!target || target.length === 0) return null;
+		for (let i = target.length - 1; i >= 0; i--) {
+			const level = target[i];
+			if (level && level.type !== "none") {
+				return level;
+			}
+		}
+		return null;
+	};
+
+	const getQuotedLeadingMarker = (text: string): string | null => {
+		const normalized = text.trimStart().replace(/^[""\u201c\u201d'']+/, "");
+		const match = normalized.match(/^\(([A-Za-z0-9]+)\)/);
+		return match?.[1] ?? null;
+	};
 
 	for (const node of nodes) {
 		const text = node.paragraph.text.trim();
 
 		if (isQuotedText(text)) {
+			const marker = getQuotedLeadingMarker(text);
+			if (marker && activeSplitRecipients.length > 0) {
+				const matchingRecipient = activeSplitRecipients.find((recipient) => {
+					const deepestTarget = getDeepestTarget(recipient);
+					return deepestTarget?.val === marker;
+				});
+				if (matchingRecipient) {
+					matchingRecipient.children.push({
+						label: { type: "none" },
+						operation: { type: "unknown", content: text },
+						children: [],
+						text: text,
+					});
+					continue;
+				}
+			}
+
 			// Attach to the last item on the stack (the active instruction)
 			if (stack.length > 0) {
 				const parent = stack[stack.length - 1];
@@ -490,6 +541,7 @@ function reconstructInstructionTree(nodes: TreeNode[]): InstructionNode[] {
 
 		const label = getHierarchyLevel(text, { indentationHint: node.indent });
 		const rank = getHierarchyRank(label);
+		activeSplitRecipients = [];
 
 		// Pop from stack until we find a parent with lower rank (higher level)
 		// e.g. if we are (A) [rank 3], we pop (i) [rank 4], we pop (B) [rank 3].
@@ -543,6 +595,12 @@ function reconstructInstructionTree(nodes: TreeNode[]): InstructionNode[] {
 					children: [],
 					text: text,
 				});
+			}
+			if (
+				operation.type === "replace" &&
+				/\binserting the following\b/i.test(text)
+			) {
+				activeSplitRecipients = [...nodesToPush];
 			}
 		} else {
 			nodesToPush.push({
@@ -790,6 +848,29 @@ export function extractAmendatoryInstructions(
 				}
 
 				const opTree = reconstructInstructionTree(flattenedNodes);
+				const rootTextCounts = new Map<string, number>();
+				for (const opNode of opTree) {
+					rootTextCounts.set(
+						opNode.text,
+						(rootTextCounts.get(opNode.text) ?? 0) + 1,
+					);
+				}
+				const hasSplitSiblings = Array.from(rootTextCounts.values()).some(
+					(count) => count > 1,
+				);
+				if (hasSplitSiblings) {
+					for (const opNode of opTree) {
+						for (const child of opNode.children) {
+							if (!isQuotedText(child.text)) continue;
+							const sourceParagraph = instructionParagraphs.find(
+								(paragraph) => paragraph.text.trim() === child.text.trim(),
+							);
+							if (sourceParagraph) {
+								instructionParagraphs.push(sourceParagraph);
+							}
+						}
+					}
+				}
 
 				instructions.push({
 					billSection: currentBillSection,

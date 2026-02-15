@@ -21,6 +21,7 @@ import {
 	extractAmendatoryInstructions,
 } from "./lib/amendatory-instructions";
 import {
+	type AmendmentEffect,
 	computeAmendmentEffect,
 	getSectionBodyText,
 	getSectionPathFromUscCitation,
@@ -29,14 +30,102 @@ import {
 import { renderMarkdown } from "./lib/markdown";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
+import { resolveInsertionRanges } from "./lib/text-spans";
 import type { NodeContent, SourceVersionRecord } from "./lib/types";
 
 const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1078;
+const AMENDED_SNIPPET_CONTEXT_CHARS = 500;
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
+
+interface SnippetDisplayDebugInfo {
+	anchorSource:
+		| "insertion"
+		| "search_index"
+		| "scoped_range_start"
+		| "fallback";
+	anchorIndex: number;
+	anchorSearchIndexLocal: number | null;
+	anchorScopeStart: number | null;
+	anchorAttemptIndex: number | null;
+	insertionCount: number;
+	changeCount: number;
+	deletionCount: number;
+	snippetStart: number;
+	snippetEnd: number;
+	snippetLength: number;
+}
+
+const getSnippetDisplayDebugInfo = (
+	effect: AmendmentEffect,
+): SnippetDisplayDebugInfo => {
+	const unchanged = effect.segments.find(
+		(segment) => segment.kind === "unchanged",
+	);
+	const text = unchanged?.text ?? "";
+
+	const insertions = resolveInsertionRanges(
+		text,
+		effect.changes
+			.filter((change) => change.inserted.length > 0)
+			.map((change) => change.inserted),
+	);
+	const operationAnchor = effect.debug.operationAttempts.find(
+		(attempt) =>
+			attempt.outcome === "applied" &&
+			(attempt.searchIndex !== null || attempt.scopedRange !== null),
+	);
+	const anchorAttemptIndex =
+		operationAnchor === undefined
+			? null
+			: effect.debug.operationAttempts.indexOf(operationAnchor);
+	const insertionAnchor = insertions[0]?.start;
+	const searchIndexAnchor = operationAnchor?.searchIndex;
+	const scopedRangeStartAnchor = operationAnchor?.scopedRange?.start;
+	const absoluteSearchIndexAnchor =
+		searchIndexAnchor === null || searchIndexAnchor === undefined
+			? undefined
+			: scopedRangeStartAnchor === undefined
+				? searchIndexAnchor
+				: scopedRangeStartAnchor + searchIndexAnchor;
+	const anchorSource =
+		insertionAnchor !== undefined
+			? "insertion"
+			: searchIndexAnchor !== null && searchIndexAnchor !== undefined
+				? "search_index"
+				: scopedRangeStartAnchor !== undefined
+					? "scoped_range_start"
+					: "fallback";
+	const anchorIndex =
+		insertionAnchor ?? absoluteSearchIndexAnchor ?? scopedRangeStartAnchor ?? 0;
+
+	const roughStart = Math.max(0, anchorIndex - AMENDED_SNIPPET_CONTEXT_CHARS);
+	const roughEnd = Math.min(
+		text.length,
+		anchorIndex + AMENDED_SNIPPET_CONTEXT_CHARS,
+	);
+	const start = text.lastIndexOf("\n", roughStart);
+	const end = text.indexOf("\n", roughEnd);
+	const snippetStart = start === -1 ? 0 : start + 1;
+	const snippetEnd = end === -1 ? text.length : end;
+
+	return {
+		anchorSource,
+		anchorIndex,
+		anchorSearchIndexLocal: searchIndexAnchor ?? null,
+		anchorScopeStart: scopedRangeStartAnchor ?? null,
+		anchorAttemptIndex,
+		insertionCount: insertions.length,
+		changeCount: effect.changes.length,
+		deletionCount: effect.deleted.length,
+		snippetStart,
+		snippetEnd,
+		snippetLength: Math.max(0, snippetEnd - snippetStart),
+	};
+};
 
 // Persistence Helpers
 const openDB = () => {
@@ -977,6 +1066,76 @@ export default function PdfApp() {
 													{(resolvedEffect) => (
 														<section class="pdf-instruction-modal-section">
 															<h3>Match Attempts</h3>
+															{(() => {
+																const snippetDebug = getSnippetDisplayDebugInfo(
+																	resolvedEffect(),
+																);
+																return (
+																	<div class="pdf-instruction-modal-grid">
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Snippet anchor source</span>
+																			<code>{snippetDebug.anchorSource}</code>
+																		</div>
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Anchor search index (local)</span>
+																			<code>
+																				{snippetDebug.anchorSearchIndexLocal ===
+																				null
+																					? "none"
+																					: String(
+																							snippetDebug.anchorSearchIndexLocal,
+																						)}
+																			</code>
+																		</div>
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Anchor scope start</span>
+																			<code>
+																				{snippetDebug.anchorScopeStart === null
+																					? "none"
+																					: String(
+																							snippetDebug.anchorScopeStart,
+																						)}
+																			</code>
+																		</div>
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Snippet anchor index</span>
+																			<code>
+																				{String(snippetDebug.anchorIndex)}
+																			</code>
+																		</div>
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Anchor attempt index</span>
+																			<code>
+																				{snippetDebug.anchorAttemptIndex ===
+																				null
+																					? "none"
+																					: String(
+																							snippetDebug.anchorAttemptIndex +
+																								1,
+																						)}
+																			</code>
+																		</div>
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Snippet range</span>
+																			<code>
+																				{`${snippetDebug.snippetStart}-${snippetDebug.snippetEnd} (${snippetDebug.snippetLength} chars)`}
+																			</code>
+																		</div>
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Resolved insertions</span>
+																			<code>
+																				{String(snippetDebug.insertionCount)}
+																			</code>
+																		</div>
+																		<div class="pdf-instruction-modal-kv">
+																			<span>Effect changes / deletions</span>
+																			<code>
+																				{`${snippetDebug.changeCount} / ${snippetDebug.deletionCount}`}
+																			</code>
+																		</div>
+																	</div>
+																);
+															})()}
 															<div class="pdf-instruction-modal-grid">
 																<div class="pdf-instruction-modal-kv">
 																	<span>Failure reason</span>

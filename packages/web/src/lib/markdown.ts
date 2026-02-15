@@ -229,7 +229,7 @@ const addIndentClassToParagraphs = (
 				if (match) {
 					foundIndent = true;
 					const depth =
-						Number.parseInt(match[1]) +
+						Number.parseInt(match[1], 10) +
 						Math.min(blockquoteDepth, MAX_INDENT_DEPTH);
 					return `indent${Math.min(depth, MAX_INDENT_DEPTH)}`;
 				}

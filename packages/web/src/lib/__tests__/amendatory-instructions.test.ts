@@ -437,6 +437,56 @@ describe("extractAmendatoryInstructions", () => {
 		expect(op.content).toBe("section 3(u)(3)");
 	});
 
+	it("keeps quoted replacement blocks when splitting plural structural strike targets", () => {
+		const paragraphs = [
+			createParagraph(
+				"(2) Section 1405 of the Agricultural Act of 2014 (7 U.S.C. 9055) is amended by striking subsections (a) and (b) and inserting the following:",
+				{ lines: [{ xStart: 40 }] },
+			),
+			createParagraph(
+				"“(a) PRODUCTION HISTORY.—Except as provided in subsection (b), the production history is updated.”",
+				{ lines: [{ xStart: 20 }] },
+			),
+			createParagraph(
+				"“(b) ELECTION BY NEW DAIRY OPERATIONS.—In the case of a participating dairy operation, the operation shall elect 1 of the following methods.”",
+				{ lines: [{ xStart: 20 }] },
+			),
+			createParagraph(
+				"“(1) The volume of the actual milk marketings for the months the participating dairy operation has been in operation extrapolated to a yearly amount.",
+				{ lines: [{ xStart: 40 }] },
+			),
+			createParagraph(
+				"“(2) An estimate of the actual milk marketings of the participating dairy operation based on the herd size of the participating dairy operation relative to the national rolling herd average data published by the Secretary.”.",
+				{ lines: [{ xStart: 40 }] },
+			),
+		];
+
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(1);
+		expect(instructions[0].paragraphs).toHaveLength(5);
+
+		const operations = instructions[0].tree;
+		expect(operations).toHaveLength(2);
+
+		const subsectionA = operations.find((node) =>
+			node.operation.target?.some(
+				(level) => level.type !== "none" && level.val === "a",
+			),
+		);
+		const subsectionB = operations.find((node) =>
+			node.operation.target?.some(
+				(level) => level.type !== "none" && level.val === "b",
+			),
+		);
+
+		expect(subsectionA?.children[0]?.operation.content).toContain(
+			"“(a) PRODUCTION HISTORY",
+		);
+		expect(subsectionB?.children[0]?.operation.content).toContain(
+			"“(b) ELECTION BY NEW DAIRY OPERATIONS",
+		);
+	});
+
 	it("parses title-based United States Code citation and subsection target order", () => {
 		const paragraphs = [
 			createParagraph(

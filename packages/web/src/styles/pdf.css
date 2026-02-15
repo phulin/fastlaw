@@ -322,8 +322,8 @@ body {
 	background-color: white;
 	position: relative;
 	padding: 0 2rem;
-	/* Annotations are absolutely positioned within this, so we need a relative container. 
-       Actually, AnnotationLayer handles the relative container. */
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+	font-size: 0.9rem;
 }
 
 /* Annotation Styles (migrated from text-pane) */
