@@ -164,6 +164,75 @@ describe("extractAmendatoryInstructions", () => {
 		});
 	});
 
+	it("parses 7 U.S.C. 9032 instruction with redesignation and insertion after subsection", () => {
+		const paras = [
+			createParagraph(
+				"(b) LOAN RATES FOR NONRECOURSE MARKETING ASSISTANCE LOANS.—Section 1202 of the Agricultural Act of 2014 (7 U.S.C. 9032) is amended—",
+				{ lines: [{ xStart: 90 }] },
+			),
+			createParagraph("(1) in subsection (b)—", {
+				lines: [{ xStart: 108 }],
+			}),
+			createParagraph(
+				"(A) in the subsection heading, by striking “2023” and inserting “2025”; and",
+				{ lines: [{ xStart: 126 }] },
+			),
+			createParagraph(
+				"(B) in the matter preceding paragraph (1), by striking “2023” and inserting “2025”;",
+				{ lines: [{ xStart: 126 }] },
+			),
+			createParagraph(
+				"(2) by redesignating subsections (c) and (d) as subsections (d) and (e), respectively;",
+				{ lines: [{ xStart: 108 }] },
+			),
+			createParagraph(
+				"(3) by inserting after subsection (b) the following: “(c) 2026 THROUGH 2031 CROP YEARS.—For purposes of each of the 2026 through 2031 crop years, the loan rate for a marketing assistance loan under section 1201 for a loan commodity shall be equal to the following: “(1) In the case of wheat, $3.72 per bushel. “(2) In the case of corn, $2.42 per bushel.”;",
+				{ lines: [{ xStart: 108 }] },
+			),
+			createParagraph(
+				"(4) in subsection (d) (as so redesignated), by striking “(a)(11) and (b)(11)” and inserting “(a)(11), (b)(11), and (c)(11)”;",
+				{ lines: [{ xStart: 108 }] },
+			),
+			createParagraph(
+				"(5) in subsection (e) (as so redesignated), in paragraph (1), by striking “$0.25” and inserting “$0.30”.",
+				{ lines: [{ xStart: 108 }] },
+			),
+		];
+
+		const instructions = extractAmendatoryInstructions(paras);
+		expect(instructions).toHaveLength(1);
+		expect(instructions[0].uscCitation).toBe("7 U.S.C. 9032");
+		expect(instructions[0].rootQuery).toEqual([
+			{ type: "section", val: "1202" },
+		]);
+
+		const rootNode = instructions[0].tree[0];
+		expect(rootNode.label).toEqual({ type: "subsection", val: "b" });
+
+		const paragraphOne = rootNode.children[0];
+		expect(paragraphOne.label).toEqual({ type: "paragraph", val: "1" });
+		expect(paragraphOne.operation.type).toBe("context");
+		expect(paragraphOne.children[0]?.operation.type).toBe("replace");
+		expect(paragraphOne.children[1]?.operation.type).toBe("replace");
+
+		const paragraphTwo = rootNode.children[1];
+		expect(paragraphTwo.label).toEqual({ type: "paragraph", val: "2" });
+		expect(paragraphTwo.operation.type).toBe("unknown");
+
+		const paragraphThree = rootNode.children[2];
+		expect(paragraphThree.label).toEqual({ type: "paragraph", val: "3" });
+		expect(paragraphThree.operation.type).toBe("insert_after");
+		expect(paragraphThree.operation.target).toEqual([
+			{ type: "subsection", val: "b" },
+		]);
+		expect(paragraphThree.operation.content).toContain(
+			"(c) 2026 THROUGH 2031 CROP YEARS",
+		);
+		expect(paragraphThree.operation.content).toContain(
+			"(1) In the case of wheat, $3.72 per bushel.",
+		);
+	});
+
 	it("groups indented and dedented quoted text correctly based on hierarchy", () => {
 		const paragraphs: Paragraph[] = [
 			createParagraph("SEC. 10105. MATCHING FUNDS REQUIREMENTS.", {

@@ -36,6 +36,10 @@ const USC_2014_PRE_FIXTURE_PATH = resolve(
 	WEB_ROOT,
 	"src/lib/__fixtures__/usc-7-2014-pre.md",
 );
+const USC_9032_PRE_FIXTURE_PATH = resolve(
+	WEB_ROOT,
+	"src/lib/__fixtures__/usc-7-9032.md",
+);
 const hasLocalState =
 	existsSync(FIXTURE_PATH) && existsSync(SECTION_BODIES_PATH);
 
@@ -288,6 +292,40 @@ describe("computeAmendmentEffect target scoping", () => {
 			expectedTargetPath:
 				"subsection:e > paragraph:6 > subparagraph:C > clause:iv > subclause:I",
 		},
+		{
+			name: "7 U.S.C. 9032 fixture",
+			loadInstruction: (): AmendatoryInstruction => ({
+				billSection: "SEC. 1.",
+				target: "Section 1202",
+				uscCitation: "7 U.S.C. 9032",
+				text: "(3) by inserting after subsection (b) the following: “(c) 2026 THROUGH 2031 CROP YEARS.—...”.",
+				paragraphs: [],
+				startPage: 1,
+				endPage: 1,
+				rootQuery: [],
+				tree: [
+					{
+						label: { type: "paragraph", val: "3" },
+						operation: {
+							type: "insert_after",
+							target: [{ type: "subsection", val: "b" }],
+							content: [
+								"**(c)** **2026 through 2031 crop years**",
+								"",
+								"> For purposes of each of the 2026 through 2031 crop years, the loan rate for a marketing assistance loan under [section 9031 of this title](/statutes/section/7/9031) for a loan commodity shall be equal to the following:",
+							].join("\n"),
+						},
+						children: [],
+						text: "(3) by inserting after subsection (b) the following:",
+					},
+				],
+			}),
+			preFixturePath: USC_9032_PRE_FIXTURE_PATH,
+			expectedInsertedIncludes: ["2026 through 2031 crop years"],
+			expectedDeleted: [] as string[],
+			expectedTextSnippet: "**(c)** **2026 through 2031 crop years**",
+			expectedTargetPath: "subsection:b",
+		},
 	])("applies patch with explicit scope against full fixture: $name", (testCase) => {
 		const instruction = testCase.loadInstruction();
 		const sectionPath = requireSectionPath(instruction.uscCitation);
@@ -305,7 +343,13 @@ describe("computeAmendmentEffect target scoping", () => {
 		expect(operationAttempt?.targetPath).toBe(testCase.expectedTargetPath);
 		expect(operationAttempt?.scopedRange).not.toBeNull();
 		expect(operationAttempt?.outcome).toBe("applied");
-		expect(effect.inserted).toEqual(testCase.expectedInserted);
+		if ("expectedInserted" in testCase) {
+			expect(effect.inserted).toEqual(testCase.expectedInserted);
+		}
+		const expectedInsertedIncludes = testCase.expectedInsertedIncludes ?? [];
+		for (const expectedInsert of expectedInsertedIncludes) {
+			expect(effect.inserted.join("\n")).toContain(expectedInsert);
+		}
 		expect(effect.deleted).toEqual(testCase.expectedDeleted);
 		const finalText = effect.segments.map((segment) => segment.text).join("");
 		expect(finalText).toContain(testCase.expectedTextSnippet);

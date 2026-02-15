@@ -434,13 +434,37 @@ function collectQuotedChildren(node: InstructionNode): string[] {
 	return chunks;
 }
 
+function getOperationContent(node: InstructionNode): string | undefined {
+	const inlineContent = node.operation.content?.trim();
+	if (inlineContent) return inlineContent;
+	const quotedContent = collectQuotedChildren(node).join("\n").trim();
+	return quotedContent.length > 0 ? quotedContent : undefined;
+}
+
+function patchFromScopedInsertion(
+	text: string,
+	content: string | undefined,
+	searchRange: TextRange | null,
+): StringPatch | null {
+	if (!searchRange || !content) return null;
+	const insertAt = searchRange.end;
+	const beforeInsert = text.slice(0, insertAt);
+	const needsLineBreak =
+		beforeInsert.length > 0 && !beforeInsert.endsWith("\n");
+	return {
+		start: insertAt,
+		end: insertAt,
+		deleted: "",
+		inserted: `${needsLineBreak ? "\n" : ""}${content}`,
+	};
+}
+
 function patchFromAddAtEnd(
 	text: string,
 	node: InstructionNode,
 	searchRange?: TextRange | null,
 ): StringPatch | null {
-	const content =
-		node.operation.content ?? collectQuotedChildren(node).join("\n").trim();
+	const content = getOperationContent(node);
 	if (!content) return null;
 	const insertAt = searchRange ? searchRange.end : text.length;
 	const beforeInsert = text.slice(0, insertAt);
@@ -621,6 +645,7 @@ export function computeAmendmentEffect(
 				break;
 			}
 			case "insert_before": {
+				const content = getOperationContent(node.node);
 				const anchor = extractAnchor(node.node.text, "before");
 				attempt.searchText = anchor;
 				attempt.searchTextKind = "anchor_before";
@@ -631,7 +656,7 @@ export function computeAmendmentEffect(
 				patch = patchFromInsertRelative(
 					workingText,
 					node.node.text,
-					node.node.operation.content,
+					content,
 					"before",
 					searchRange,
 				);
@@ -639,6 +664,7 @@ export function computeAmendmentEffect(
 				break;
 			}
 			case "insert_after": {
+				const content = getOperationContent(node.node);
 				const anchor = extractAnchor(node.node.text, "after");
 				attempt.searchText = anchor;
 				attempt.searchTextKind = "anchor_after";
@@ -649,10 +675,13 @@ export function computeAmendmentEffect(
 				patch = patchFromInsertRelative(
 					workingText,
 					node.node.text,
-					node.node.operation.content,
+					content,
 					"after",
 					searchRange,
 				);
+				if (!patch) {
+					patch = patchFromScopedInsertion(workingText, content, searchRange);
+				}
 				attempt.outcome = patch ? "applied" : "no_patch";
 				break;
 			}

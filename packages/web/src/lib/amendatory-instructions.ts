@@ -198,16 +198,6 @@ function parseTarget(target: string): HierarchyLevel[] {
 	const levels: HierarchyLevel[] = [];
 	let current = target.replace(/^[A-Z][^\u2014]*\u2014\s*/, "").trim();
 
-	// Handle cases where section appears after a lead-in, e.g.
-	// "Subsection (a) of section 4025 of title 10, United States Code"
-	const secMatch = current.match(/\bsection\s+(\w+)/i);
-	if (secMatch) {
-		levels.push({ type: "section", val: secMatch[1] });
-		const secIndex = secMatch.index ?? 0;
-		const secEnd = secIndex + secMatch[0].length;
-		current = `${current.slice(0, secIndex)} ${current.slice(secEnd)}`.trim();
-	}
-
 	while (true) {
 		current = current.trim();
 		if (current.length === 0) break;
@@ -218,6 +208,13 @@ function parseTarget(target: string): HierarchyLevel[] {
 		);
 		if (noiseMatch) {
 			current = current.substring(noiseMatch[0].length);
+			continue;
+		}
+
+		const sectionMatch = current.match(/^section\s+(\w+)/i);
+		if (sectionMatch) {
+			levels.push({ type: "section", val: sectionMatch[1] });
+			current = current.substring(sectionMatch[0].length);
 			continue;
 		}
 
@@ -286,7 +283,27 @@ function parseTarget(target: string): HierarchyLevel[] {
 		break;
 	}
 
-	return levels;
+	const section = levels.find(
+		(level): level is Extract<HierarchyLevel, { type: "section" }> =>
+			level.type === "section",
+	);
+	if (!section) return levels;
+	return [section, ...levels.filter((level) => level !== section)];
+}
+
+function extractFollowingContent(text: string): string | undefined {
+	const marker = "the following:";
+	const lower = text.toLowerCase();
+	const markerIndex = lower.indexOf(marker);
+	if (markerIndex === -1) return undefined;
+
+	const raw = text.slice(markerIndex + marker.length).trim();
+	if (raw.length === 0) return undefined;
+
+	return raw
+		.replace(/^[\s"“”'‘’]+/, "")
+		.replace(/[\s"“”'‘’]+[.;,]*$/, "")
+		.trim();
 }
 
 function parseOperation(text: string): AmendatoryOperation {
@@ -309,11 +326,9 @@ function parseOperation(text: string): AmendatoryOperation {
 		/inserting\s+["\u201c‘']([^"\u201d’']+)/i,
 	);
 	if (insertingMatch) content = insertingMatch[1];
-	if (!content) {
-		const followingMatch = stripped.match(
-			/the following:\s*["\u201c‘']([^"\u201d’']+)/i,
-		);
-		if (followingMatch) content = followingMatch[1];
+	const followingContent = extractFollowingContent(stripped);
+	if (followingContent) {
+		content = followingContent;
 	}
 
 	if (
