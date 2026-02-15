@@ -1,3 +1,4 @@
+import { buildInferredMarkerLevels } from "./marker-level-inference";
 import type { Paragraph } from "./text-extract";
 
 export type HierarchyLevel =
@@ -76,37 +77,28 @@ function isQuotedText(text: string): boolean {
 	return /^[""\u201c'']/.test(text.trimStart());
 }
 
-function getHierarchyLevel(text: string): HierarchyLevel {
+function getHierarchyLevel(
+	text: string,
+	options?: { indentationHint?: number },
+): HierarchyLevel {
 	const trimmed = text.trim();
 	if (SEC_HEADER_RE.test(trimmed)) {
 		const match = trimmed.match(SEC_HEADER_RE);
 		return { type: "section", val: match ? match[1] : "" };
 	}
 
-	// (i) Clause - Check BEFORE subsection to catch (i), (v), (x)
-	const clauseMatch = trimmed.match(/^\(([ivx]+)\)/);
-	if (clauseMatch) {
-		return { type: "clause", val: clauseMatch[1] };
-	}
+	const markerMatch = trimmed.match(/^\(([A-Za-z0-9]+)\)/);
+	const marker = markerMatch?.[1];
+	if (!marker) return { type: "none" };
 
-	// (I) Subclause - distinct check
-	const subclauseMatch = trimmed.match(/^\(([IVX]+)\)/);
-	if (subclauseMatch) return { type: "subclause", val: subclauseMatch[1] };
-
-	// (a) Subsection
-	const subsectionMatch = trimmed.match(/^\(([a-z]+)\)/);
-	if (subsectionMatch) return { type: "subsection", val: subsectionMatch[1] };
-
-	// (1) Paragraph
-	const paragraphMatch = trimmed.match(/^\((\d+)\)/);
-	if (paragraphMatch) return { type: "paragraph", val: paragraphMatch[1] };
-
-	// (A) Subparagraph
-	const subparagraphMatch = trimmed.match(/^\(([A-Z]+)\)/);
-	if (subparagraphMatch)
-		return { type: "subparagraph", val: subparagraphMatch[1] };
-
-	return { type: "none" };
+	const inferred = buildInferredMarkerLevels([
+		{
+			markers: [marker],
+			indentationHint: options?.indentationHint ?? 0,
+		},
+	])[0]?.[0];
+	if (!inferred) return { type: "none" };
+	return { type: inferred.type, val: marker };
 }
 
 function getHierarchyRank(level: HierarchyLevel): number {
@@ -211,6 +203,20 @@ function parseTarget(target: string): HierarchyLevel[] {
 		);
 		if (noiseMatch) {
 			current = current.substring(noiseMatch[0].length);
+			continue;
+		}
+
+		// Skip parenthetical editorial qualifiers like "(as so redesignated)".
+		// These are not hierarchy markers and would otherwise stop parsing.
+		const qualifierMatch = current.match(/^\(([^)]+)\)/);
+		if (
+			qualifierMatch?.[1] &&
+			(/\s/.test(qualifierMatch[1]) ||
+				/\b(?:as|added|amended|redesignated|inserted)\b/i.test(
+					qualifierMatch[1],
+				))
+		) {
+			current = current.substring(qualifierMatch[0].length);
 			continue;
 		}
 
@@ -331,12 +337,12 @@ function parseOperation(text: string): AmendatoryOperation {
 	// Extract quoted content for both striking and inserting
 	// Match text between standard or smart quotes
 	const strikingMatch = stripped.match(
-		/striking\s+["\u201c‘']([^"\u201d’']+)/i,
+		/striking\s+["\u201c\u201d\u201e\u201f‘']([^"\u201d’']+)/i,
 	);
 	if (strikingMatch) strikingContent = strikingMatch[1];
 
 	const insertingMatch = stripped.match(
-		/inserting\s+["\u201c‘']([^"\u201d’']+)/i,
+		/inserting\s+["\u201c\u201d\u201e\u201f‘']([^"\u201d’']+)/i,
 	);
 	if (insertingMatch) content = insertingMatch[1];
 	const followingContent = extractFollowingContent(stripped);
@@ -482,7 +488,7 @@ function reconstructInstructionTree(nodes: TreeNode[]): InstructionNode[] {
 			continue;
 		}
 
-		const label = getHierarchyLevel(text);
+		const label = getHierarchyLevel(text, { indentationHint: node.indent });
 		const rank = getHierarchyRank(label);
 
 		// Pop from stack until we find a parent with lower rank (higher level)
@@ -665,7 +671,9 @@ export function extractAmendatoryInstructions(
 				AMENDATORY_PHRASES.some((phrase) => text.includes(phrase));
 
 			if (isInstruction) {
-				const instructionLevel = getHierarchyLevel(text);
+				const instructionLevel = getHierarchyLevel(text, {
+					indentationHint: node.indent,
+				});
 				const instructionRank = getHierarchyRank(instructionLevel);
 
 				// The instruction node itself is always included
@@ -706,7 +714,9 @@ export function extractAmendatoryInstructions(
 				while (j < nodes.length) {
 					const sibling = nodes[j];
 					const siblingText = sibling.paragraph.text.trim();
-					const siblingLevel = getHierarchyLevel(siblingText);
+					const siblingLevel = getHierarchyLevel(siblingText, {
+						indentationHint: sibling.indent,
+					});
 					const siblingRank = getHierarchyRank(siblingLevel);
 					const siblingIsQuoted = isQuotedText(siblingText);
 

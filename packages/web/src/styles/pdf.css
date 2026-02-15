@@ -335,14 +335,10 @@ body {
 	margin-right: 1.5rem;
 	margin-top: 0;
 	margin-bottom: 0;
-	font-family: monospace;
-	font-size: 0.9rem;
 }
 
 /* Default style for non-amendatory paragraphs to match font */
 .pdf-column-annotations p {
-	font-family: monospace;
-	font-size: 0.9rem;
 	margin: 0;
 }
 
@@ -388,20 +384,17 @@ body {
 	text-transform: uppercase;
 }
 
-ins,
-del {
-	text-decoration-thickness: 1px;
-}
-
 ins {
 	color: #14532d;
 	text-decoration: underline;
+	text-decoration-thickness: 1px;
 	background: rgba(22, 163, 74, 0.13);
 }
 
 del {
 	color: #8f1d1d;
 	text-decoration: line-through;
+	text-decoration-thickness: 2px;
 	background: rgba(220, 38, 38, 0.11);
 }
 

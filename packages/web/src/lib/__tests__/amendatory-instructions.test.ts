@@ -231,6 +231,23 @@ describe("extractAmendatoryInstructions", () => {
 		expect(paragraphThree.operation.content).toContain(
 			"(1) In the case of wheat, $3.72 per bushel.",
 		);
+
+		const paragraphFour = rootNode.children[3];
+		expect(paragraphFour.label).toEqual({ type: "paragraph", val: "4" });
+		expect(paragraphFour.operation.type).toBe("replace");
+		expect(paragraphFour.operation.target).toEqual([
+			{ type: "subsection", val: "d" },
+		]);
+
+		const paragraphFive = rootNode.children[4];
+		expect(paragraphFive.label).toEqual({ type: "paragraph", val: "5" });
+		expect(paragraphFive.operation.type).toBe("replace");
+		expect(paragraphFive.operation.target).toEqual([
+			{ type: "subsection", val: "e" },
+			{ type: "paragraph", val: "1" },
+		]);
+		expect(paragraphFive.operation.strikingContent).toBe("$0.25");
+		expect(paragraphFive.operation.content).toBe("$0.30");
 	});
 
 	it("groups indented and dedented quoted text correctly based on hierarchy", () => {
@@ -386,6 +403,21 @@ describe("extractAmendatoryInstructions", () => {
 			{ type: "subsection", val: "u" },
 			{ type: "paragraph", val: "4" },
 		]);
+	});
+
+	it("extracts quoted strike-and-insert content when the opening quote is a right smart quote", () => {
+		const paras = [
+			createParagraph(
+				"Section 1 is amended by striking ”2023” and inserting ”2025”.",
+				{ lines: [{ xStart: 24 }] },
+			),
+		];
+		const instructions = extractAmendatoryInstructions(paras);
+		expect(instructions).toHaveLength(1);
+		const operation = instructions[0]?.tree[0]?.operation;
+		expect(operation?.type).toBe("replace");
+		expect(operation?.strikingContent).toBe("2023");
+		expect(operation?.content).toBe("2025");
 	});
 
 	it("captures strikingContent and content from quoted text", () => {

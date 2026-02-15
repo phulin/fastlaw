@@ -3,6 +3,7 @@ import type {
 	HierarchyLevel,
 	InstructionNode,
 } from "./amendatory-instructions";
+import { buildInferredMarkerLevels } from "./marker-level-inference";
 import type { NodeContent } from "./types";
 
 export type AmendmentSegmentKind = "unchanged" | "deleted" | "inserted";
@@ -58,6 +59,7 @@ interface TextRange {
 export interface OperationMatchAttempt {
 	operationType: string;
 	nodeText: string;
+	strikingContent: string | null;
 	targetPath: string | null;
 	hasExplicitTargetPath: boolean;
 	scopedRange: {
@@ -84,14 +86,19 @@ interface StructureMarker {
 	index: number;
 	label: string;
 	rank: number;
+	parent: number | null;
 }
 
 type ValuedHierarchyLevel = Exclude<HierarchyLevel, { type: "none" }>;
 type TargetHierarchyLevel = Exclude<ValuedHierarchyLevel, { type: "section" }>;
+type TargetHierarchyType = TargetHierarchyLevel["type"];
+type RedesignationFallbackMaps = Partial<
+	Record<TargetHierarchyType, Map<string, string>>
+>;
 
-const STRUCTURE_MARKER_RE =
-	/(?:^|\n)\s*((?:>\s*)*)(?:\*\*)?((?:\([A-Za-z0-9]+\))+)(?:\*\*)?/g;
 const STRUCTURE_LABEL_RE = /\(([A-Za-z0-9]+)\)/g;
+const BOLD_MARKER_CHAIN_RE = /\*\*((?:\([A-Za-z0-9]+\))+)\*\*/g;
+const LEADING_PLAIN_MARKER_CHAIN_RE = /^((?:\([A-Za-z0-9]+\))+)/;
 
 function getLevelRank(type: string): number {
 	switch (type) {
@@ -138,14 +145,6 @@ function mergeHierarchyTargets(
 	return merged;
 }
 
-function isLowerRoman(value: string): boolean {
-	return /^[ivxlc]+$/.test(value);
-}
-
-function isUpperRoman(value: string): boolean {
-	return /^[IVXLCDM]+$/.test(value);
-}
-
 function markerMatchesLevel(
 	marker: StructureMarker,
 	level: ValuedHierarchyLevel,
@@ -160,35 +159,238 @@ function isTargetHierarchyLevel(
 }
 
 function collectStructureMarkers(text: string): StructureMarker[] {
-	const markers: StructureMarker[] = [];
-	for (const match of text.matchAll(STRUCTURE_MARKER_RE)) {
-		const quotePrefix = match[1];
-		const chain = match[2];
-		if (!chain) continue;
-		const indentationLevel = (quotePrefix?.match(/>/g) ?? []).length;
-		for (const labelMatch of chain.matchAll(STRUCTURE_LABEL_RE)) {
-			const label = labelMatch[1];
-			if (!label) continue;
-			let inferredType: string;
-			if (/^\d+$/.test(label)) inferredType = "paragraph";
-			else if (isLowerRoman(label) && indentationLevel > 1)
-				inferredType = "clause";
-			else if (isUpperRoman(label) && indentationLevel > 3)
-				inferredType = "subclause";
-			else if (/^[a-z]$/.test(label)) inferredType = "subsection";
-			else if (/^[A-Z]$/.test(label)) inferredType = "subparagraph";
-			else if (/^[a-z]+$/.test(label)) inferredType = "item";
-			else if (/^[A-Z]+$/.test(label)) inferredType = "item";
-			else inferredType = "item";
+	const markersWithoutParents: Array<Omit<StructureMarker, "parent">> = [];
+	let offset = 0;
+	for (const line of text.split("\n")) {
+		const leadingWhitespaceLength = line.match(/^\s*/)?.[0].length ?? 0;
+		const trimmedStart = line.slice(leadingWhitespaceLength);
+		const quotePrefix = trimmedStart.match(/^(?:>\s*)*/)?.[0] ?? "";
+		const indentationLevel = (quotePrefix.match(/>/g) ?? []).length;
+		const contentStartInLine = leadingWhitespaceLength + quotePrefix.length;
+		const content = line.slice(contentStartInLine);
 
-			markers.push({
-				index: (match.index ?? 0) + (labelMatch.index ?? 0),
-				label,
-				rank: getLevelRank(inferredType),
-			});
+		const chainMatches: Array<{ start: number; chain: string }> = [];
+		for (const match of content.matchAll(BOLD_MARKER_CHAIN_RE)) {
+			const chain = match[1];
+			if (!chain || match.index === undefined) continue;
+			chainMatches.push({ start: match.index, chain });
 		}
+		const leadingPlainMatch = content.match(LEADING_PLAIN_MARKER_CHAIN_RE);
+		if (leadingPlainMatch?.[1]) {
+			chainMatches.push({ start: 0, chain: leadingPlainMatch[1] });
+		}
+
+		if (chainMatches.length === 0) {
+			offset += line.length + 1;
+			continue;
+		}
+
+		chainMatches.sort((a, b) => a.start - b.start);
+		const deduped: Array<{ start: number; chain: string }> = [];
+		const seen = new Set<string>();
+		for (const chainMatch of chainMatches) {
+			const key = `${chainMatch.start}:${chainMatch.chain}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			deduped.push(chainMatch);
+		}
+
+		const chainMarkers = deduped.map((chainMatch) => ({
+			...chainMatch,
+			labels: Array.from(chainMatch.chain.matchAll(STRUCTURE_LABEL_RE))
+				.map((labelMatch) => ({
+					label: labelMatch[1] ?? "",
+					index: labelMatch.index ?? 0,
+				}))
+				.filter((labelMatch) => labelMatch.label.length > 0),
+		}));
+		const inferredChainLevels = buildInferredMarkerLevels(
+			chainMarkers.map((chainMatch) => ({
+				markers: chainMatch.labels.map((labelMatch) => labelMatch.label),
+				indentationHint: indentationLevel,
+			})),
+		);
+		for (let chainIndex = 0; chainIndex < chainMarkers.length; chainIndex++) {
+			const chainMatch = chainMarkers[chainIndex];
+			const inferredLevels = inferredChainLevels[chainIndex] ?? [];
+			for (
+				let labelIndex = 0;
+				labelIndex < chainMatch.labels.length;
+				labelIndex++
+			) {
+				const labelMatch = chainMatch.labels[labelIndex];
+				const inferredLevel = inferredLevels[labelIndex];
+				if (!inferredLevel) continue;
+				markersWithoutParents.push({
+					index:
+						offset + contentStartInLine + chainMatch.start + labelMatch.index,
+					label: labelMatch.label,
+					rank: inferredLevel.rank,
+				});
+			}
+		}
+		offset += line.length + 1;
 	}
+	const markers = markersWithoutParents
+		.sort((a, b) => a.index - b.index)
+		.map((marker) => ({ ...marker, parent: null as number | null }));
+
+	const stack: number[] = [];
+	for (let i = 0; i < markers.length; i++) {
+		const marker = markers[i];
+		while (stack.length > 0) {
+			const parentCandidate = markers[stack[stack.length - 1]];
+			if (parentCandidate && parentCandidate.rank < marker.rank) break;
+			stack.pop();
+		}
+		marker.parent = stack.length > 0 ? (stack[stack.length - 1] ?? null) : null;
+		stack.push(i);
+	}
+
 	return markers;
+}
+
+function isDescendantMarker(
+	markers: StructureMarker[],
+	markerIndex: number,
+	ancestorIndex: number,
+): boolean {
+	let currentParent = markers[markerIndex]?.parent ?? null;
+	while (currentParent !== null) {
+		if (currentParent === ancestorIndex) return true;
+		currentParent = markers[currentParent]?.parent ?? null;
+	}
+	return false;
+}
+
+function parseHierarchyType(value: string): TargetHierarchyType | null {
+	const normalized = value.toLowerCase().replace(/s$/, "");
+	if (normalized === "subsection") return "subsection";
+	if (normalized === "paragraph") return "paragraph";
+	if (normalized === "subparagraph") return "subparagraph";
+	if (normalized === "clause") return "clause";
+	if (normalized === "subclause") return "subclause";
+	if (normalized === "item") return "item";
+	if (normalized === "subitem") return "subitem";
+	return null;
+}
+
+function extractParentheticalValues(input: string): string[] {
+	const values: string[] = [];
+	for (const match of input.matchAll(/\(([^)]+)\)/g)) {
+		const value = match[1]?.trim();
+		if (!value) continue;
+		values.push(value);
+	}
+	return values;
+}
+
+function extractRedesignationPairs(
+	text: string,
+): Array<{ type: TargetHierarchyType; oldVal: string; newVal: string }> {
+	const redesignationMatch = text.match(
+		/by redesignating\s+(subsections?|paragraphs?|subparagraphs?|clauses?|subclauses?|items?)\s+([\s\S]+?)\s+as\s+(subsections?|paragraphs?|subparagraphs?|clauses?|subclauses?|items?)\s+([\s\S]+?)(?:[,.;]|$)/i,
+	);
+	if (!redesignationMatch) return [];
+
+	const sourceType = parseHierarchyType(redesignationMatch[1] ?? "");
+	const destinationType = parseHierarchyType(redesignationMatch[3] ?? "");
+	if (!sourceType || !destinationType || sourceType !== destinationType) {
+		return [];
+	}
+
+	const oldValues = extractParentheticalValues(redesignationMatch[2] ?? "");
+	const newValues = extractParentheticalValues(redesignationMatch[4] ?? "");
+	if (oldValues.length === 0 || oldValues.length !== newValues.length) {
+		return [];
+	}
+
+	return oldValues.map((oldVal, index) => ({
+		type: sourceType,
+		oldVal,
+		newVal: newValues[index] ?? "",
+	}));
+}
+
+function buildRedesignationFallbackMaps(
+	nodes: InstructionNode[],
+): RedesignationFallbackMaps {
+	const maps: RedesignationFallbackMaps = {};
+	const walk = (list: InstructionNode[]) => {
+		for (const node of list) {
+			for (const pair of extractRedesignationPairs(node.text)) {
+				if (!pair.newVal) continue;
+				let perTypeMap = maps[pair.type];
+				if (!perTypeMap) {
+					perTypeMap = new Map<string, string>();
+					maps[pair.type] = perTypeMap;
+				}
+				// We resolve from redesigned label back to original label.
+				if (!perTypeMap.has(pair.newVal)) {
+					perTypeMap.set(pair.newVal, pair.oldVal);
+				}
+			}
+			if (node.children.length > 0) {
+				walk(node.children);
+			}
+		}
+	};
+	walk(nodes);
+	return maps;
+}
+
+function applyRedesignationFallbackToTarget(
+	target: HierarchyLevel[] | undefined,
+	maps: RedesignationFallbackMaps,
+): HierarchyLevel[] | null {
+	if (!target || target.length === 0) return null;
+	let changed = false;
+	const remapped = target.map((level) => {
+		if (level.type === "none" || level.type === "section") {
+			return level;
+		}
+		const previousValue = maps[level.type]?.get(level.val);
+		if (!previousValue) return level;
+		changed = true;
+		return { ...level, val: previousValue };
+	});
+	return changed ? remapped : null;
+}
+
+function extractMatterPrecedingAnchor(
+	nodeText: string,
+): { type: TargetHierarchyType; val: string } | null {
+	const match = nodeText.match(
+		/\bmatter preceding\s+(subsections?|paragraphs?|subparagraphs?|clauses?|subclauses?|items?|subitems?)\s*\(([^)]+)\)/i,
+	);
+	if (!match) return null;
+	const type = parseHierarchyType(match[1] ?? "");
+	const val = match[2]?.trim() ?? "";
+	if (!type || val.length === 0) return null;
+	return { type, val };
+}
+
+function applyMatterPrecedingScope(
+	text: string,
+	nodeText: string,
+	searchRange: TextRange | null,
+): TextRange | null {
+	if (!searchRange) return null;
+	const anchor = extractMatterPrecedingAnchor(nodeText);
+	if (!anchor) return searchRange;
+
+	const anchorRank = getLevelRank(anchor.type);
+	const markers = collectStructureMarkers(text);
+	const anchorMarker = markers.find(
+		(marker) =>
+			marker.index > searchRange.start &&
+			marker.index < searchRange.end &&
+			marker.rank === anchorRank &&
+			marker.label === anchor.val,
+	);
+	if (!anchorMarker) return null;
+	if (anchorMarker.index <= searchRange.start) return null;
+	return { start: searchRange.start, end: anchorMarker.index };
 }
 
 function getTargetRange(
@@ -206,17 +408,34 @@ function getTargetRange(
 
 	let scopeStart = 0;
 	let scopeEnd = text.length;
+	let parentMarkerIndex: number | null = null;
 
 	for (const level of path) {
 		const rank = getLevelRank(level.type);
-		const marker = markers.find(
-			(candidate) =>
-				candidate.index >= scopeStart &&
-				candidate.index < scopeEnd &&
-				markerMatchesLevel(candidate, level),
-		);
+		let markerIndex = -1;
+		for (let i = 0; i < markers.length; i++) {
+			const candidate = markers[i];
+			if (
+				candidate.index < scopeStart ||
+				candidate.index >= scopeEnd ||
+				!markerMatchesLevel(candidate, level)
+			) {
+				continue;
+			}
+			if (
+				parentMarkerIndex !== null &&
+				!isDescendantMarker(markers, i, parentMarkerIndex)
+			) {
+				continue;
+			}
+			markerIndex = i;
+			break;
+		}
+		if (markerIndex === -1) return null;
+		const marker = markers[markerIndex];
 		if (!marker) return null;
 		scopeStart = marker.index;
+		parentMarkerIndex = markerIndex;
 
 		const siblingOrAncestor = markers.find(
 			(candidate) =>
@@ -266,7 +485,11 @@ function firstIndexOfOrNull(
 		? text.slice(searchRange.start, searchRange.end)
 		: text;
 	const index = haystack.indexOf(needle);
-	return index === -1 ? null : index;
+	if (index !== -1) return index;
+	const insensitiveIndex = haystack
+		.toLocaleLowerCase()
+		.indexOf(needle.toLocaleLowerCase());
+	return insensitiveIndex === -1 ? null : insensitiveIndex;
 }
 
 interface SectionReference {
@@ -275,6 +498,11 @@ interface SectionReference {
 }
 
 interface FuzzyReplaceMatch {
+	localStart: number;
+	matchedText: string;
+}
+
+interface TextMatch {
 	localStart: number;
 	matchedText: string;
 }
@@ -364,6 +592,69 @@ function findSectionReferenceAlias(
 	};
 }
 
+function stripLeadingDesignator(text: string): string | null {
+	const match = text.match(/^\(([A-Za-z0-9]+)\)\s+([\s\S]+)$/);
+	if (!match) return null;
+	const stripped = (match[2] ?? "").trim();
+	if (stripped.length === 0) return null;
+	return stripped;
+}
+
+function buildCitationMarkupTolerantRegex(searchText: string): RegExp | null {
+	const tokens = searchText
+		.trim()
+		.split(/\s+/)
+		.filter((token) => token.length > 0);
+	if (tokens.length < 2) return null;
+	const citationNoise =
+		"(?:\\s+|\\s*(?:\\[[^\\]]+\\]\\([^\\)]+\\)|\\[[^\\]]*\\]\\([^\\)]+\\)[^\\]]*\\])\\s*)+";
+	const pattern = tokens.map(escapeForRegex).join(citationNoise);
+	return new RegExp(pattern, "i");
+}
+
+function findCitationMarkupTolerantMatch(
+	text: string,
+	searchText: string,
+	searchRange?: TextRange | null,
+): TextMatch | null {
+	const pattern = buildCitationMarkupTolerantRegex(searchText);
+	if (!pattern) return null;
+	const haystack = searchRange
+		? text.slice(searchRange.start, searchRange.end)
+		: text;
+	const match = pattern.exec(haystack);
+	if (!match) return null;
+	return {
+		localStart: match.index,
+		matchedText: match[0] ?? "",
+	};
+}
+
+function findTextMatch(
+	text: string,
+	searchText: string,
+	searchRange?: TextRange | null,
+): TextMatch | null {
+	const localStart = firstIndexOfOrNull(text, searchText, searchRange);
+	if (localStart !== null) {
+		return { localStart, matchedText: searchText };
+	}
+	const citationMatch = findCitationMarkupTolerantMatch(
+		text,
+		searchText,
+		searchRange,
+	);
+	if (citationMatch) return citationMatch;
+	return null;
+}
+
+function buildStrikingSearchCandidates(strikingContent: string): string[] {
+	const candidates = [strikingContent];
+	const stripped = stripLeadingDesignator(strikingContent);
+	if (stripped) candidates.push(stripped);
+	return candidates;
+}
+
 function normalizeInsertedText(
 	insertedText: string,
 	followingChar: string | undefined,
@@ -402,44 +693,6 @@ function getBlockquoteDepthForLineAt(text: string, index: number): number {
 	return 0;
 }
 
-function inferMarkerRank(marker: string): number {
-	return getLevelRank(inferInsertionMarkerType(marker, undefined, 0));
-}
-
-function inferInsertionMarkerType(
-	marker: string,
-	previousType: string | undefined,
-	paragraphIndentationLevel: number,
-): string {
-	if (/^\d+$/.test(marker)) return "paragraph";
-
-	if (/^[ivxlc]+$/.test(marker)) {
-		if (previousType === "subsection") return "subsection";
-		if (
-			previousType !== undefined &&
-			getLevelRank(previousType) >= getLevelRank("subparagraph")
-		) {
-			return "clause";
-		}
-		return paragraphIndentationLevel > 1 ? "clause" : "subsection";
-	}
-
-	if (/^[IVXLCDM]+$/.test(marker)) {
-		if (previousType === "paragraph") return "subparagraph";
-		if (
-			previousType !== undefined &&
-			getLevelRank(previousType) >= getLevelRank("clause")
-		) {
-			return "subclause";
-		}
-		return paragraphIndentationLevel > 3 ? "subclause" : "subparagraph";
-	}
-
-	if (/^[a-z]+$/.test(marker)) return "subsection";
-	if (/^[A-Z]+$/.test(marker)) return "subparagraph";
-	return "item";
-}
-
 function quotePrefix(depth: number): string {
 	if (depth <= 0) return "";
 	return `${Array.from({ length: depth }, () => ">").join(" ")} `;
@@ -475,20 +728,15 @@ function formatInsertedMultilineContent(
 		.filter((match): match is RegExpMatchArray => match !== null);
 	if (markerLines.length === 0) return content;
 
-	const markerRanks: number[] = [];
-	let previousMarkerType: string | undefined;
-	for (const markerLine of markerLines) {
-		const marker = markerLine[1] ?? "";
-		const markerType = inferInsertionMarkerType(
-			marker,
-			previousMarkerType,
-			baseDepth,
-		);
-		markerRanks.push(getLevelRank(markerType));
-		previousMarkerType = markerType;
-	}
+	const inferredMarkerRanks =
+		buildInferredMarkerLevels([
+			{
+				markers: markerLines.map((markerLine) => markerLine[1] ?? ""),
+				indentationHint: baseDepth,
+			},
+		])[0]?.map((level) => level.rank) ?? [];
 
-	const minMarkerRank = Math.min(...markerRanks);
+	const minMarkerRank = Math.min(...inferredMarkerRanks);
 	let activeDepth = baseDepth;
 	const formattedLines: string[] = [];
 	let markerIndex = 0;
@@ -510,7 +758,7 @@ function formatInsertedMultilineContent(
 
 		const marker = markerMatch[1] ?? "";
 		const rest = markerMatch[2] ?? "";
-		const markerRank = markerRanks[markerIndex] ?? inferMarkerRank(marker);
+		const markerRank = inferredMarkerRanks[markerIndex] ?? getLevelRank("item");
 		markerIndex += 1;
 		const markerDepth = baseDepth + (markerRank - minMarkerRank);
 		activeDepth = markerDepth;
@@ -540,9 +788,20 @@ function patchFromReplace(
 	searchRange?: TextRange | null,
 ): StringPatch | null {
 	if (!strikingContent || !insertingContent) return null;
-	const localStart = firstIndexOfOrNull(text, strikingContent, searchRange);
-	if (localStart === null) {
-		const strikingSection = parseBareSectionReference(strikingContent);
+	for (const candidate of buildStrikingSearchCandidates(strikingContent)) {
+		const directMatch = findTextMatch(text, candidate, searchRange);
+		if (directMatch) {
+			const offset = searchRange ? searchRange.start : 0;
+			const start = offset + directMatch.localStart;
+			return {
+				start,
+				end: start + directMatch.matchedText.length,
+				deleted: directMatch.matchedText,
+				inserted: insertingContent,
+			};
+		}
+
+		const strikingSection = parseBareSectionReference(candidate);
 		const insertingSection = parseBareSectionReference(insertingContent);
 		if (strikingSection && insertingSection) {
 			const aliasMatch = findSectionReferenceAlias(
@@ -565,12 +824,8 @@ function patchFromReplace(
 				};
 			}
 		}
-		const fuzzyMatch = findFuzzyReplaceMatch(
-			text,
-			strikingContent,
-			searchRange,
-		);
-		if (!fuzzyMatch) return null;
+		const fuzzyMatch = findFuzzyReplaceMatch(text, candidate, searchRange);
+		if (!fuzzyMatch) continue;
 		const offset = searchRange ? searchRange.start : 0;
 		const start = offset + fuzzyMatch.localStart;
 		return {
@@ -580,14 +835,7 @@ function patchFromReplace(
 			inserted: insertingContent,
 		};
 	}
-	const offset = searchRange ? searchRange.start : 0;
-	const start = offset + localStart;
-	return {
-		start,
-		end: start + strikingContent.length,
-		deleted: strikingContent,
-		inserted: insertingContent,
-	};
+	return null;
 }
 
 function patchFromDelete(
@@ -596,23 +844,35 @@ function patchFromDelete(
 	searchRange?: TextRange | null,
 ): StringPatch | null {
 	if (!strikingContent) return null;
-	const localStart = firstIndexOfOrNull(text, strikingContent, searchRange);
-	if (localStart === null) return null;
-	const offset = searchRange ? searchRange.start : 0;
-	const start = offset + localStart;
-	return {
-		start,
-		end: start + strikingContent.length,
-		deleted: strikingContent,
-		inserted: "",
-	};
+	for (const candidate of buildStrikingSearchCandidates(strikingContent)) {
+		const match = findTextMatch(text, candidate, searchRange);
+		if (!match) continue;
+		const offset = searchRange ? searchRange.start : 0;
+		let start = offset + match.localStart;
+		const end = start + match.matchedText.length;
+		if (
+			start > 0 &&
+			end < text.length &&
+			text[start - 1] === " " &&
+			text[end] === " "
+		) {
+			start -= 1;
+		}
+		return {
+			start,
+			end,
+			deleted: text.slice(start, end),
+			inserted: "",
+		};
+	}
+	return null;
 }
 
 function extractAnchor(
 	nodeText: string,
 	direction: "before" | "after",
 ): string | null {
-	const pattern = new RegExp(`${direction}\\s+["“'‘]([^"”'’]+)["”'’]`, "i");
+	const pattern = new RegExp(`${direction}\\s+["“”„‟'‘]([^"”'’]+)["”'’]`, "i");
 	const match = nodeText.match(pattern);
 	return match?.[1] ?? null;
 }
@@ -626,24 +886,48 @@ function patchFromInsertRelative(
 ): StringPatch | null {
 	if (!content) return null;
 	const anchor = extractAnchor(nodeText, direction);
-	if (!anchor) return null;
-	const localAnchorStart = firstIndexOfOrNull(text, anchor, searchRange);
-	if (localAnchorStart === null) return null;
-	const offset = searchRange ? searchRange.start : 0;
-	const anchorStart = offset + localAnchorStart;
-	const start =
-		direction === "before" ? anchorStart : anchorStart + anchor.length;
+	let start: number | null = null;
+	let usesPeriodAtEndAnchor = false;
+	if (anchor) {
+		const localAnchorStart = firstIndexOfOrNull(text, anchor, searchRange);
+		if (localAnchorStart === null) return null;
+		const offset = searchRange ? searchRange.start : 0;
+		const anchorStart = offset + localAnchorStart;
+		start = direction === "before" ? anchorStart : anchorStart + anchor.length;
+	} else if (/\bthe period at the end\b/i.test(nodeText)) {
+		usesPeriodAtEndAnchor = true;
+		const scopedText = searchRange
+			? text.slice(searchRange.start, searchRange.end)
+			: text;
+		const localPeriod = scopedText.trimEnd().lastIndexOf(".");
+		if (localPeriod === -1) return null;
+		const offset = searchRange ? searchRange.start : 0;
+		const periodStart = offset + localPeriod;
+		start = direction === "before" ? periodStart : periodStart + 1;
+	} else {
+		return null;
+	}
+	if (start === null) return null;
 	const precedingChar = start > 0 ? text[start - 1] : undefined;
 	const followingChar = text[start];
 	const normalizedContent = normalizeInsertedText(content, followingChar);
-	const inserted =
-		direction === "after" &&
+	const withPrefixSpacing =
+		direction === "before" &&
+		usesPeriodAtEndAnchor &&
 		normalizedContent.length > 0 &&
 		!/^\s/.test(normalizedContent) &&
 		precedingChar !== undefined &&
 		!/\s/.test(precedingChar)
 			? ` ${normalizedContent}`
 			: normalizedContent;
+	const inserted =
+		direction === "after" &&
+		withPrefixSpacing.length > 0 &&
+		!/^\s/.test(withPrefixSpacing) &&
+		precedingChar !== undefined &&
+		!/\s/.test(precedingChar)
+			? ` ${withPrefixSpacing}`
+			: withPrefixSpacing;
 	return {
 		start,
 		end: start,
@@ -822,14 +1106,36 @@ export function computeAmendmentEffect(
 	const patches: StringPatch[] = [];
 	let workingText = sectionBody;
 	const operationAttempts: OperationMatchAttempt[] = [];
+	const redesignationFallbackMaps = buildRedesignationFallbackMaps(
+		instruction.tree,
+	);
 
 	for (const node of operations) {
 		let patch: StringPatch | null = null;
-		const searchRange = getTargetRange(workingText, node.target);
+		let searchRange = getTargetRange(workingText, node.target);
 		const explicitTarget = hasExplicitTargetPath(node.target);
+		if (
+			explicitTarget &&
+			!searchRange &&
+			/\bas so (?:re)?designated\b/i.test(node.node.text)
+		) {
+			const remappedTarget = applyRedesignationFallbackToTarget(
+				node.target,
+				redesignationFallbackMaps,
+			);
+			if (remappedTarget) {
+				searchRange = getTargetRange(workingText, remappedTarget);
+			}
+		}
+		searchRange = applyMatterPrecedingScope(
+			workingText,
+			node.node.text,
+			searchRange,
+		);
 		const attempt: OperationMatchAttempt = {
 			operationType: node.node.operation.type,
 			nodeText: node.node.text,
+			strikingContent: node.node.operation.strikingContent ?? null,
 			targetPath: formatTargetPath(node.target),
 			hasExplicitTargetPath: explicitTarget,
 			scopedRange: searchRange
@@ -866,23 +1172,25 @@ export function computeAmendmentEffect(
 			};
 		}
 		switch (node.node.operation.type) {
-			case "replace":
+			case "replace": {
 				attempt.searchText = node.node.operation.strikingContent ?? null;
 				attempt.searchTextKind = "striking";
 				attempt.searchIndex =
 					attempt.searchText === null
 						? null
 						: firstIndexOfOrNull(workingText, attempt.searchText, searchRange);
+				const replaceContent =
+					node.node.operation.content ?? getOperationContent(node.node);
 				patch = patchFromReplace(
 					workingText,
 					node.node.operation.strikingContent,
-					node.node.operation.content,
+					replaceContent,
 					searchRange,
 				);
 				if (
 					!patch &&
 					!node.node.operation.strikingContent &&
-					(hasExplicitTargetPath(node.target) ||
+					(explicitTarget ||
 						/\bis (?:further )?amended to read as follows\b/i.test(
 							node.node.text,
 						) ||
@@ -896,6 +1204,7 @@ export function computeAmendmentEffect(
 				}
 				attempt.outcome = patch ? "applied" : "no_patch";
 				break;
+			}
 			case "delete":
 				attempt.searchText = node.node.operation.strikingContent ?? null;
 				attempt.searchTextKind = "striking";

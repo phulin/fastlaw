@@ -18,6 +18,27 @@ interface AnnotationLayerProps {
 
 const ITEM_GAP = 0;
 
+const renderFailedInstructionMarkdown = (
+	instruction: InstructionPageItem["instruction"],
+): string => {
+	if (instruction.paragraphs.length === 0) {
+		return instruction.text.replace(/\n/g, "\n\n");
+	}
+
+	const levels = instruction.paragraphs.map(
+		(paragraph) => paragraph.level ?? 0,
+	);
+	const baseLevel = Math.min(...levels);
+
+	return instruction.paragraphs
+		.map((paragraph) => {
+			const level = Math.max(0, (paragraph.level ?? baseLevel) - baseLevel);
+			const marker = level > 0 ? `${">".repeat(level)} ` : "";
+			return `${marker}${paragraph.text}`;
+		})
+		.join("\n\n");
+};
+
 export function AnnotationLayer(props: AnnotationLayerProps) {
 	let containerRef!: HTMLDivElement;
 
@@ -127,7 +148,9 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 											<div
 												class={`pdf-amend-color-${instructionItem.colorIndex} markdown`}
 												innerHTML={renderMarkdown(
-													instructionItem.instruction.text,
+													renderFailedInstructionMarkdown(
+														instructionItem.instruction,
+													),
 												)}
 											/>
 										)}
