@@ -88,6 +88,74 @@ app.post("/api/ingest/jobs/:jobId/abort", async (c) => {
 		return c.json({ error: "Abort failed" }, 500);
 	}
 });
+app.post("/api/statutes/section-bodies", async (c) => {
+	const payload = await c.req.json<{ paths?: unknown }>().catch(() => null);
+	if (
+		!payload ||
+		!Array.isArray(payload.paths) ||
+		payload.paths.some((path) => typeof path !== "string")
+	) {
+		return c.json(
+			{ error: "Invalid payload. Expected { paths: string[] }" },
+			400,
+		);
+	}
+
+	const paths = payload.paths as string[];
+	const uniquePaths = [...new Set(paths)];
+
+	const uniqueResults = await Promise.all(
+		uniquePaths.map(async (path) => {
+			try {
+				if (!path.startsWith("/statutes/")) {
+					return {
+						path,
+						status: "error" as const,
+						error: "Path must start with /statutes/",
+					};
+				}
+
+				const sourceCode = path.split("/")[2];
+				if (!sourceCode) {
+					return {
+						path,
+						status: "error" as const,
+						error: "Unable to determine source code from path",
+					};
+				}
+
+				const source = await getSourceByCode(sourceCode);
+				if (!source) return { path, status: "not_found" as const };
+				const sourceVersion = await getLatestSourceVersion(source.id);
+				if (!sourceVersion) return { path, status: "not_found" as const };
+				const node = await getNodeByPath(sourceVersion.id, path);
+				if (!node) return { path, status: "not_found" as const };
+				const content = await getNodeContent(node);
+				if (!content) return { path, status: "not_found" as const };
+				return {
+					path,
+					status: "ok" as const,
+					content,
+				};
+			} catch (error) {
+				return {
+					path,
+					status: "error" as const,
+					error: error instanceof Error ? error.message : String(error),
+				};
+			}
+		}),
+	);
+
+	const resultByPath = new Map(
+		uniqueResults.map((result) => [result.path, result]),
+	);
+	const orderedResults = paths
+		.map((path) => resultByPath.get(path))
+		.filter((result): result is NonNullable<typeof result> => result != null);
+
+	return c.json({ results: orderedResults });
+});
 
 app.get("/pdf", async (c) => {
 	const assets = c.env.ASSETS;

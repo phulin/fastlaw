@@ -17,8 +17,15 @@ import type { PageItem } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { extractAmendatoryInstructions } from "./lib/amendatory-instructions";
+import {
+	computeAmendmentEffect,
+	getSectionBodyText,
+	getSectionPathFromUscCitation,
+	type SectionBodiesResponse,
+} from "./lib/amendment-effects";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
+import type { NodeContent } from "./lib/types";
 
 const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
@@ -80,6 +87,28 @@ const hashFile = async (file: File): Promise<string> => {
 	return normalizeHashKey(
 		hashArray.map((b) => b.toString(16).padStart(2, "0")).join(""),
 	);
+};
+
+const fetchSectionBodies = async (
+	paths: string[],
+): Promise<Map<string, NodeContent>> => {
+	const response = await fetch("/api/statutes/section-bodies", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ paths }),
+	});
+
+	if (!response.ok) {
+		throw new Error(`Failed to fetch section bodies: HTTP ${response.status}`);
+	}
+
+	const payload = (await response.json()) as SectionBodiesResponse;
+	const sectionBodies = new Map<string, NodeContent>();
+	for (const result of payload.results) {
+		if (result.status !== "ok") continue;
+		sectionBodies.set(result.path, result.content);
+	}
+	return sectionBodies;
 };
 
 export default function PdfApp() {
@@ -162,6 +191,7 @@ export default function PdfApp() {
 	let currentFileHash: string | null = null;
 	let initialScrollTargetPage = 1;
 	let hasAppliedInitialScroll = false;
+	let paragraphApplyVersion = 0;
 
 	const rowVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
 		get count() {
@@ -271,6 +301,7 @@ export default function PdfApp() {
 		currentFileHash = null;
 		initialScrollTargetPage = 1;
 		hasAppliedInitialScroll = false;
+		paragraphApplyVersion += 1;
 		// Clear hash when resetting, unless requested to keep it (e.g. during initial load)
 		if (!keepHash && typeof window !== "undefined") {
 			history.pushState(
@@ -452,9 +483,36 @@ export default function PdfApp() {
 
 			setupPageRows();
 			const pdf = currentPdf;
+			const sectionBodyCache = new Map<string, NodeContent>();
 
-			const applyParagraphs = (allParagraphs: Paragraph[]) => {
+			const applyParagraphs = async (allParagraphs: Paragraph[]) => {
+				const applyVersion = ++paragraphApplyVersion;
 				const instructions = extractAmendatoryInstructions(allParagraphs);
+				const sectionPathByInstruction = new Map<
+					import("./lib/amendatory-instructions").AmendatoryInstruction,
+					string
+				>();
+				const unresolvedPaths: string[] = [];
+
+				for (const instruction of instructions) {
+					const sectionPath = getSectionPathFromUscCitation(
+						instruction.uscCitation,
+					);
+					if (!sectionPath) continue;
+					sectionPathByInstruction.set(instruction, sectionPath);
+					if (!sectionBodyCache.has(sectionPath)) {
+						unresolvedPaths.push(sectionPath);
+					}
+				}
+
+				if (unresolvedPaths.length > 0) {
+					const dedupedPaths = [...new Set(unresolvedPaths)];
+					const fetched = await fetchSectionBodies(dedupedPaths);
+					if (applyVersion !== paragraphApplyVersion) return;
+					for (const [path, content] of fetched.entries()) {
+						sectionBodyCache.set(path, content);
+					}
+				}
 
 				const instructionParagraphs = new Set<Paragraph>();
 				const instructionMap = new Map<
@@ -483,11 +541,22 @@ export default function PdfApp() {
 										instr.paragraphs[0].pageHeight) *
 									100
 								: 0;
+							const sectionPath = sectionPathByInstruction.get(instr) ?? null;
+							const sectionContent = sectionPath
+								? sectionBodyCache.get(sectionPath)
+								: undefined;
+							const sectionBodyText = getSectionBodyText(sectionContent);
+							const amendmentEffect =
+								sectionPath && sectionBodyText.length > 0
+									? computeAmendmentEffect(instr, sectionPath, sectionBodyText)
+									: null;
 
 							newItems.push({
 								item: {
 									type: "instruction",
 									instruction: instr,
+									amendmentEffect:
+										amendmentEffect?.status === "ok" ? amendmentEffect : null,
 									colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
 									topPercent,
 								},
@@ -512,6 +581,7 @@ export default function PdfApp() {
 					}
 				}
 
+				if (applyVersion !== paragraphApplyVersion) return;
 				setAllItems(newItems);
 			};
 
@@ -523,11 +593,13 @@ export default function PdfApp() {
 				endPage: windowEnd,
 			})
 				.then((windowParagraphs) => {
-					applyParagraphs(windowParagraphs);
+					return applyParagraphs(windowParagraphs);
+				})
+				.then(() => {
 					return extractParagraphs(pdf);
 				})
 				.then((allParagraphs) => {
-					applyParagraphs(allParagraphs);
+					return applyParagraphs(allParagraphs);
 				})
 				.catch((err: unknown) => {
 					console.error("Error extracting text:", err);

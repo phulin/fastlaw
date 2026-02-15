@@ -1,4 +1,5 @@
-import { createEffect, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, For, Show } from "solid-js";
+import { AmendedSnippet } from "./AmendedSnippet";
 import type { PageItem } from "./PageRow";
 
 export interface PageLayout {
@@ -13,7 +14,6 @@ interface AnnotationLayerProps {
 	width: number; // The width of the annotation column
 }
 
-const SECTION_GAP = 16;
 const ITEM_GAP = 0;
 
 export function AnnotationLayer(props: AnnotationLayerProps) {
@@ -102,17 +102,21 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 								</p>
 							}
 						>
-							<p
-								class={`pdf-amend-color-${
-									(entry.item as Extract<PageItem, { type: "instruction" }>)
-										.colorIndex
-								}`}
-							>
-								{
-									(entry.item as Extract<PageItem, { type: "instruction" }>)
-										.instruction.text
-								}
-							</p>
+							{(() => {
+								const instructionItem = entry.item as Extract<
+									PageItem,
+									{ type: "instruction" }
+								>;
+								return instructionItem.amendmentEffect ? (
+									<div class={`pdf-amend-color-${instructionItem.colorIndex}`}>
+										<AmendedSnippet effect={instructionItem.amendmentEffect} />
+									</div>
+								) : (
+									<p class={`pdf-amend-color-${instructionItem.colorIndex}`}>
+										{instructionItem.instruction.text}
+									</p>
+								);
+							})()}
 						</Show>
 					</div>
 				)}
