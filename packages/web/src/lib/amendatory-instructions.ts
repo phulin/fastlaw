@@ -65,7 +65,8 @@ const DIVISION_HEADER_RE =
 	/^(?:TITLE|Subtitle|CHAPTER|SUBCHAPTER|PART|SEC\.)\s+[A-Z0-9]+[\s.—\u2014-]/i;
 // Heuristic phrases that trigger an instruction block
 const AMENDATORY_PHRASES = ["is amended", "is repealed", "is further amended"];
-const USC_CITATION_RE = /(\d+)\s+U\.S\.C\.\s+\d+(?:\([^)]*\))*/;
+const USC_CITATION_RE =
+	/(\d+)\s+U\.S\.C\.\s+\d+[A-Za-z0-9\u2013-]*(?:\([^)]*\))*/;
 const USC_CITATION_SECTION_RE = /^\d+\s+U\.S\.C\.\s+([0-9A-Za-z-]+)/i;
 const TITLE_SECTION_CITATION_RE =
 	/section\s+(\d+(?:[A-Za-z0-9-]*)(?:\([^)]*\))*)\s+of\s+title\s+(\d+),?\s+United States Code/i;
@@ -306,10 +307,20 @@ function extractFollowingContent(text: string): string | undefined {
 		.trim();
 }
 
+function extractStructuralStrikeTarget(text: string): HierarchyLevel[] {
+	const strikeAndInsertMatch = text.match(
+		/by striking\s+(.+?)\s+and\s+inserting\s+the following/i,
+	);
+	if (!strikeAndInsertMatch) return [];
+	const structuralTarget = strikeAndInsertMatch[1]?.trim() ?? "";
+	if (structuralTarget.length === 0) return [];
+	return parseTarget(structuralTarget);
+}
+
 function parseOperation(text: string): AmendatoryOperation {
 	const stripped = stripInstructionLabel(text);
 	const lower = stripped.toLowerCase();
-	const targetLevels = parseTarget(stripped);
+	let targetLevels = parseTarget(stripped);
 
 	let type: AmendmentActionType = "unknown";
 	let strikingContent: string | undefined;
@@ -330,15 +341,36 @@ function parseOperation(text: string): AmendatoryOperation {
 	if (followingContent) {
 		content = followingContent;
 	}
+	const structuralStrikeTarget = extractStructuralStrikeTarget(stripped);
+	if (structuralStrikeTarget.length > 0) {
+		for (const level of structuralStrikeTarget) {
+			if (
+				level.type !== "none" &&
+				!targetLevels.some(
+					(existing) =>
+						existing.type === level.type && existing.val === level.val,
+				)
+			) {
+				targetLevels = [...targetLevels, level];
+			}
+		}
+	}
 
 	if (
 		lower.includes("by striking") ||
 		lower.includes("is repealed") ||
 		lower.includes("by inserting") ||
 		lower.includes("by adding") ||
-		lower.includes("by redesignating")
+		lower.includes("by redesignating") ||
+		lower.includes("is amended to read as follows") ||
+		lower.includes("is further amended to read as follows")
 	) {
 		if (lower.includes("by striking") && lower.includes("inserting")) {
+			type = "replace";
+		} else if (
+			lower.includes("is amended to read as follows") ||
+			lower.includes("is further amended to read as follows")
+		) {
 			type = "replace";
 		} else if (lower.includes("by striking") || lower.includes("is repealed")) {
 			type = "delete";

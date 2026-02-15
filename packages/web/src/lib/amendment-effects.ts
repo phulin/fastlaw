@@ -274,6 +274,11 @@ interface SectionReference {
 	suffix: string;
 }
 
+interface FuzzyReplaceMatch {
+	localStart: number;
+	matchedText: string;
+}
+
 function parseBareSectionReference(input: string): SectionReference | null {
 	const match = input.match(/^\s*section\s+(\d+)((?:\([A-Za-z0-9]+\))+)\s*$/i);
 	if (!match) return null;
@@ -282,6 +287,60 @@ function parseBareSectionReference(input: string): SectionReference | null {
 
 function escapeForRegex(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeMarkdownForMatching(text: string): string {
+	return text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*\*/g, "");
+}
+
+function buildFlexibleSectionReferencePattern(_: string): string {
+	const refCore =
+		"section\\s+\\d+[A-Za-z0-9-]*(?:\\([A-Za-z0-9]+\\))*" +
+		"(?:\\s+of\\s+(?:this\\s+title|title\\s+\\d+[^,.;\\n\\]]*|the\\s+[^,.;\\n\\]]+|Public\\s+Law\\s+\\d+[–-]\\d+[^,.;\\n\\]]*))?";
+	return `(?:\\[${refCore}\\]\\([^\\n)]*\\)|${refCore})`;
+}
+
+function buildFuzzyReplaceRegex(searchText: string): RegExp | null {
+	const normalized = normalizeMarkdownForMatching(searchText).trim();
+	if (!/section\s+\d+/i.test(normalized)) return null;
+
+	const sectionRefRe =
+		/section\s+\d+[A-Za-z0-9-]*(?:\([A-Za-z0-9]+\))*(?:\s+of\s+(?:this\s+title|title\s+\d+[^,.;\n]*|the\s+[^,.;\n]+|Public\s+Law\s+\d+[–-]\d+[^,.;\n]*))?/gi;
+	const spans = Array.from(normalized.matchAll(sectionRefRe));
+	if (spans.length === 0) return null;
+
+	let pattern = "";
+	let cursor = 0;
+	for (const span of spans) {
+		if (span.index === undefined) continue;
+		const start = span.index;
+		const end = start + span[0].length;
+		const before = normalized.slice(cursor, start);
+		pattern += escapeForRegex(before).replace(/\s+/g, "\\s+");
+		pattern += buildFlexibleSectionReferencePattern(span[0]);
+		cursor = end;
+	}
+	pattern += escapeForRegex(normalized.slice(cursor)).replace(/\s+/g, "\\s+");
+	if (pattern.length === 0) return null;
+	return new RegExp(pattern, "i");
+}
+
+function findFuzzyReplaceMatch(
+	text: string,
+	strikingContent: string,
+	searchRange?: TextRange | null,
+): FuzzyReplaceMatch | null {
+	const haystack = searchRange
+		? text.slice(searchRange.start, searchRange.end)
+		: text;
+	const pattern = buildFuzzyReplaceRegex(strikingContent);
+	if (!pattern) return null;
+	const match = pattern.exec(haystack);
+	if (!match) return null;
+	return {
+		localStart: match.index,
+		matchedText: match[0] ?? "",
+	};
 }
 
 function findSectionReferenceAlias(
@@ -317,6 +376,120 @@ function normalizeInsertedText(
 	return `${insertedText} `;
 }
 
+function getBlockquoteDepthForLineAt(text: string, index: number): number {
+	if (text.length === 0) return 0;
+	const boundedIndex = Math.max(0, Math.min(index, text.length - 1));
+	let lineStart = text.lastIndexOf("\n", boundedIndex) + 1;
+	const getDepthAtLineStart = (start: number): number => {
+		const nextBreak = text.indexOf("\n", start);
+		const line =
+			nextBreak === -1 ? text.slice(start) : text.slice(start, nextBreak);
+		const prefixMatch = line.match(/^(>\s*)+/);
+		if (!prefixMatch) return 0;
+		return (prefixMatch[0].match(/>/g) ?? []).length;
+	};
+
+	const currentDepth = getDepthAtLineStart(lineStart);
+	if (currentDepth > 0) return currentDepth;
+
+	for (let i = 0; i < 8; i++) {
+		if (lineStart === 0) break;
+		lineStart = text.lastIndexOf("\n", Math.max(0, lineStart - 2)) + 1;
+		const depth = getDepthAtLineStart(lineStart);
+		if (depth > 0) return depth;
+	}
+
+	return 0;
+}
+
+function inferMarkerRank(marker: string): number {
+	if (/^\d+$/.test(marker)) return getLevelRank("paragraph");
+	if (/^[ivxlc]+$/.test(marker)) return getLevelRank("clause");
+	if (/^[IVXLCDM]+$/.test(marker)) return getLevelRank("subclause");
+	if (/^[a-z]+$/.test(marker)) return getLevelRank("subsection");
+	if (/^[A-Z]+$/.test(marker)) return getLevelRank("subparagraph");
+	return getLevelRank("item");
+}
+
+function quotePrefix(depth: number): string {
+	if (depth <= 0) return "";
+	return `${Array.from({ length: depth }, () => ">").join(" ")} `;
+}
+
+function splitHeadingFromBody(
+	rest: string,
+): { heading: string; body: string | null } | null {
+	const match = rest.match(/^([A-Z0-9][A-Z0-9 '"()\-.,/&]+)\.\u2014\s*(.*)$/);
+	if (!match) return null;
+	const heading = match[1]?.trim();
+	if (!heading) return null;
+	const body = (match[2] ?? "").trim();
+	return { heading, body: body.length > 0 ? body : null };
+}
+
+function formatInsertedMultilineContent(
+	text: string,
+	insertAt: number,
+	content: string,
+): string {
+	if (!content.includes("\n")) return content;
+	const rawLines = content.split("\n");
+	const markerLines = rawLines
+		.map((line) =>
+			line
+				.trim()
+				.replace(/^[“”"‘’']+/, "")
+				.replace(/[“”"‘’']+$/, ""),
+		)
+		.map((line) => line.match(/^\(([A-Za-z0-9]+)\)\s*(.*)$/))
+		.filter((match): match is RegExpMatchArray => match !== null);
+	if (markerLines.length === 0) return content;
+
+	const minMarkerRank = Math.min(
+		...markerLines.map((match) => inferMarkerRank(match[1] ?? "")),
+	);
+	const baseDepth = getBlockquoteDepthForLineAt(text, insertAt);
+	let activeDepth = baseDepth;
+	const formattedLines: string[] = [];
+
+	for (const rawLine of rawLines) {
+		const trimmed = rawLine.trim();
+		const unquoted = trimmed
+			.replace(/^[“”"‘’']+/, "")
+			.replace(/[“”"‘’']+[.;,]*$/, "");
+		if (unquoted.length === 0) {
+			formattedLines.push("");
+			continue;
+		}
+		const markerMatch = unquoted.match(/^\(([A-Za-z0-9]+)\)\s*(.*)$/);
+		if (!markerMatch) {
+			formattedLines.push(`${quotePrefix(activeDepth)}${unquoted}`);
+			continue;
+		}
+
+		const marker = markerMatch[1] ?? "";
+		const rest = markerMatch[2] ?? "";
+		const markerDepth = baseDepth + (inferMarkerRank(marker) - minMarkerRank);
+		activeDepth = markerDepth;
+		const headingSplit = splitHeadingFromBody(rest);
+		if (headingSplit) {
+			formattedLines.push(
+				`${quotePrefix(markerDepth)}**(${marker})** **${headingSplit.heading}**`,
+			);
+			if (headingSplit.body) {
+				formattedLines.push(`${quotePrefix(markerDepth)}${headingSplit.body}`);
+			}
+			continue;
+		}
+
+		formattedLines.push(
+			`${quotePrefix(markerDepth)}**(${marker})**${rest ? ` ${rest}` : ""}`,
+		);
+	}
+
+	return formattedLines.join("\n");
+}
+
 function patchFromReplace(
 	text: string,
 	strikingContent: string | undefined,
@@ -328,24 +501,40 @@ function patchFromReplace(
 	if (localStart === null) {
 		const strikingSection = parseBareSectionReference(strikingContent);
 		const insertingSection = parseBareSectionReference(insertingContent);
-		if (!strikingSection || !insertingSection) return null;
-		const aliasMatch = findSectionReferenceAlias(
+		if (strikingSection && insertingSection) {
+			const aliasMatch = findSectionReferenceAlias(
+				text,
+				strikingSection,
+				searchRange,
+			);
+			if (aliasMatch) {
+				const offset = searchRange ? searchRange.start : 0;
+				const start = offset + aliasMatch.localStart;
+				const inserted =
+					insertingSection.number === strikingSection.number
+						? `section ${aliasMatch.matchedNumber}${insertingSection.suffix}`
+						: insertingContent;
+				return {
+					start,
+					end: start + aliasMatch.matchedText.length,
+					deleted: aliasMatch.matchedText,
+					inserted,
+				};
+			}
+		}
+		const fuzzyMatch = findFuzzyReplaceMatch(
 			text,
-			strikingSection,
+			strikingContent,
 			searchRange,
 		);
-		if (!aliasMatch) return null;
+		if (!fuzzyMatch) return null;
 		const offset = searchRange ? searchRange.start : 0;
-		const start = offset + aliasMatch.localStart;
-		const inserted =
-			insertingSection.number === strikingSection.number
-				? `section ${aliasMatch.matchedNumber}${insertingSection.suffix}`
-				: insertingContent;
+		const start = offset + fuzzyMatch.localStart;
 		return {
 			start,
-			end: start + aliasMatch.matchedText.length,
-			deleted: aliasMatch.matchedText,
-			inserted,
+			end: start + fuzzyMatch.matchedText.length,
+			deleted: fuzzyMatch.matchedText,
+			inserted: insertingContent,
 		};
 	}
 	const offset = searchRange ? searchRange.start : 0;
@@ -451,12 +640,43 @@ function patchFromScopedInsertion(
 	const beforeInsert = text.slice(0, insertAt);
 	const needsLineBreak =
 		beforeInsert.length > 0 && !beforeInsert.endsWith("\n");
+	const formattedContent = formatInsertedMultilineContent(
+		text,
+		insertAt,
+		content,
+	);
 	return {
 		start: insertAt,
 		end: insertAt,
 		deleted: "",
-		inserted: `${needsLineBreak ? "\n" : ""}${content}`,
+		inserted: `${needsLineBreak ? "\n" : ""}${formattedContent}`,
 	};
+}
+
+function patchFromScopedReplacement(
+	text: string,
+	content: string | undefined,
+	searchRange: TextRange | null,
+): StringPatch | null {
+	if (!searchRange || !content) return null;
+	const beforeRange = text.slice(0, searchRange.start);
+	const replacementPrefix =
+		beforeRange.length > 0 && !beforeRange.endsWith("\n") ? "\n" : "";
+	const formattedContent = formatInsertedMultilineContent(
+		text,
+		searchRange.start,
+		content,
+	);
+	return {
+		start: searchRange.start,
+		end: searchRange.end,
+		deleted: text.slice(searchRange.start, searchRange.end),
+		inserted: `${replacementPrefix}${formattedContent}`,
+	};
+}
+
+function isScopedStrikeAndInsertFollowing(nodeText: string): boolean {
+	return /\bby striking\b[\s\S]*\binserting the following\b/i.test(nodeText);
 }
 
 function patchFromAddAtEnd(
@@ -470,7 +690,12 @@ function patchFromAddAtEnd(
 	const beforeInsert = text.slice(0, insertAt);
 	const needsLineBreak =
 		beforeInsert.length > 0 && !beforeInsert.endsWith("\n");
-	const inserted = `${needsLineBreak ? "\n" : ""}${content}`;
+	const formattedContent = formatInsertedMultilineContent(
+		text,
+		insertAt,
+		content,
+	);
+	const inserted = `${needsLineBreak ? "\n" : ""}${formattedContent}`;
 	return {
 		start: insertAt,
 		end: insertAt,
@@ -611,6 +836,20 @@ export function computeAmendmentEffect(
 					node.node.operation.content,
 					searchRange,
 				);
+				if (
+					!patch &&
+					!node.node.operation.strikingContent &&
+					(/\bis (?:further )?amended to read as follows\b/i.test(
+						node.node.text,
+					) ||
+						isScopedStrikeAndInsertFollowing(node.node.text))
+				) {
+					patch = patchFromScopedReplacement(
+						workingText,
+						getOperationContent(node.node),
+						searchRange,
+					);
+				}
 				attempt.outcome = patch ? "applied" : "no_patch";
 				break;
 			case "delete":
@@ -635,11 +874,16 @@ export function computeAmendmentEffect(
 				const insertAt = searchRange ? searchRange.end : workingText.length;
 				const followingChar = workingText[insertAt];
 				const beforeInsert = workingText.slice(0, insertAt);
+				const formattedContent = formatInsertedMultilineContent(
+					workingText,
+					insertAt,
+					node.node.operation.content,
+				);
 				patch = {
 					start: insertAt,
 					end: insertAt,
 					deleted: "",
-					inserted: `${beforeInsert.endsWith("\n") ? "" : "\n"}${normalizeInsertedText(node.node.operation.content, followingChar)}`,
+					inserted: `${beforeInsert.endsWith("\n") ? "" : "\n"}${normalizeInsertedText(formattedContent, followingChar)}`,
 				};
 				attempt.outcome = "applied";
 				break;

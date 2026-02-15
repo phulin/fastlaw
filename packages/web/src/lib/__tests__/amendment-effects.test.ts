@@ -40,6 +40,14 @@ const USC_9032_PRE_FIXTURE_PATH = resolve(
 	WEB_ROOT,
 	"src/lib/__fixtures__/usc-7-9032.md",
 );
+const USC_2036A_PRE_FIXTURE_PATH = resolve(
+	WEB_ROOT,
+	"src/lib/__fixtures__/usc-7-2036a-pre.md",
+);
+const USC_9011_PRE_FIXTURE_PATH = resolve(
+	WEB_ROOT,
+	"src/lib/__fixtures__/usc-7-9011-pre.md",
+);
 const hasLocalState =
 	existsSync(FIXTURE_PATH) && existsSync(SECTION_BODIES_PATH);
 
@@ -235,6 +243,132 @@ describe("computeAmendmentEffect target scoping", () => {
 		);
 	});
 
+	it("keeps full quoted insert-after blocks and strips trailing instruction punctuation", () => {
+		const instruction: AmendatoryInstruction = {
+			billSection: "SEC. 101.",
+			target: "Section 1001",
+			uscCitation: "7 U.S.C. 1308",
+			text: [
+				"(a) Section 1001 is amended—",
+				"(1) in subsection (a)—",
+				"(B) by inserting after paragraph (4) the following:",
+				"“(5) QUALIFIED PASS-THROUGH ENTITY.—The term ‘qualified pass-through entity’ means—",
+				"“(A) a partnership (within the meaning of subchapter K of chapter 1 of the Internal Revenue Code of 1986);",
+				"“(B) an S corporation (as defined in section 1361 of that Code);",
+				"“(C) a limited liability company that does not affirmatively elect to be treated as a corporation; and",
+				"“(D) a joint venture or general partnership.”;",
+			].join("\n"),
+			paragraphs: [],
+			startPage: 1,
+			endPage: 1,
+			rootQuery: [{ type: "section", val: "1001" }],
+			tree: [
+				{
+					label: { type: "subsection", val: "a" },
+					operation: {
+						type: "context",
+						target: [{ type: "subsection", val: "a" }],
+					},
+					children: [
+						{
+							label: { type: "paragraph", val: "1" },
+							operation: {
+								type: "context",
+								target: [{ type: "subsection", val: "a" }],
+							},
+							children: [
+								{
+									label: { type: "subparagraph", val: "B" },
+									operation: {
+										type: "insert_after",
+										target: [{ type: "paragraph", val: "4" }],
+									},
+									children: [
+										{
+											operation: {
+												type: "unknown",
+												content:
+													"“(5) QUALIFIED PASS-THROUGH ENTITY.—The term ‘qualified pass-through entity’ means—",
+											},
+											children: [],
+											text: "“(5) QUALIFIED PASS-THROUGH ENTITY.—The term ‘qualified pass-through entity’ means—",
+										},
+										{
+											operation: {
+												type: "unknown",
+												content:
+													"“(A) a partnership (within the meaning of subchapter K of chapter 1 of the Internal Revenue Code of 1986);",
+											},
+											children: [],
+											text: "“(A) a partnership (within the meaning of subchapter K of chapter 1 of the Internal Revenue Code of 1986);",
+										},
+										{
+											operation: {
+												type: "unknown",
+												content:
+													"“(B) an S corporation (as defined in section 1361 of that Code);",
+											},
+											children: [],
+											text: "“(B) an S corporation (as defined in section 1361 of that Code);",
+										},
+										{
+											operation: {
+												type: "unknown",
+												content:
+													"“(C) a limited liability company that does not affirmatively elect to be treated as a corporation; and",
+											},
+											children: [],
+											text: "“(C) a limited liability company that does not affirmatively elect to be treated as a corporation; and",
+										},
+										{
+											operation: {
+												type: "unknown",
+												content:
+													"“(D) a joint venture or general partnership.”;",
+											},
+											children: [],
+											text: "“(D) a joint venture or general partnership.”;",
+										},
+									],
+									text: "(B) by inserting after paragraph (4) the following:",
+								},
+							],
+							text: "(1) in subsection (a)—",
+						},
+					],
+					text: "(a) Section 1001 is amended—",
+				},
+			],
+		};
+		const sectionBody = [
+			"**(a)** IN GENERAL.",
+			'**(4)** The term "person" means a natural person, and does not include a legal entity.',
+			"**(6)** RULE OF CONSTRUCTION.",
+		].join("\n");
+
+		const effect = computeAmendmentEffect(
+			instruction,
+			"/statutes/usc/section/7/1308",
+			sectionBody,
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.inserted).toHaveLength(1);
+		expect(effect.inserted[0]).toContain(
+			"**(5)** **QUALIFIED PASS-THROUGH ENTITY**",
+		);
+		expect(effect.inserted[0]).toContain(
+			"The term ‘qualified pass-through entity’ means—",
+		);
+		expect(effect.inserted[0]).toContain(
+			"**(A)** a partnership (within the meaning of subchapter K of chapter 1 of the Internal Revenue Code of 1986);",
+		);
+		expect(effect.inserted[0]).toContain(
+			"**(D)** a joint venture or general partnership.",
+		);
+		expect(effect.inserted[0]).not.toContain("general partnership.”;");
+	});
+
 	it.each([
 		{
 			name: "7 U.S.C. 2025 fixture",
@@ -326,6 +460,95 @@ describe("computeAmendmentEffect target scoping", () => {
 			expectedTextSnippet: "**(c)** **2026 through 2031 crop years**",
 			expectedTargetPath: "subsection:b",
 		},
+		{
+			name: "7 U.S.C. 2036a(d)(1)(F) fixture",
+			loadInstruction: (): AmendatoryInstruction => ({
+				billSection:
+					"SEC. 10107. NATIONAL EDUCATION AND OBESITY PREVENTION GRANT PROGRAM.",
+				target:
+					"Section 28(d)(1)(F) of the Food and Nutrition Act of 2008 (7 U.S.C. 2036a(d)(1)(F))",
+				uscCitation: "7 U.S.C. 2036a(d)(1)(F)",
+				text: "Section 28(d)(1)(F) of the Food and Nutrition Act of 2008 (7 U.S.C. 2036a(d)(1)(F)) is amended by striking “for fiscal year 2016 and each subsequent fiscal year” and inserting “for each of fiscal years 2016 through 2025”.",
+				paragraphs: [],
+				startPage: 1,
+				endPage: 1,
+				rootQuery: [
+					{ type: "section", val: "28" },
+					{ type: "subsection", val: "d" },
+					{ type: "paragraph", val: "1" },
+					{ type: "subparagraph", val: "F" },
+				],
+				tree: [
+					{
+						operation: {
+							type: "replace",
+							target: [
+								{ type: "section", val: "28" },
+								{ type: "subsection", val: "d" },
+								{ type: "paragraph", val: "1" },
+								{ type: "subparagraph", val: "F" },
+							],
+							content: "for each of fiscal years 2016 through 2025",
+							strikingContent:
+								"for fiscal year 2016 and each subsequent fiscal year",
+						},
+						children: [],
+						text: "Section 28(d)(1)(F) ... is amended by striking ... and inserting ...",
+					},
+				],
+			}),
+			preFixturePath: USC_2036A_PRE_FIXTURE_PATH,
+			expectedInserted: ["for each of fiscal years 2016 through 2025"],
+			expectedDeleted: ["for fiscal year 2016 and each subsequent fiscal year"],
+			expectedTextSnippet:
+				"for each of fiscal years 2016 through 2025, the applicable amount during the preceding fiscal year",
+			expectedTargetPath: "subsection:d > paragraph:1 > subparagraph:F",
+		},
+		{
+			name: "7 U.S.C. 9011 paragraph (19) strike-and-insert fixture",
+			loadInstruction: (): AmendatoryInstruction => ({
+				billSection: "SEC. 10000.",
+				target: "Section 1111 of the Agricultural Act of 2014 (7 U.S.C. 9011)",
+				uscCitation: "7 U.S.C. 9011",
+				text: "(b) REFERENCE PRICE.—Section 1111 of the Agricultural Act of 2014 (7 U.S.C. 9011) is amended by striking paragraph (19) and inserting the following:",
+				paragraphs: [],
+				startPage: 1,
+				endPage: 1,
+				rootQuery: [{ type: "section", val: "1111" }],
+				tree: [
+					{
+						label: { type: "subsection", val: "b" },
+						operation: {
+							type: "replace",
+							target: [
+								{ type: "section", val: "1111" },
+								{ type: "paragraph", val: "19" },
+							],
+							content: [
+								"(19) REFERENCE PRICE.—",
+								"(A) IN GENERAL.—Effective beginning with the 2025 crop year, subject to subparagraphs (B) and (C), the term 'reference price', with respect to a covered commodity for a crop year, means the following:",
+								"(i) For wheat, $6.35 per bushel.",
+								"(ii) For corn, $4.10 per bushel.",
+								"(iii) For grain sorghum, $4.40 per bushel.",
+							].join("\n"),
+						},
+						children: [],
+						text: "(b) REFERENCE PRICE.—Section 1111 of the Agricultural Act of 2014 (7 U.S.C. 9011) is amended by striking paragraph (19) and inserting the following:",
+					},
+				],
+			}),
+			preFixturePath: USC_9011_PRE_FIXTURE_PATH,
+			expectedDeletedIncludes: [
+				"For wheat, $5.50 per bushel.",
+				"For corn, $3.70 per bushel.",
+			],
+			expectedInsertedIncludes: [
+				"For wheat, $6.35 per bushel.",
+				"For corn, $4.10 per bushel.",
+			],
+			expectedTextSnippet: "For wheat, $6.35 per bushel.",
+			expectedTargetPath: "paragraph:19",
+		},
 	])("applies patch with explicit scope against full fixture: $name", (testCase) => {
 		const instruction = testCase.loadInstruction();
 		const sectionPath = requireSectionPath(instruction.uscCitation);
@@ -350,9 +573,22 @@ describe("computeAmendmentEffect target scoping", () => {
 		for (const expectedInsert of expectedInsertedIncludes) {
 			expect(effect.inserted.join("\n")).toContain(expectedInsert);
 		}
-		expect(effect.deleted).toEqual(testCase.expectedDeleted);
+		if ("expectedDeleted" in testCase) {
+			expect(effect.deleted).toEqual(testCase.expectedDeleted);
+		}
+		const expectedDeletedIncludes = testCase.expectedDeletedIncludes ?? [];
+		for (const expectedDeleted of expectedDeletedIncludes) {
+			expect(effect.deleted.join("\n")).toContain(expectedDeleted);
+		}
 		const finalText = effect.segments.map((segment) => segment.text).join("");
 		expect(finalText).toContain(testCase.expectedTextSnippet);
+		if (
+			testCase.name === "7 U.S.C. 9011 paragraph (19) strike-and-insert fixture"
+		) {
+			expect(finalText).toContain("> **(19)** **REFERENCE PRICE**");
+			expect(finalText).toContain("> > **(A)** **IN GENERAL**");
+			expect(finalText).toContain("> > > **(i)** For wheat, $6.35 per bushel.");
+		}
 	});
 
 	it("does not append a space after inserted text when punctuation already follows", () => {
@@ -390,6 +626,52 @@ describe("computeAmendmentEffect target scoping", () => {
 			{ kind: "unchanged", text: "Oneand more, two." },
 		]);
 		expect(effect.inserted).toEqual(["and more"]);
+	});
+
+	it("fuzzily matches act-based section references against codified USC references", () => {
+		const instruction: AmendatoryInstruction = {
+			billSection: "SEC. 9999.",
+			target: "Section 1202",
+			uscCitation: "7 U.S.C. 9032",
+			text: "by striking and inserting crop-eligibility text",
+			paragraphs: [],
+			startPage: 1,
+			endPage: 1,
+			rootQuery: [],
+			tree: [
+				{
+					operation: {
+						type: "replace",
+						strikingContent:
+							"Crops for which the producer has elected under section 1116 of the Agricultural Act of 2014 to receive agriculture risk coverage and acres",
+						content:
+							"Crops for which the producer has elected under section 1115 of the Agricultural Act of 2014 to receive agriculture risk coverage and acres",
+					},
+					children: [],
+					text: "by striking ... and inserting ...",
+				},
+			],
+		};
+		const sectionPath = "/statutes/usc/section/7/9032";
+		const sectionBody = [
+			"**(iv)** **Ineligible crops and acres**",
+			"",
+			"Crops for which the producer has elected under [section 9016 of this title](/statutes/section/7/9016) to receive agriculture risk coverage and acres that are enrolled in the stacked income protection plan under [section 1508b of this title](/statutes/section/7/1508b) shall not be eligible for supplemental coverage under this subparagraph.",
+		].join("\n");
+
+		const effect = computeAmendmentEffect(
+			instruction,
+			sectionPath,
+			sectionBody,
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.deleted[0]).toContain(
+			"[section 9016 of this title](/statutes/section/7/9016)",
+		);
+		expect(effect.inserted).toEqual([
+			"Crops for which the producer has elected under section 1115 of the Agricultural Act of 2014 to receive agriculture risk coverage and acres",
+		]);
 	});
 
 	it("fails when an explicit target path cannot be resolved", () => {
@@ -544,6 +826,78 @@ describe("computeAmendmentEffect target scoping", () => {
 		expect(resultText).toContain("(1) Maximum award is $20,000,000.");
 		expect(resultText).toContain("(2) Individual cap is $2,000,000.");
 		expect(resultText).toContain("(3) Pilot cap is $20,000.");
+	});
+
+	it("applies scoped replacement for 'is amended to read as follows'", () => {
+		const paragraphs: Paragraph[] = [
+			createParagraph(
+				"Section 6(f) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(f)) is amended to read as follows:",
+				{ lines: [{ xStart: 24, y: 780 }] },
+			),
+			createParagraph(
+				"“(f) No individual who is a member of a household otherwise eligible to participate in the supplemental nutrition assistance program shall be eligible unless such individual is a resident of the United States.”.",
+				{ lines: [{ xStart: 40, y: 760 }] },
+			),
+		];
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(1);
+		const instruction = instructions[0];
+
+		const sectionPath = requireSectionPath(instruction.uscCitation);
+		const sectionBody = [
+			"**(e)** Legacy text in subsection (e).",
+			"**(f)** Legacy text in subsection (f) that should be replaced.",
+			"**(g)** Legacy text in subsection (g).",
+		].join("\n");
+		const effect = computeAmendmentEffect(
+			instruction,
+			sectionPath,
+			sectionBody,
+		);
+
+		expect(effect.status).toBe("ok");
+		const resultText = effect.segments[0]?.text ?? "";
+		expect(resultText).toContain("**(e)** Legacy text in subsection (e).");
+		expect(resultText).toContain(
+			"“(f) No individual who is a member of a household otherwise eligible to participate",
+		);
+		expect(resultText).not.toContain(
+			"Legacy text in subsection (f) that should be replaced.",
+		);
+		expect(resultText).toContain("**(g)** Legacy text in subsection (g).");
+	});
+
+	it("applies scoped replacement for structural strike-and-insert-following", () => {
+		const paragraphs: Paragraph[] = [
+			createParagraph(
+				"(b) REFERENCE PRICE.—Section 1111 of the Agricultural Act of 2014 (7 U.S.C. 9011) is amended by striking paragraph (19) and inserting the following: “(19) REFERENCE PRICE.— “(A) IN GENERAL.—Effective beginning with the 2025 crop year, the term ‘reference price’, with respect to a covered commodity, means the following: “(i) For wheat, $6.35 per bushel.”.",
+				{ lines: [{ xStart: 24, y: 780 }] },
+			),
+		];
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(1);
+		const instruction = instructions[0];
+
+		const sectionPath = requireSectionPath(instruction.uscCitation);
+		const sectionBody = [
+			"**(18)** Legacy paragraph 18.",
+			"**(19)** Legacy paragraph 19 text to replace.",
+			"Still paragraph 19 legacy continuation.",
+			"**(20)** Legacy paragraph 20.",
+		].join("\n");
+		const effect = computeAmendmentEffect(
+			instruction,
+			sectionPath,
+			sectionBody,
+		);
+
+		expect(effect.status).toBe("ok");
+		const resultText = effect.segments[0]?.text ?? "";
+		expect(resultText).toContain("**(18)** Legacy paragraph 18.");
+		expect(resultText).toContain("(19) REFERENCE PRICE.—");
+		expect(resultText).toContain("(A) IN GENERAL.—Effective beginning");
+		expect(resultText).not.toContain("Legacy paragraph 19 text to replace.");
+		expect(resultText).toContain("**(20)** Legacy paragraph 20.");
 	});
 
 	it("parses 10 U.S.C. 9062(j) minimum inventory amendment into the expected operation tree", () => {

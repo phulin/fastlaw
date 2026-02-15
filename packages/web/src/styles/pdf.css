@@ -337,20 +337,13 @@ body {
 	margin-bottom: 0;
 	font-family: monospace;
 	font-size: 0.9rem;
-	white-space: pre-wrap;
 }
 
 /* Default style for non-amendatory paragraphs to match font */
 .pdf-column-annotations p {
 	font-family: monospace;
 	font-size: 0.9rem;
-	white-space: pre-wrap;
 	margin: 0;
-}
-
-.pdf-amended-snippet {
-	display: grid;
-	gap: 0.5rem;
 }
 
 .pdf-instruction-button {
@@ -370,20 +363,7 @@ body {
 	outline-offset: 2px;
 }
 
-.pdf-amended-snippet-main {
-	font-family: monospace;
-	font-size: 0.9rem;
-	white-space: pre-wrap;
-}
-
-.pdf-amended-snippet-replacements {
-	display: grid;
-	gap: 0.3rem;
-}
-
 .pdf-amended-snippet-replacement {
-	font-family: monospace;
-	font-size: 0.84rem;
 	white-space: pre-wrap;
 	display: flex;
 	gap: 0.45rem;
@@ -409,13 +389,15 @@ body {
 }
 
 .pdf-column-annotations .markdown p {
-	font-family: monospace;
-	font-size: 0.9rem;
-	white-space: pre-wrap;
+	margin-top: 0.45rem;
+}
+
+.pdf-column-annotations .markdown p:first-child {
 	margin: 0;
 }
 
-.pdf-column-annotations .markdown p + p {
+.pdf-column-annotations .markdown > .pdf-amended-snippet-inserted {
+	display: block;
 	margin-top: 0.45rem;
 }
 
@@ -424,23 +406,23 @@ body {
 }
 
 .pdf-column-annotations .indent1 {
-	margin-left: 1.4rem;
+	margin-left: 1rem;
 }
 
 .pdf-column-annotations .indent2 {
-	margin-left: 2.4rem;
+	margin-left: 2rem;
 }
 
 .pdf-column-annotations .indent3 {
-	margin-left: 3.4rem;
+	margin-left: 3rem;
 }
 
 .pdf-column-annotations .indent4 {
-	margin-left: 4.4rem;
+	margin-left: 4rem;
 }
 
 .pdf-column-annotations .indent5 {
-	margin-left: 5.4rem;
+	margin-left: 5rem;
 }
 
 .pdf-amend-color-0 {

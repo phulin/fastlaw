@@ -499,6 +499,43 @@ describe("extractAmendatoryInstructions", () => {
 		expect(root?.children[2]?.operation.content).toBe("$20,000");
 	});
 
+	it("extracts alphanumeric USC section citations without truncating the suffix", () => {
+		const paragraphs = [
+			createParagraph(
+				"Section 28(d)(1)(F) of the Food and Nutrition Act of 2008 (7 U.S.C. 2036a(d)(1)(F)) is amended by striking “for fiscal year 2016 and each subsequent fiscal year” and inserting “for each of fiscal years 2016 through 2025”.",
+				{ lines: [{ xStart: 20 }] },
+			),
+		];
+
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(1);
+		expect(instructions[0].uscCitation).toBe("7 U.S.C. 2036a(d)(1)(F)");
+		expect(instructions[0].rootQuery).toEqual([
+			{ type: "section", val: "28" },
+			{ type: "subsection", val: "d" },
+			{ type: "paragraph", val: "1" },
+			{ type: "subparagraph", val: "F" },
+		]);
+	});
+
+	it("captures structural strike target for strike-and-insert-following instructions", () => {
+		const paragraphs = [
+			createParagraph(
+				"(b) REFERENCE PRICE.—Section 1111 of the Agricultural Act of 2014 (7 U.S.C. 9011) is amended by striking paragraph (19) and inserting the following: “(19) REFERENCE PRICE.— “(A) IN GENERAL.—The term ‘reference price’ means the following.”.",
+				{ lines: [{ xStart: 20 }] },
+			),
+		];
+
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(1);
+		expect(instructions[0].uscCitation).toBe("7 U.S.C. 9011");
+		expect(instructions[0].tree[0]?.operation.type).toBe("replace");
+		expect(instructions[0].tree[0]?.operation.target).toEqual([
+			{ type: "section", val: "1111" },
+			{ type: "paragraph", val: "19" },
+		]);
+	});
+
 	it("stops extraction at top-level division headers", () => {
 		const paragraphs = [
 			createParagraph(
@@ -537,5 +574,10 @@ describe("extractAmendatoryInstructions", () => {
 		// Should not include the subtitle
 		expect(instructions[0].text).not.toContain("Subtitle B—Forestry");
 		expect(instructions[0].paragraphs).toHaveLength(8);
+		expect(instructions[0].tree[0]?.operation.type).toBe("replace");
+		expect(instructions[0].tree[0]?.operation.target).toEqual([
+			{ type: "section", val: "6" },
+			{ type: "subsection", val: "f" },
+		]);
 	});
 });

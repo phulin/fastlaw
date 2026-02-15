@@ -171,13 +171,20 @@ export function injectInlineReplacements(
 			? ` class="${options.deletedClassName}"`
 			: "";
 		const insertedText = result.slice(range.start, range.end);
+		const isMultilineInsertion = insertedText.includes("\n");
 		const deletedPrefix = range.deletedText
 			? `<del${deletedClass}>${escapeHtml(range.deletedText)}</del> `
 			: "";
-		const wrapped =
-			`${needsLeadingSpace ? " " : ""}${deletedPrefix}<ins${insertedClass}>` +
-			insertedText +
-			"</ins>";
+		const wrapped = isMultilineInsertion
+			? (() => {
+					const body = insertedText.replace(/^\n+|\n+$/g, "");
+					return (
+						`\n\n${deletedPrefix}<ins${insertedClass}>\n` +
+						body +
+						"\n</ins>\n\n"
+					);
+				})()
+			: `${needsLeadingSpace ? " " : ""}${deletedPrefix}<ins${insertedClass}>${insertedText}</ins>`;
 
 		result = result.slice(0, range.start) + wrapped + result.slice(range.end);
 	}
