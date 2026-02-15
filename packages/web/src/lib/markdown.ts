@@ -214,31 +214,39 @@ const addIndentClassToParagraphs = (
 	html: string,
 	blockquoteDepth: number,
 ): string => {
-	const indentClass = `indent${Math.min(blockquoteDepth, MAX_INDENT_DEPTH)}`;
-	const upsertClass = (attrs: string): string => {
-		const classMatch = attrs.match(/\bclass\s*=\s*(["'])(.*?)\1/);
-		if (!classMatch) {
-			return `${attrs} class="${indentClass}"`;
-		}
-
-		const existingClasses = classMatch[2]
-			.split(/\s+/)
-			.filter((value) => value.length > 0);
-		if (!existingClasses.includes(indentClass)) {
-			existingClasses.push(indentClass);
-		}
-
-		const quote = classMatch[1];
-		const replacement = `class=${quote}${existingClasses.join(" ")}${quote}`;
-		return attrs.replace(classMatch[0], replacement);
-	};
-
 	return html.replace(
 		/<p\b([^>]*)>([\s\S]*?)<\/p>/g,
 		(_fullMatch, attrs: string, body: string) => {
-			const attrsWithIndent = upsertClass(attrs);
+			const classMatch = attrs.match(/\bclass\s*=\s*(["'])(.*?)\1/);
+			const quote = classMatch?.[1] ?? '"';
+			const existingClasses = classMatch
+				? classMatch[2].split(/\s+/).filter((v) => v.length > 0)
+				: [];
+
+			let foundIndent = false;
+			const newClasses = existingClasses.map((cls) => {
+				const match = cls.match(/^indent(\d+)$/);
+				if (match) {
+					foundIndent = true;
+					const depth =
+						Number.parseInt(match[1]) +
+						Math.min(blockquoteDepth, MAX_INDENT_DEPTH);
+					return `indent${Math.min(depth, MAX_INDENT_DEPTH)}`;
+				}
+				return cls;
+			});
+
+			if (!foundIndent) {
+				newClasses.push(`indent${Math.min(blockquoteDepth, MAX_INDENT_DEPTH)}`);
+			}
+
+			const replacement = `class=${quote}${newClasses.join(" ")}${quote}`;
+			const newAttrs = classMatch
+				? attrs.replace(classMatch[0], replacement)
+				: `${attrs} ${replacement}`;
+
 			if (blockquoteDepth <= 0 || !body.includes("\n")) {
-				return `<p${attrsWithIndent}>${body}</p>`;
+				return `<p${newAttrs}>${body}</p>`;
 			}
 
 			const lines = body
@@ -246,10 +254,10 @@ const addIndentClassToParagraphs = (
 				.map((line) => line.trim())
 				.filter((line) => line.length > 0);
 			if (lines.length <= 1) {
-				return `<p${attrsWithIndent}>${body}</p>`;
+				return `<p${newAttrs}>${body}</p>`;
 			}
 
-			return lines.map((line) => `<p${attrsWithIndent}>${line}</p>`).join("");
+			return lines.map((line) => `<p${newAttrs}>${line}</p>`).join("");
 		},
 	);
 };

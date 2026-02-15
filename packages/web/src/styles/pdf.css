@@ -393,7 +393,7 @@ del {
 }
 
 .pdf-column-annotations .markdown p:first-child {
-	margin: 0;
+	margin-top: 0;
 }
 
 .pdf-column-annotations .markdown > ins,
