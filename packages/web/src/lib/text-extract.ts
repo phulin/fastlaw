@@ -624,7 +624,7 @@ export class PdfParagraphExtractor {
 						indentChange <= 32 &&
 						gap <= 1.25 * medianGap)) &&
 				// If it is "; and", it usually marks the end of a list item, so we should split (to allow the next list marker to start a new paragraph)
-				!/;\s*(and|or)$/i.test(trimmedPrev)
+				!/[,;]\s*(and|or)$/i.test(trimmedPrev)
 			) {
 				return false;
 			}
