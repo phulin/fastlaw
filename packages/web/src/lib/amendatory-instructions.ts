@@ -682,6 +682,13 @@ function buildTree(paragraphs: Paragraph[]): TreeNode[] {
 	for (const p of paragraphs) {
 		const indent = p.lines[0]?.xStart ?? 0;
 		const node: TreeNode = { paragraph: p, children: [], indent };
+		const text = p.text.trim();
+
+		if (isQuotedText(text) && stack.length > 0) {
+			stack[stack.length - 1].children.push(node);
+			stack.push(node);
+			continue;
+		}
 
 		// Unwind stack to find the correct parent
 		while (stack.length > 0) {

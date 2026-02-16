@@ -128,6 +128,7 @@ function startsDoubleOpeningQuote(s: string): boolean {
 function normalizeDoubleQuotes(s: string): string {
 	return s
 		.replaceAll("‘‘", "“")
+		.replaceAll("″", "“")
 		.replaceAll("’’", "”")
 		.replaceAll("Representa-tives", "Representatives");
 }
