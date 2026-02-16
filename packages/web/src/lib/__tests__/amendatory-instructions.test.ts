@@ -487,6 +487,67 @@ describe("extractAmendatoryInstructions", () => {
 		);
 	});
 
+	it("keeps dedented quoted continuation paragraphs under the active instruction across a page break", () => {
+		const paragraphs = [
+			createParagraph("SEC. 10313. DAIRY POLICY UPDATES.", {
+				lines: [{ xStart: 150 }],
+			}),
+			createParagraph("(a) DAIRY MARGIN COVERAGE PRODUCTION HISTORY.—", {
+				lines: [{ xStart: 178 }],
+			}),
+			createParagraph(
+				"(2) PRODUCTION HISTORY OF PARTICIPATING DAIRY OPERATIONS.—Section 1405 of the Agricultural Act of 2014 (7 U.S.C. 9055) is amended by striking subsections (a) and (b) and inserting the following:",
+				{ lines: [{ xStart: 206 }] },
+			),
+			createParagraph(
+				"“(a) PRODUCTION HISTORY.—Except as provided in subsection (b), the production history of a dairy operation for dairy margin coverage is equal to the highest annual milk marketings of the participating dairy operation during any 1 of the 2021, 2022, or 2023 calendar years.",
+				{ lines: [{ xStart: 178 }] },
+			),
+			createParagraph(
+				"“(b) ELECTION BY NEW DAIRY OPERATIONS.—In the case of a participating dairy operation that has been in operation for less than a year, the participating dairy operation shall elect 1 of the following methods for the Secretary to determine the production history of the participating dairy operation:",
+				{ lines: [{ xStart: 178 }] },
+			),
+			createParagraph(
+				"“(1) The volume of the actual milk marketings for the months the participating dairy operation has been in operation extrapolated to a yearly amount.",
+				{ lines: [{ xStart: 206 }] },
+			),
+			createParagraph(
+				"“(2) An estimate of the actual milk marketings of the participating dairy operation based on the herd size of the participating dairy operation relative to the national rolling herd average data published by the Secretary.”.",
+				{ lines: [{ xStart: 206 }] },
+			),
+			createParagraph(
+				"(b) DAIRY MARGIN COVERAGE PAYMENTS.—Section 1406(a)(1)(C) of the Agricultural Act of 2014 (7 U.S.C. 9056(a)(1)(C)) is amended by striking “5,000,000” each place it appears and inserting “6,000,000”.",
+				{ lines: [{ xStart: 178 }] },
+			),
+		];
+
+		const instructions = extractAmendatoryInstructions(paragraphs);
+		expect(instructions).toHaveLength(2);
+		const firstInstructionParagraphs =
+			instructions[0]?.paragraphs.map((paragraph) => paragraph.text) ?? [];
+		expect(firstInstructionParagraphs.length).toEqual(5);
+		expect(firstInstructionParagraphs[0]).toContain(
+			"(2) PRODUCTION HISTORY OF PARTICIPATING DAIRY OPERATIONS",
+		);
+		expect(firstInstructionParagraphs).toContain(
+			"“(a) PRODUCTION HISTORY.—Except as provided in subsection (b), the production history of a dairy operation for dairy margin coverage is equal to the highest annual milk marketings of the participating dairy operation during any 1 of the 2021, 2022, or 2023 calendar years.",
+		);
+		expect(firstInstructionParagraphs).toContain(
+			"“(b) ELECTION BY NEW DAIRY OPERATIONS.—In the case of a participating dairy operation that has been in operation for less than a year, the participating dairy operation shall elect 1 of the following methods for the Secretary to determine the production history of the participating dairy operation:",
+		);
+		expect(firstInstructionParagraphs).toContain(
+			"“(1) The volume of the actual milk marketings for the months the participating dairy operation has been in operation extrapolated to a yearly amount.",
+		);
+		expect(
+			firstInstructionParagraphs.some((text) =>
+				text.includes("“(2) An estimate of the actual milk marketings"),
+			),
+		).toBe(true);
+		expect(instructions[1]?.paragraphs[0]?.text).toContain(
+			"(b) DAIRY MARGIN COVERAGE PAYMENTS",
+		);
+	});
+
 	it("parses title-based United States Code citation and subsection target order", () => {
 		const paragraphs = [
 			createParagraph(

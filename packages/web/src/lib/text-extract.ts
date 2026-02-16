@@ -105,10 +105,15 @@ function startsSectionMarker(s: string): boolean {
 
 const LIST_ITEM_MARKER_RE = /^["‘‘“”]?\([a-z0-9,.]+\)[,;]?(\s|$)/i;
 function isListItemMarker(s: string): boolean {
-	const t = s.trim();
 	// Matches (a), (1), (iv), (A), "(i)", etc.
 	// Includes smart quotes and handles trailing punctuation.
-	return LIST_ITEM_MARKER_RE.test(t);
+	return LIST_ITEM_MARKER_RE.test(s);
+}
+
+const ALL_CAPS_LIST_HEADING_RE =
+	/^(?:["‘‘“”]?\([a-z]\)\s+)[A-Z][A-Z\s,&'’-]+(?:\.—|—)/;
+function isAllCapsListHeadingStart(s: string): boolean {
+	return ALL_CAPS_LIST_HEADING_RE.test(s);
 }
 
 function isWhitespaceOnly(s: string): boolean {
@@ -130,12 +135,20 @@ function normalizeDoubleQuotes(s: string): string {
 		.replaceAll("‘‘", "“")
 		.replaceAll("″", "“")
 		.replaceAll("’’", "”")
+		.replace(/“$/, "”")
 		.replaceAll("Representa-tives", "Representatives");
+}
+
+function normalizeMissingSpaceAfterClosingQuote(s: string): string {
+	// Some PDF spans collapse the space after a closing double quote: ..."word”and...
+	// Insert a single space when a closing double-quote is immediately followed by a word.
+	return s.replaceAll(/([”"])([A-Za-z])/g, "$1 $2");
 }
 
 function normalizeLeadingLineNumberArtifact(s: string): string {
 	return s
 		.replace(/^\d{1,2}\s+(\d+\.\s)/, "$1")
+		.replace(/^\d{1,2}\s+(\([a-z0-9,.]+\)[,;]?\s)/i, "$1")
 		.replace(/^\d{1,2}\s+(The table of contents\b)/i, "$1");
 }
 
@@ -420,6 +433,7 @@ export class PdfParagraphExtractor {
 			text += enriched[i].item.str;
 		}
 		text = normalizeDoubleQuotes(text);
+		text = normalizeMissingSpaceAfterClosingQuote(text);
 		const boldItemCount = enriched.filter((entry) =>
 			isBoldTextStyle(entry.style, entry.item.fontName),
 		).length;
@@ -527,7 +541,7 @@ export class PdfParagraphExtractor {
 
 		const isListStart = isListItemMarker(trimmedCurr);
 		const isLegislativeRef =
-			/\b([Ss]ubsection|[Pp]aragraph|[Ss]ubparagraph|[Cc]lause|[Ss]ubclause|[Ii]tem|[Ss]ubitem)[)\s]*$/.test(
+			/\b([Ss]ubsections?|[Pp]aragraphs?|[Ss]ubparagraphs?|[Cc]lauses?|[Ss]ubclauses?|[Ii]tems?|[Ss]ubitems?)[)\s]*$/.test(
 				trimmedPrev,
 			);
 		const hasOpeningQuote = startsDoubleOpeningQuote(trimmedCurr);
@@ -583,14 +597,32 @@ export class PdfParagraphExtractor {
 		if (/\btable of contents\b/i.test(trimmedCurr)) return true;
 
 		if (isListStart) {
+			// Parenthetical all-caps headings are structural and should begin a new paragraph.
+			if (isAllCapsListHeadingStart(trimmedCurr)) return true;
+
 			// If it follows a legislative reference and didn't end in punctuation (like "; and"), JOIN
 			if (isLegislativeRef && !endsWithPunctuation(prev.text)) return false;
 
+			// Wrapped inline enumerations often continue as "... (D)," then "(E), ...".
+			// Keep them together unless the previous line was already a standalone list item.
+			if (
+				!isListItemMarker(trimmedPrev) &&
+				/,\s*["’’”]?$/.test(trimmedPrev) &&
+				indentChange <= 12 &&
+				gap <= 1.25 * medianGap
+			) {
+				return false;
+			}
+
 			// "; and/or" continuation: join if no indentation change (parallel structure stays together)
+			const startsNumericListToken = /^\(\d+[a-z]?\)/i.test(trimmedCurr);
 			if (
 				/\b(and|or)$/i.test(trimmedPrev) &&
 				!hasOpeningQuote &&
-				indentChange <= 12 &&
+				(indentChange <= 12 ||
+					(startsNumericListToken &&
+						indentChange <= 32 &&
+						gap <= 1.25 * medianGap)) &&
 				// If it is "; and", it usually marks the end of a list item, so we should split (to allow the next list marker to start a new paragraph)
 				!/;\s*(and|or)$/i.test(trimmedPrev)
 			) {

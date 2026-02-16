@@ -1,41 +1,55 @@
-instruction ::= parent " " ( resolution | "is amended—\n" subinstructions ) "."?
+instruction ::= parent amended_by? " " ( resolution | "is amended—\n" subinstructions ) "."?
 
-parent ::= initial_locator ( " of " act " (" usc_ref ")" ")"? )?
+parent ::= initial_locator ( " of " act " (" codification ")" ")"? )?
   | initial_locator " of title " [0-9]+ ", United States Code,"
-initial_locator ::= ( sub_location_caps " of section " | "Section " ) section_or_sub
-subinstructions ::= ( subinstruction ";\n" )* subinstruction "; and\n" subinstruction
+amended_by ::= ", as amended by " ( "section " section_or_sub | sub_location_or_sub | "the preceding provision" "s"? " of this Act," )
+initial_locator ::= "Section " section_or_sub
+  | sub_location_or_sub_caps ( " of section " section_or_sub )?
+subinstructions ::= ( subinstruction sep "\n" )* subinstruction sep " and\n" subinstruction
 subinstruction ::= sub_head ( ", " resolution_or_edit | "—\n" subinstructions )
-  | sub_id " " subscope_plural ", " edit
-  | sub_id " " edit
+  | sub_id " " subscope_plural ", " edits
+  | sub_id " " edits
 sub_head ::= sub_id
   | sub_id " " subscope
   | sub_id " " subscope ", " text_location
   | sub_id " " text_location
 subscope ::= "in " sub_location_or_sub ( " (as so " "re"? "designated)" )?
 subscope_plural ::= "in "? sub_name_plural " " sub_location_list
+sep ::= [,;]
 
-act ::= [A-Za-z0-9 ]+
-usc_ref ::= [0-9]+ " U.S.C. " section_or_sub
-resolution ::= amendment_spec ( ","? " " text_location )? ","? " " edit
+act ::= [A-Za-z0-9 ,]+
+codification ::= ref ("; " ref)?
+ref ::= usc_ref | pub_law_ref | stat_ref
+usc_ref ::= [0-9]+ " U.S.C. " section_or_sub ( " note" ( " " [0-9]+ )? )?
+pub_law_ref ::= "Public Law " [0-9]+ "–"[0-9]+
+stat_ref ::= [0-9]+ " Stat. " [0-9]+
+
+resolution ::= amendment_spec ( ","? " " text_location )? ","? " " edits
 resolution_or_edit ::= resolution | edit
 amendment_spec ::= "is amended" | "is further amended"
 text_location ::= "in the first sentence"
   | "in the matter preceding " sub_location ( " (as so " "re"? "designated)" )?
   | "in the " sub_name " heading"
+  | "in the heading"
   | "in " ( sub_name_plural " " sub_location_list | sub_location_or_sub )
-edit ::= "to read as follows:\n" block
-  | "by striking " sub_location_or_plural ( " and inserting the following:\n" block )?
-  | "by striking " inline " and inserting the following:\n" block
-  | "by striking " inline ( " and inserting " inline )?
-  | "by striking " inline " at the end"
-  | "by striking " inline " each place it appears" ( " and inserting " inline )?
-  | "by striking the period at the end and inserting " inline
-  | "by adding at the end the following" ( " new " sub_name )? ":\n" block
-  | "by inserting after " sub_location " the following:\n" block
-  | "by inserting " inline " before " inline ( " each place it appears" )?
-  | "by inserting " inline " after " inline ( " each place it appears" )?
-  | "by inserting " inline " before the period at the end"
-  | "by redesignating " sub_location_or_plural " as " sub_location_or_plural ( ","? " respectively")? ( ","? " and indenting appropriately" )?
+edits ::= edit
+  | edit " and " edit
+  | edit ( ", " edit )* ", and " edit
+  | "by " by_edit " and " by_edit
+edit ::= "to read as follows:\n" block | "by " by_edit
+by_edit ::= "striking " sub_location_or_plural ( " and inserting the following:" [\n ] block )?
+  | "striking the heading and inserting " inline
+  | "striking " inline ( " and all that follows" " through the period at the end"? )? " and inserting the following:" [\n ] block
+  | "striking " inline ( " " text_location )? ( " and inserting " inline )?
+  | "striking " inline " at the end" ( " of " sub_location_or_sub )?
+  | "striking " inline " each place it appears" ( " and inserting " inline )?
+  | "striking the period at the end" ( " of " sub_location_or_sub )? " and inserting " inline
+  | "adding at the end the following" ( " new " sub_name )? ":\n" block
+  | "inserting after " sub_location " the following" ( " new " sub_name )? ":" "\n"? block
+  | "inserting " inline " before " inline ( " each place it appears" )?
+  | "inserting " inline " after " inline ( " each place it appears" )?
+  | "inserting " inline " before the period at the end"
+  | "redesignating " sub_location_or_plural " as " sub_location_or_plural ( ","? " respectively")? ( ","? " and indenting appropriately" )?
 
 section_or_sub ::= section_id ( subsection_or_sub | paragraph_or_sub )?
 section_id ::= [0-9]+ [A-Za-z0-9–-]*
@@ -53,6 +67,14 @@ sub_location_or_sub ::= "subsection " subsection_or_sub
   | "subclause " subclause_or_sub
   | "item " item_or_sub
   | "subitem " subitem_or_sub
+
+sub_location_or_sub_caps ::= "Subsection " subsection_or_sub
+  | "Paragraph " paragraph_or_sub
+  | "Subparagraph " subparagraph_or_sub
+  | "Clause " clause_or_sub
+  | "Subclause " subclause_or_sub
+  | "Item " item_or_sub
+  | "Subitem " subitem_or_sub
 
 sub_location_list ::= sub_location_ref " and " sub_location_ref
   | sub_location_ref ( ", " sub_location_ref )+ ", and " sub_location_ref
@@ -74,24 +96,16 @@ sub_location ::= "subsection " subsection_id
   | "item " item_id
   | "subitem " subitem_id
 
-sub_location_caps ::= "Subsection " subsection_id
-  | "Paragraph " paragraph_id
-  | "Subparagraph " subparagraph_id
-  | "Clause " clause_id
-  | "Subclause " subclause_id
-  | "Item " item_id
-  | "Subitem " subitem_id
-
 sub_locations_plural ::= sub_name_plural " " sub_id " and " sub_id
   | sub_name_plural " " sub_id " through " sub_id
 
 sub_name ::= "subsection" | "paragraph" | "subparagraph" | "clause" | "subclause" | "item" | "subitem"
 sub_name_plural ::= "subsections" | "paragraphs" | "subparagraphs" | "clauses" | "subclauses" | "items" | "subitems"
 
-text ::= [a-zA-Z0-9 ()-–—.,;:‘’\$]+
+text ::= [a-zA-Z0-9 ()-–—.,;:‘’$&/\u2044]+
 inline ::= "“" text "”"
 block ::= block_line ("\n" block_line)* "”"
-block_line ::= "“" text
+block_line ::= "“" text "”"?
 
 sub_id ::= subsection_id | paragraph_id | subparagraph_id | clause_id | subclause_id | item_id | subitem_id
 
