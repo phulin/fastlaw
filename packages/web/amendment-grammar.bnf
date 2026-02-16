@@ -1,35 +1,44 @@
-instruction ::= parent " " ( resolution | "is amended—\n" subinstructions ) "."
+instruction ::= parent " " ( resolution | "is amended—\n" subinstructions ) "."?
 
-parent ::= "Section " section_or_sub " of " act " (" usc_ref ")"
+parent ::= initial_locator ( " of " act " (" usc_ref ")" ")"? )?
+  | initial_locator " of title " [0-9]+ ", United States Code,"
+initial_locator ::= ( sub_location_caps " of section " | "Section " ) section_or_sub
 subinstructions ::= ( subinstruction ";\n" )* subinstruction "; and\n" subinstruction
-subinstruction ::= sub_id " " ( subscope ", " )? ( text_location ", " )? resolution
-  | sub_id " " subscope "—\n" subinstructions
-  | sub_id " " subscope_plural ", " edit_plural
-subscope ::= "in " sub_location_or_sub
-subscope_plural ::= "in " sub_name_plural " " sub_location_or_sub_list
+subinstruction ::= sub_head ( ", " resolution_or_edit | "—\n" subinstructions )
+  | sub_id " " subscope_plural ", " edit
+  | sub_id " " edit
+sub_head ::= sub_id
+  | sub_id " " subscope
+  | sub_id " " subscope ", " text_location
+  | sub_id " " text_location
+subscope ::= "in " sub_location_or_sub ( " (as so " "re"? "designated)" )?
+subscope_plural ::= "in "? sub_name_plural " " sub_location_list
 
 act ::= [A-Za-z0-9 ]+
 usc_ref ::= [0-9]+ " U.S.C. " section_or_sub
-resolution ::= amendment_spec " " ( text_location " " )? edit
+resolution ::= amendment_spec ( ","? " " text_location )? ","? " " edit
+resolution_or_edit ::= resolution | edit
 amendment_spec ::= "is amended" | "is further amended"
 text_location ::= "in the first sentence"
-  | "in the matter preceding " sub_location
+  | "in the matter preceding " sub_location ( " (as so " "re"? "designated)" )?
   | "in the " sub_name " heading"
+  | "in " ( sub_name_plural " " sub_location_list | sub_location_or_sub )
 edit ::= "to read as follows:\n" block
-  | "by striking " sub_location_or_plural " and inserting the following:\n" block
+  | "by striking " sub_location_or_plural ( " and inserting the following:\n" block )?
   | "by striking " inline " and inserting the following:\n" block
   | "by striking " inline ( " and inserting " inline )?
-  | "by striking " inline " each place it appears and inserting " inline
-  | "by adding at the end the following:\n" block
+  | "by striking " inline " at the end"
+  | "by striking " inline " each place it appears" ( " and inserting " inline )?
+  | "by striking the period at the end and inserting " inline
+  | "by adding at the end the following" ( " new " sub_name )? ":\n" block
   | "by inserting after " sub_location " the following:\n" block
-  | "by inserting " inline " after " inline
+  | "by inserting " inline " before " inline ( " each place it appears" )?
+  | "by inserting " inline " after " inline ( " each place it appears" )?
   | "by inserting " inline " before the period at the end"
-  | "by redesignating " sub_location " as " sub_location
-  | "by redesignating " sub_locations_plural " as " sub_location_range ", respectively, and indenting appropriately"
-edit_plural ::= "by striking " inline " each place it appears and inserting " inline
- | "by striking " inline " each place it appears"
+  | "by redesignating " sub_location_or_plural " as " sub_location_or_plural ( ","? " respectively")? ( ","? " and indenting appropriately" )?
 
-section_or_sub ::= section_id subsection_or_sub?
+section_or_sub ::= section_id ( subsection_or_sub | paragraph_or_sub )?
+section_id ::= [0-9]+ [A-Za-z0-9–-]*
 subsection_or_sub ::= subsection_id paragraph_or_sub?
 paragraph_or_sub ::= paragraph_id subparagraph_or_sub?
 subparagraph_or_sub ::= subparagraph_id clause_or_sub?
@@ -37,15 +46,16 @@ clause_or_sub ::= clause_id subclause_or_sub?
 subclause_or_sub ::= subclause_id item_or_sub?
 item_or_sub ::= item_id subitem_id?
 
-sub_location_or_sub ::= "subsection" subsection_or_sub
-  | "paragraph" paragraph_or_sub
-  | "subparagraph" subparagraph_or_sub
-  | "clause" clause_or_sub
-  | "subclause" subclause_or_sub
-  | "item" item_or_sub
-  | "subitem" subitem_or_sub
+sub_location_or_sub ::= "subsection " subsection_or_sub
+  | "paragraph " paragraph_or_sub
+  | "subparagraph " subparagraph_or_sub
+  | "clause " clause_or_sub
+  | "subclause " subclause_or_sub
+  | "item " item_or_sub
+  | "subitem " subitem_or_sub
 
-sub_location_or_sub_list ::= sub_location_ref (", " sub_location_ref)* ", and " sub_location_ref
+sub_location_list ::= sub_location_ref " and " sub_location_ref
+  | sub_location_ref ( ", " sub_location_ref )+ ", and " sub_location_ref
 
 sub_location_ref ::= subsection_or_sub
   | paragraph_or_sub
@@ -56,24 +66,32 @@ sub_location_ref ::= subsection_or_sub
   | subitem_or_sub
 
 sub_location_or_plural ::= sub_location | sub_locations_plural
-sub_location ::= "subsection" subsection_id
-  | "paragraph" paragraph_id
-  | "subparagraph" subparagraph_id
-  | "clause" clause_id
-  | "subclause" subclause_id
-  | "item" item_id
-  | "subitem" subitem_id
+sub_location ::= "subsection " subsection_id
+  | "paragraph " paragraph_id
+  | "subparagraph " subparagraph_id
+  | "clause " clause_id
+  | "subclause " subclause_id
+  | "item " item_id
+  | "subitem " subitem_id
 
-sub_locations_plural ::= sub_name_plural sub_id " and " sub_id
-  | sub_name_plural sub_id " through " sub_id
+sub_location_caps ::= "Subsection " subsection_id
+  | "Paragraph " paragraph_id
+  | "Subparagraph " subparagraph_id
+  | "Clause " clause_id
+  | "Subclause " subclause_id
+  | "Item " item_id
+  | "Subitem " subitem_id
+
+sub_locations_plural ::= sub_name_plural " " sub_id " and " sub_id
+  | sub_name_plural " " sub_id " through " sub_id
 
 sub_name ::= "subsection" | "paragraph" | "subparagraph" | "clause" | "subclause" | "item" | "subitem"
 sub_name_plural ::= "subsections" | "paragraphs" | "subparagraphs" | "clauses" | "subclauses" | "items" | "subitems"
 
-text ::= [a-zA-Z0-9 ()-–—.,;:‘’]+
+text ::= [a-zA-Z0-9 ()-–—.,;:‘’\$]+
 inline ::= "“" text "”"
 block ::= block_line ("\n" block_line)* "”"
-block_line ::= "“" text "\n"
+block_line ::= "“" text
 
 sub_id ::= subsection_id | paragraph_id | subparagraph_id | clause_id | subclause_id | item_id | subitem_id
 
@@ -84,4 +102,3 @@ clause_id ::= "(" [ivxlc]+ ")"
 subclause_id ::= "(" [IVXLC]+ ")"
 item_id ::= "(" [a-z]+ ")"
 subitem_id ::= "(" [A-Z]+ ")"
-

@@ -4,4 +4,5 @@
 * Don't worry about backward compatibility inside the codebase. Your primary goal is to keep the code simple and clean; e.g. if you refactor some code and update all callsites, you can delete the old version.
 * Ask questions if your instructions are unclear.
 * After making edits, run `yarn check:fix && yarn typecheck`.
+* To run tests, use `yarn workspace @fastlaw/xxx test`.
 * Do not re-export types that we import from library packages. Import directly from the package everywhere they're used.

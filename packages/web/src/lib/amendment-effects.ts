@@ -1100,6 +1100,26 @@ export function computeAmendmentEffect(
 	sectionPath: string,
 	sectionBody: string,
 ): AmendmentEffect {
+	const citedSectionPath = getSectionPathFromUscCitation(
+		instruction.uscCitation,
+	);
+	if (citedSectionPath && citedSectionPath !== sectionPath) {
+		return {
+			status: "unsupported",
+			sectionPath,
+			segments: [{ kind: "unchanged", text: sectionBody }],
+			changes: [],
+			deleted: [],
+			inserted: [],
+			debug: {
+				sectionTextLength: sectionBody.length,
+				operationCount: 0,
+				operationAttempts: [],
+				failureReason: "section_path_mismatch",
+			},
+		};
+	}
+
 	const operations = collectOperations(instruction.tree).filter((entry) =>
 		isActionableOperationType(entry.node.operation.type),
 	);

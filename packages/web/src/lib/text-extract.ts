@@ -530,6 +530,13 @@ export class PdfParagraphExtractor {
 				trimmedPrev,
 			);
 		const hasOpeningQuote = startsDoubleOpeningQuote(trimmedCurr);
+		const openParagraphText = this.openParagraph?.text.trim() ?? "";
+		if (
+			startsDoubleOpeningQuote(openParagraphText) &&
+			/;\s*and$/i.test(openParagraphText)
+		) {
+			return true;
+		}
 
 		// High priority: Quotes starting a line
 		if (hasOpeningQuote) {
