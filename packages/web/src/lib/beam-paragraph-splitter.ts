@@ -1,3 +1,9 @@
+import {
+	type HierarchyContinuationRelation,
+	HierarchyEntry,
+	HierarchyStack,
+	LevelType,
+} from "./hierarchy-stack";
 import type { Line, Paragraph } from "./text-extract";
 import { wordDictionary } from "./word-dictionary";
 
@@ -7,25 +13,9 @@ export interface BeamParagraphSplitterOptions {
 	largeIndentThreshold?: number;
 }
 
-export enum LevelType {
-	Section = 0,
-	Subsection = 1,
-	Paragraph = 2,
-	Subparagraph = 3,
-	Clause = 4,
-	Subclause = 5,
-	Item = 6,
-	Subitem = 7,
-}
-
-export interface HierarchyMarker {
-	token: string;
-	level: LevelType;
-	chain: Array<{ token: string; level: LevelType }>;
-}
-
-interface MarkerInfo extends HierarchyMarker {
+interface MarkerInfo {
 	raw: string;
+	tokens: string[];
 	isSection: boolean;
 	isInnerHierarchy: boolean;
 }
@@ -59,258 +49,9 @@ interface LineFeatures {
 	endsWithOpeningQuote: boolean;
 }
 
-export type HierarchyContinuationRelation = "ascend" | "sibling" | "descend";
-
-type HierarchyEntry = { level: LevelType; token: string };
-
-export class HierarchyStack {
-	readonly markers: HierarchyEntry[];
-
-	constructor(markers: HierarchyEntry[] = []) {
-		this.markers = markers.map((marker) => ({ ...marker }));
-	}
-
-	clone(): HierarchyStack {
-		return new HierarchyStack(this.markers);
-	}
-
-	isEmpty(): boolean {
-		return this.markers.length === 0;
-	}
-
-	findLastAtLevel(level: LevelType): HierarchyEntry | null {
-		for (let i = this.markers.length - 1; i >= 0; i--) {
-			const marker = this.markers[i];
-			if (marker.level === level) return marker;
-		}
-		return null;
-	}
-
-	private resolveMarkerForContext(marker: HierarchyMarker): HierarchyMarker {
-		const top = this.markers[this.markers.length - 1];
-		if (!top) return marker;
-		const parentInChain =
-			marker.chain.length > 1
-				? marker.chain[marker.chain.length - 2]?.level
-				: null;
-		const isAmbiguousRomanSubsection =
-			marker.level === LevelType.Subsection && /^[ivxlcdm]$/.test(marker.token);
-		if (
-			isAmbiguousRomanSubsection &&
-			(top.level >= LevelType.Subparagraph ||
-				parentInChain === LevelType.Subparagraph)
-		) {
-			// In deep list context (e.g., after "(A)"), "(i)" is a clause marker.
-			const chain = marker.chain.map((entry, index) =>
-				index === marker.chain.length - 1
-					? { ...entry, level: LevelType.Clause }
-					: entry,
-			);
-			return {
-				token: marker.token,
-				level: LevelType.Clause,
-				chain,
-			};
-		}
-
-		const isAmbiguousRomanSubparagraph =
-			marker.level === LevelType.Subparagraph &&
-			/^[IVXLCDM]$/.test(marker.token);
-		if (
-			isAmbiguousRomanSubparagraph &&
-			(top.level >= LevelType.Clause || parentInChain === LevelType.Clause)
-		) {
-			// In deep list context (e.g., after "(i)"), "(I)" is a subclause marker.
-			const chain = marker.chain.map((entry, index) =>
-				index === marker.chain.length - 1
-					? { ...entry, level: LevelType.Subclause }
-					: entry,
-			);
-			return {
-				token: marker.token,
-				level: LevelType.Subclause,
-				chain,
-			};
-		}
-		return marker;
-	}
-
-	continuationRelation(
-		marker: HierarchyMarker,
-	): HierarchyContinuationRelation | null {
-		const resolvedMarker = this.resolveMarkerForContext(marker);
-		const top = this.markers[this.markers.length - 1];
-		if (!top) return null;
-
-		// For chained markers like "(a)(1)", require the chain head to be valid in
-		// current hierarchy context before allowing any continuation relation.
-		if (resolvedMarker.chain.length > 1) {
-			const chainHead = resolvedMarker.chain[0];
-			if (!chainHead) return null;
-			const previousAtHeadLevel = this.findLastAtLevel(chainHead.level);
-			const validHeadContinuation = previousAtHeadLevel
-				? isValidSiblingProgression(previousAtHeadLevel, chainHead)
-				: isFirstTokenForLevel({
-						raw: "",
-						token: chainHead.token,
-						level: chainHead.level,
-						chain: resolvedMarker.chain,
-						isSection: false,
-						isInnerHierarchy: false,
-					});
-			if (!validHeadContinuation) return null;
-		}
-
-		const chainHead = resolvedMarker.chain[0];
-		if (chainHead && chainHead.level < top.level) {
-			const previousAtHeadLevel = this.findLastAtLevel(chainHead.level);
-			if (!previousAtHeadLevel) return null;
-			if (!isValidSiblingProgression(previousAtHeadLevel, chainHead)) {
-				return null;
-			}
-			for (let index = 1; index < resolvedMarker.chain.length; index++) {
-				const previous = resolvedMarker.chain[index - 1];
-				const current = resolvedMarker.chain[index];
-				if (current.level !== previous.level + 1) return null;
-				if (
-					!isFirstTokenForLevel({
-						raw: "",
-						token: current.token,
-						level: current.level,
-						chain: resolvedMarker.chain,
-						isSection: false,
-						isInnerHierarchy: false,
-					})
-				) {
-					return null;
-				}
-			}
-			return "ascend";
-		}
-
-		const previousSameLevel = this.findLastAtLevel(resolvedMarker.level);
-		const isCurrentLevelSibling =
-			resolvedMarker.level === top.level &&
-			(previousSameLevel
-				? isValidSiblingProgression(previousSameLevel, resolvedMarker)
-				: isFirstTokenForLevel({
-						raw: "",
-						token: resolvedMarker.token,
-						level: resolvedMarker.level,
-						chain: resolvedMarker.chain,
-						isSection: false,
-						isInnerHierarchy: false,
-					}));
-		if (isCurrentLevelSibling) return "sibling";
-
-		const previousAtParentLevel = this.findLastAtLevel(
-			(resolvedMarker.level - 1) as LevelType,
-		);
-		const isParentSibling =
-			resolvedMarker.level === top.level - 1 &&
-			(previousAtParentLevel
-				? isValidSiblingProgression(previousAtParentLevel, resolvedMarker)
-				: isFirstTokenForLevel({
-						raw: "",
-						token: resolvedMarker.token,
-						level: resolvedMarker.level,
-						chain: resolvedMarker.chain,
-						isSection: false,
-						isInnerHierarchy: false,
-					}));
-		if (isParentSibling) return "ascend";
-
-		const isFirstChild =
-			resolvedMarker.level === top.level + 1 &&
-			isFirstTokenForLevel({
-				raw: "",
-				token: resolvedMarker.token,
-				level: resolvedMarker.level,
-				chain: resolvedMarker.chain,
-				isSection: false,
-				isInnerHierarchy: false,
-			});
-		if (isFirstChild) return "descend";
-
-		const isSectionToParagraphFirstChild =
-			top.level === LevelType.Section &&
-			resolvedMarker.level === LevelType.Paragraph &&
-			isFirstTokenForLevel({
-				raw: "",
-				token: resolvedMarker.token,
-				level: resolvedMarker.level,
-				chain: resolvedMarker.chain,
-				isSection: false,
-				isInnerHierarchy: false,
-			});
-		if (isSectionToParagraphFirstChild) return "descend";
-		return null;
-	}
-
-	consistencyPenalty(marker: HierarchyMarker, features: LineFeatures): number {
-		const resolvedMarker = this.resolveMarkerForContext(marker);
-		let penalty = 0;
-		const top = this.markers[this.markers.length - 1];
-
-		if (top && resolvedMarker.level > top.level + 1) {
-			penalty -= 6;
-		}
-		if (
-			top &&
-			resolvedMarker.level < top.level - 1 &&
-			!features.largeIndentDecrease
-		) {
-			penalty -= 2;
-		}
-
-		const previousSameLevel = this.findLastAtLevel(resolvedMarker.level);
-		if (
-			previousSameLevel &&
-			!isValidSiblingProgression(previousSameLevel, resolvedMarker)
-		) {
-			penalty -= 4;
-		}
-		if (
-			previousSameLevel &&
-			/^\d+$/.test(previousSameLevel.token) &&
-			/^\d+$/.test(resolvedMarker.token) &&
-			Number(resolvedMarker.token) < Number(previousSameLevel.token)
-		) {
-			penalty -= 8;
-		}
-
-		const isDeeperThanTop = top ? resolvedMarker.level > top.level : false;
-		if (
-			isDeeperThanTop &&
-			resolvedMarker.level === top.level + 1 &&
-			!isFirstTokenForLevel({
-				raw: "",
-				token: resolvedMarker.token,
-				level: resolvedMarker.level,
-				chain: resolvedMarker.chain,
-				isSection: false,
-				isInnerHierarchy: false,
-			})
-		) {
-			penalty -= 2;
-		}
-
-		return penalty;
-	}
-
-	applyMarker(marker: HierarchyMarker): void {
-		const resolvedMarker = this.resolveMarkerForContext(marker);
-		while (this.markers.length > 0) {
-			const top = this.markers[this.markers.length - 1];
-			if (top.level < resolvedMarker.level) break;
-			this.markers.pop();
-		}
-		this.markers.push({
-			level: resolvedMarker.level,
-			token: resolvedMarker.token,
-		});
-	}
-}
+export { HierarchyStack, LevelType };
+export { HierarchyEntry };
+export type { HierarchyContinuationRelation };
 
 interface QuoteState {
 	depth: number;
@@ -415,17 +156,6 @@ function startsWithSectionMarker(text: string): boolean {
 	return /^["“‘]?(?:SEC\.|Sec\.)\s+\d+/.test(text);
 }
 
-function markerLevelForToken(token: string): LevelType | null {
-	if (/^[a-z]$/.test(token)) return LevelType.Subsection;
-	if (/^\d+$/.test(token)) return LevelType.Paragraph;
-	if (/^[A-Z]$/.test(token)) return LevelType.Subparagraph;
-	if (/^[ivxlcdm]+$/.test(token)) return LevelType.Clause;
-	if (/^[IVXLCDM]+$/.test(token)) return LevelType.Subclause;
-	if (/^[a-z]{2}$/.test(token)) return LevelType.Item;
-	if (/^[A-Z]{2}$/.test(token)) return LevelType.Subitem;
-	return null;
-}
-
 function parseMarker(text: string): MarkerInfo | null {
 	const trimmed = text.trim();
 	const isInnerHierarchy = /^["“‘]\(/.test(trimmed);
@@ -434,9 +164,7 @@ function parseMarker(text: string): MarkerInfo | null {
 		if (!match) return null;
 		return {
 			raw: match[0],
-			token: match[2],
-			level: LevelType.Section,
-			chain: [{ token: match[2], level: LevelType.Section }],
+			tokens: [match[2]],
 			isSection: true,
 			isInnerHierarchy,
 		};
@@ -457,24 +185,15 @@ function parseMarker(text: string): MarkerInfo | null {
 
 	const markerMatch = trimmed.match(/^["'“”‘’]?((?:\([a-zA-Z0-9]+\))+)/);
 	if (!markerMatch) return null;
+	if (trimmed[markerMatch[0].length] !== " ") return null;
 	const markerTokens = Array.from(
 		markerMatch[1].matchAll(/\(([a-zA-Z0-9]+)\)/g),
 		(match) => match[1],
 	);
-	if (markerTokens.length === 0) return null;
-	const chain: Array<{ token: string; level: LevelType }> = [];
-	for (const markerToken of markerTokens) {
-		const markerLevel = markerLevelForToken(markerToken);
-		if (markerLevel === null) return null;
-		chain.push({ token: markerToken, level: markerLevel });
-	}
 
-	const { token, level } = chain[chain.length - 1];
 	return {
 		raw: markerMatch[0],
-		token,
-		level,
-		chain,
+		tokens: markerTokens,
 		isSection: false,
 		isInnerHierarchy,
 	};
@@ -482,6 +201,33 @@ function parseMarker(text: string): MarkerInfo | null {
 
 function stackForMarker(state: BeamState, marker: MarkerInfo): HierarchyStack {
 	return marker.isInnerHierarchy ? state.innerStack : state.outerStack;
+}
+
+function resolveMarkerChainInContext(
+	state: BeamState,
+	marker: MarkerInfo,
+): HierarchyEntry[] {
+	if (marker.isSection) {
+		const sectionEntry = HierarchyEntry.make(
+			LevelType.Section,
+			marker.tokens[0],
+		);
+		if (!sectionEntry) throw new Error("Bad section token.");
+		return [sectionEntry];
+	}
+	return stackForMarker(state, marker).resolveMarkersInContext(marker.tokens);
+}
+
+function tryResolveMarkerChainInContext(
+	state: BeamState,
+	marker: MarkerInfo | null,
+): HierarchyEntry[] | null {
+	if (!marker) return null;
+	try {
+		return resolveMarkerChainInContext(state, marker);
+	} catch {
+		return null;
+	}
 }
 
 function computeQuoteDelta(text: string): number {
@@ -576,7 +322,7 @@ function endsWithCitationAbbreviation(text: string): boolean {
 }
 
 const STRUCTURAL_HEADER_RE =
-	/^“?(?:TITLE|Subtitle|CHAPTER|Subchapter|PART|SUBPART|DIVISION|BOOK)\b/;
+	/^“?(?:TITLE|Subtitle|SUBTITLE|CHAPTER|Subchapter|SUBCHAPTER|PART|SUBPART|DIVISION|BOOK)\b/;
 const SECTION_HEADER_RE =
 	/^["“‘]?(?:Sec\.|SEC\.)\s+\d+[A-Za-z0-9().-]*\b|^["“‘]?Section\s+\d+[A-Za-z0-9().-]*\.\s+[A-Z]/;
 
@@ -608,144 +354,6 @@ function percentile(values: number[], ratio: number): number {
 		Math.max(0, Math.floor(ratio * (sorted.length - 1))),
 	);
 	return sorted[index];
-}
-
-function romanToInt(input: string): number {
-	const map: Record<string, number> = {
-		I: 1,
-		V: 5,
-		X: 10,
-		L: 50,
-		C: 100,
-		D: 500,
-		M: 1000,
-	};
-	const s = input.toUpperCase();
-	let value = 0;
-	for (let i = 0; i < s.length; i++) {
-		const current = map[s[i]];
-		const next = map[s[i + 1]];
-		value += next && current < next ? -current : current;
-	}
-	return value;
-}
-
-function alphaToInt(input: string): number {
-	if (input.length === 1) {
-		return input.toLowerCase().charCodeAt(0) - 96;
-	}
-	if (input.length === 2) {
-		return (
-			(input.toLowerCase().charCodeAt(0) - 96) * 26 +
-			(input.toLowerCase().charCodeAt(1) - 96)
-		);
-	}
-	return Number.NaN;
-}
-
-function isValidSiblingProgression(
-	previous: HierarchyEntry | HierarchyMarker,
-	current: HierarchyEntry | HierarchyMarker,
-): boolean {
-	const previousToken = previous.token;
-	const previousLevel = previous.level;
-	const currentToken = current.token;
-	const currentLevel = current.level;
-
-	if (previousLevel !== currentLevel) return false;
-
-	if (
-		previousLevel === LevelType.Section ||
-		previousLevel === LevelType.Paragraph
-	) {
-		if (!/^\d+$/.test(previousToken) || !/^\d+$/.test(currentToken)) {
-			return false;
-		}
-		return Number(currentToken) === Number(previousToken) + 1;
-	}
-
-	if (previousLevel === LevelType.Subsection) {
-		if (!/^[a-z]$/.test(previousToken) || !/^[a-z]$/.test(currentToken)) {
-			return false;
-		}
-		return alphaToInt(currentToken) === alphaToInt(previousToken) + 1;
-	}
-
-	if (previousLevel === LevelType.Subparagraph) {
-		if (!/^[A-Z]$/.test(previousToken) || !/^[A-Z]$/.test(currentToken)) {
-			return false;
-		}
-		return alphaToInt(currentToken) === alphaToInt(previousToken) + 1;
-	}
-
-	if (previousLevel === LevelType.Clause) {
-		if (
-			!/^[ivxlcdm]+$/.test(previousToken) ||
-			!/^[ivxlcdm]+$/.test(currentToken)
-		) {
-			return false;
-		}
-		return romanToInt(currentToken) === romanToInt(previousToken) + 1;
-	}
-
-	if (previousLevel === LevelType.Subclause) {
-		if (
-			!/^[IVXLCDM]+$/.test(previousToken) ||
-			!/^[IVXLCDM]+$/.test(currentToken)
-		) {
-			return false;
-		}
-		return romanToInt(currentToken) === romanToInt(previousToken) + 1;
-	}
-
-	if (previousLevel === LevelType.Item) {
-		if (!/^[a-z]{2}$/.test(previousToken) || !/^[a-z]{2}$/.test(currentToken)) {
-			return false;
-		}
-		if (
-			previousToken[0] === previousToken[1] &&
-			currentToken[0] === currentToken[1]
-		) {
-			return currentToken.charCodeAt(0) === previousToken.charCodeAt(0) + 1;
-		}
-		return alphaToInt(currentToken) === alphaToInt(previousToken) + 1;
-	}
-
-	if (previousLevel === LevelType.Subitem) {
-		if (!/^[A-Z]{2}$/.test(previousToken) || !/^[A-Z]{2}$/.test(currentToken)) {
-			return false;
-		}
-		if (
-			previousToken[0] === previousToken[1] &&
-			currentToken[0] === currentToken[1]
-		) {
-			return currentToken.charCodeAt(0) === previousToken.charCodeAt(0) + 1;
-		}
-		return alphaToInt(currentToken) === alphaToInt(previousToken) + 1;
-	}
-
-	return false;
-}
-
-function isFirstTokenForLevel(marker: MarkerInfo): boolean {
-	switch (marker.level) {
-		case LevelType.Section:
-			return /^\d+$/.test(marker.token);
-		case LevelType.Subsection:
-			return marker.token === "a";
-		case LevelType.Paragraph:
-			return marker.token === "1";
-		case LevelType.Subparagraph:
-			return marker.token === "A";
-		case LevelType.Clause:
-			return marker.token === "i";
-		case LevelType.Subclause:
-			return marker.token === "I";
-		case LevelType.Item:
-			return marker.token === "aa" || marker.token === "AA";
-		default:
-			return false;
-	}
 }
 
 function precomputeFeatures(
@@ -847,14 +455,19 @@ function scoreTransition(
 	previousFeatures: LineFeatures | null,
 ): number {
 	let score = 0;
+	const resolvedMarkerChain = tryResolveMarkerChainInContext(
+		state,
+		features.marker,
+	);
 	const hierarchyRelation =
-		features.marker !== null
+		features.marker !== null && resolvedMarkerChain !== null
 			? stackForMarker(state, features.marker).continuationRelation(
-					features.marker,
+					resolvedMarkerChain,
 				)
 			: null;
 	const isMarkerHierarchyStackEmpty =
 		features.marker !== null &&
+		resolvedMarkerChain !== null &&
 		stackForMarker(state, features.marker).isEmpty();
 	const canContinueMarkerByHierarchy = hierarchyRelation !== null;
 	const hasHierarchyConsistentIndent =
@@ -991,9 +604,9 @@ function scoreTransition(
 		}
 	}
 
-	if (decision === "B" && features.marker) {
+	if (decision === "B" && features.marker && resolvedMarkerChain !== null) {
 		score += stackForMarker(state, features.marker).consistencyPenalty(
-			features.marker,
+			features.marker.tokens,
 			features,
 		);
 	}
@@ -1010,19 +623,6 @@ function transition(
 	if (decision === "C" && state.pathLength === 0) return null;
 	if (decision === "C" && features.marker?.isSection) return null;
 	if (decision === "C" && features.startsStructuralHeader) return null;
-	const hasHierarchyRelation =
-		decision === "C" && features.marker
-			? (() => {
-					const hierarchyRelation = stackForMarker(
-						state,
-						features.marker,
-					).continuationRelation(features.marker);
-					return hierarchyRelation !== null;
-				})()
-			: false;
-	const shouldSeedEmptyMarkerHierarchyStack =
-		features.marker !== null &&
-		stackForMarker(state, features.marker).isEmpty();
 	const next = cloneBeamState(state);
 	next.score += scoreTransition(state, decision, features, previousFeatures);
 
@@ -1031,13 +631,17 @@ function transition(
 		next.innerStack = new HierarchyStack();
 	}
 
-	if (
-		features.marker &&
-		(decision === "B" ||
-			(decision === "C" &&
-				(hasHierarchyRelation || shouldSeedEmptyMarkerHierarchyStack)))
-	) {
-		stackForMarker(next, features.marker).applyMarker(features.marker);
+	if (features.marker && decision === "B") {
+		const resolvedChain = tryResolveMarkerChainInContext(
+			state,
+			features.marker,
+		);
+		if (resolvedChain) {
+			const targetStack = stackForMarker(next, features.marker);
+			if (targetStack.canApply(resolvedChain)) {
+				targetStack.applyChain(resolvedChain);
+			}
+		}
 	}
 
 	next.quoteState.depth += features.quoteDelta;
