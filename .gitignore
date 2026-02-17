@@ -38,3 +38,6 @@ packages/ingest/container-rust/target
 # planning-with-files
 task_plan.md
 notes.md
+
+# AI slop
+.claude/worktrees
