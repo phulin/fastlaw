@@ -20,19 +20,27 @@ amended_by_spec ::= "as amended by " amended_by_source
 amended_by_source ::= "this section"
   | "this Act"
   | "the preceding provision" "s"? " of this Act"
-  | "section " section_or_sub
+  | "section " section_or_sub ( " of " pub_law_ref )?
   | sub_location_or_sub
 
-subinstructions ::= ( subinstruction sep "\n" )* subinstruction sep " and\n" subinstruction
+subinstructions ::= subinstruction | ( subinstruction sep "\n" )* subinstruction sep " and\n" subinstruction
 subinstruction ::= sub_head ( ","? " " resolution_or_edit | "—\n" subinstructions )
   | sub_id " " ( ( subscope | subscope_plural ) ", " )? edits
 sub_head ::= sub_id
   | sub_id " " subscope
   | sub_id " " subscope ", " text_location
   | sub_id " " text_location
-subscope ::= "in " sub_location_or_sub ( " (as so " "re"? "designated)" )?
+subscope ::= "in " sub_location_or_sub sub_amended_by?
 subscope_plural ::= "in "? sub_name_plural " " sub_location_list
 sep ::= [,;]
+
+sub_amended_by ::= ", " sub_amended_by_spec "," | " (" sub_amended_by_spec ")"
+sub_amended_by_spec ::= "as so amended"
+  | "as so redesignated"
+  | "as amended by " ( section_or_sub | sub_location_or_sub ) sub_amended_container?
+  | "as inserted by " ( section_or_sub | sub_location_or_sub ) sub_amended_container?
+  | "as redesignated by " ( section_or_sub | sub_location_or_sub ) sub_amended_container?
+sub_amended_container ::= " of this " ( "section" | sub_name )
 
 act ::= [A-Za-z0-9 ,]+ | pub_law_ref
 codification ::= ref ("; " ref)?
@@ -55,14 +63,13 @@ edits ::= edit
   | edit " and " edit
   | edit ( ", " edit )* ", and " edit
   | "by " by_edit " and " by_edit
-edit ::= "to read as follows:\n" block | "by " by_edit
-by_edit ::= "striking " striking_spec ( " and inserting " inserting_spec )?
+edit ::= "to read as follows:" [\n ] ( block | inline ) | "by " by_edit
+by_edit ::= "striking " striking_spec ( " and inserting" inserting_spec )?
+  | "adding after " sub_location_or_sub " " inserting_spec
+  | "adding at the end the following" new_things? ":" [ \n]? block
   | "adding " inline " at the end" ( " of " sub_location_or_sub )?
-  | "adding at the end the following" ( " new " ( "section" | sub_name | "sentence" | "flush sentence" ) )? ":" [ \n]? block
   | "inserting " ( "after " | "before " ) after_before " the following" ( " new " ( "section" | sub_name | sub_name_plural ) )? ":" [ \n]? block
-  | "inserting " inline " before " inline ( " each place it appears" )?
-  | "inserting " inline " after " inline ( " each place it appears" )?
-  | "inserting " inline " before the period at the end"
+  | "inserting " inline ( " after " | " before " ) ( inline | inner_location ) ( " each place it appears" )?
   | "inserting " inline " at the end of " sub_location_or_sub
   | "redesignating " sub_location_or_plural ( ", " amended_by_spec "," )? " as " sub_location_or_plural ( ","? " respectively")? ( ","? " and indenting appropriately" )?
   | "moving such sections " ( "before " | "after ") sub_location
@@ -75,6 +82,7 @@ striking_target ::= inner_location
   | "all that precedes " sub_location
   | striking_search
   | sub_location_or_plural
+  | sub_location_or_sub
 
 inner_location ::= "the period at the end" ( " of " sub_location_or_sub )?
   | "the period"
@@ -92,7 +100,10 @@ following_spec ::= " and all that follows" through_spec?
 through_spec ::= " through the period" ( " at the end" ( " of " sub_location)? )?
   | " through the end of " sub_location
   | " through " inline
-inserting_spec ::= "a period" | "a comma" | inline | block | "the following:" [\n ] ( inline | block )
+inserting_spec ::= " " inserting_space | ":"? [\n ] block
+inserting_space ::= "a period" | "a comma" | inline | block | "the following" new_things? ":" [\n ] ( inline | block )
+
+new_things ::= " new " ( "section" "s"? | sub_name | sub_name_plural | "sentence" | "flush sentence" )
 
 section_or_sub ::= section_id ( subsection_or_sub | paragraph_or_sub )?
 section_id ::= [0-9]+ [A-Za-z0-9–-]*
