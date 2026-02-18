@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { assignIndentationLevels } from "./cluster-indentation";
+import { splitParagraphsRulesBased } from "./rules-paragraph-condenser-3";
 import { wordDictionary } from "./word-dictionary";
 
 /* ===========================
@@ -742,6 +743,52 @@ export async function extractParagraphs(
 		);
 	}
 
-	const paragraphs = extractor.finish();
+	const extractedParagraphs = extractor.finish();
+	const extractedLines = extractedParagraphs.flatMap(
+		(paragraph) => paragraph.lines,
+	);
+	const linesByIndex = new Map<number, Line>();
+	const linesWithGeometry = extractedLines.map((line, lineIndex) => {
+		linesByIndex.set(lineIndex, line);
+		return {
+			page: line.page,
+			lineIndex,
+			text: line.text,
+			xStart: line.xStart,
+			xEnd: line.xEnd,
+			y: line.y,
+			yStart: line.yStart,
+			yEnd: line.yEnd,
+			itemCount: line.items.length,
+			pageHeight: line.pageHeight,
+		};
+	});
+	const condensedParagraphs = splitParagraphsRulesBased(linesWithGeometry, {
+		knownWords: wordDictionary,
+	});
+
+	const paragraphs: Paragraph[] = condensedParagraphs
+		.map((paragraph) => {
+			const lines = paragraph.lines
+				.map((line) => linesByIndex.get(line.lineIndex))
+				.filter((line): line is Line => line !== undefined);
+			const firstLine = lines[0];
+			if (!firstLine) return null;
+			const boldLineCount = lines.filter((line) => line.isBold).length;
+			return {
+				startPage: paragraph.startPage,
+				endPage: paragraph.endPage,
+				text: paragraph.text,
+				lines,
+				confidence: 0.6,
+				y: firstLine.y,
+				yStart: firstLine.yStart,
+				yEnd: firstLine.yEnd,
+				pageHeight: firstLine.pageHeight,
+				isBold: boldLineCount > lines.length / 2,
+			};
+		})
+		.filter((paragraph): paragraph is Paragraph => paragraph !== null);
+
 	return assignIndentationLevels(paragraphs);
 }
