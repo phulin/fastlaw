@@ -269,19 +269,6 @@ function endsWithOpeningQuote(text: string): boolean {
 	return text.trimEnd().endsWith("“");
 }
 
-function hasEffectiveUnbalancedOpeningQuote(
-	features: LineFeatures,
-	previousStartedParagraph: boolean,
-): boolean {
-	const ignoredParagraphOpeningQuotes =
-		previousStartedParagraph && features.startsWithOpeningQuote ? 1 : 0;
-	const effectiveOpenCount = Math.max(
-		0,
-		features.quoteOpenCount - ignoredParagraphOpeningQuotes,
-	);
-	return effectiveOpenCount > features.quoteCloseCount;
-}
-
 function hasContinuationPunctuation(text: string): boolean {
 	const trimmed = text.trim();
 	return /[,;:]$/.test(trimmed) || /—$/.test(trimmed);
