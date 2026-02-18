@@ -34,7 +34,6 @@ interface LineFeatures {
 	endsWithPeriod: boolean;
 	endsWithHardPunctuation: boolean;
 	endsWithEmDash: boolean;
-	endsWithAndOr: boolean;
 	startsLowercase: boolean;
 	endsWithHyphen: boolean;
 	endsShortOfDocP75: boolean;
@@ -93,6 +92,10 @@ function endsWithHyphen(s: string): boolean {
 
 function endsWithEmDash(s: string): boolean {
 	return /—$/.test(s.trim());
+}
+
+function endsWithEnDash(s: string): boolean {
+	return /–$/.test(s.trim());
 }
 
 function hasDictionaryHyphenJoin(
@@ -284,10 +287,6 @@ function hasContinuationPunctuation(text: string): boolean {
 	return /[,;:]$/.test(trimmed) || /—$/.test(trimmed);
 }
 
-function endsWithAndOr(text: string): boolean {
-	return /\b(and|or)$/i.test(text.trim());
-}
-
 function endsWithPeriod(text: string): boolean {
 	return /[.]$/.test(text.trim());
 }
@@ -387,7 +386,6 @@ function precomputeFeatures(
 			endsWithPeriod: endsWithPeriod(text),
 			endsWithHardPunctuation: endsWithHardPunctuation(text),
 			endsWithEmDash: /—$/.test(text),
-			endsWithAndOr: endsWithAndOr(text),
 			startsLowercase: startsLowercase(text),
 			endsWithHyphen: endsWithHyphen(text),
 			endsShortOfDocP75: line.xEnd < xEndP75 - shortLineTolerance,
@@ -418,6 +416,8 @@ function startParagraph(line: Line): ParagraphBuilder {
 function appendLine(builder: ParagraphBuilder, line: Line): void {
 	if (endsWithEmDash(builder.text)) {
 		// Preserve em-dash continuation formatting without inserting a space.
+	} else if (endsWithEnDash(builder.text)) {
+		// Preserve en-dash continuation formatting without inserting a space.
 	} else if (endsWithHyphen(builder.text)) {
 		if (shouldDropTrailingHyphenWhenCoalescing(builder.text, line.text)) {
 			builder.text = builder.text.replace(/-?\s*$/, "");
@@ -511,6 +511,20 @@ function scoreTransition(
 			}
 		}
 	}
+	if (
+		features.marker?.isInnerHierarchy &&
+		state.innerStack.isEmpty() &&
+		decision === "B"
+	) {
+		score += 5;
+	}
+	if (
+		features.marker?.isInnerHierarchy &&
+		state.innerStack.isEmpty() &&
+		decision === "C"
+	) {
+		score -= 2;
+	}
 	if (features.startsStructuralHeader) {
 		score += decision === "B" ? 3 : -4;
 	}
@@ -520,15 +534,8 @@ function scoreTransition(
 	}
 
 	if (previousFeatures) {
-		if (
-			!previousFeatures.endsWithHardPunctuation &&
-			!features.marker &&
-			!features.startsStructuralHeader
-		) {
-			score += decision === "C" ? 0.7 : -1.1;
-		}
-		if (previousFeatures.endsWithAndOr) {
-			score += decision === "C" ? 1.5 : -1;
+		if (/:\s*$/i.test(previousFeatures.text)) {
+			score += decision === "B" ? 2 : 0;
 		}
 		if (previousFeatures.parenDelta > 0 && !features.marker) {
 			score += decision === "C" ? 2 : -1.5;
@@ -542,32 +549,12 @@ function scoreTransition(
 		if (features.hasDictionaryHyphenJoin) {
 			score += decision === "C" ? 2.5 : -2;
 		}
-		const previousStartedParagraph =
-			state.pathTail !== null && state.pathTail.decision === "B";
-		const previousHasUnbalancedOpeningQuote =
-			hasEffectiveUnbalancedOpeningQuote(
-				previousFeatures,
-				previousStartedParagraph,
-			);
-		const trailingAndLeadingOpeningQuoteException =
-			previousFeatures.endsWithOpeningQuote && features.startsWithOpeningQuote;
-		if (
-			previousHasUnbalancedOpeningQuote &&
-			!trailingAndLeadingOpeningQuoteException
-		) {
-			score += decision === "C" ? 3.5 : -4;
-		}
-		if (
-			!previousFeatures.endsWithPeriod &&
-			!previousFeatures.endsWithContinuationPunctuation &&
-			!features.marker &&
-			features.startsLowercase
-		) {
+		if (features.startsLowercase) {
 			score += decision === "C" ? 4 : -3;
 		}
 		if (
 			!features.marker &&
-			Math.abs(features.indentDelta) <= 6 &&
+			Math.abs(features.indentDelta) <= 14 &&
 			!previousFeatures.endsWithHardPunctuation &&
 			!features.startsStructuralHeader &&
 			!previousFeatures.startsStructuralHeader
@@ -583,9 +570,6 @@ function scoreTransition(
 		) {
 			score += decision === "C" ? 1.2 : -0.6;
 		}
-		if (previousFeatures.endsWithPeriod && decision === "B") {
-			score += 0.8;
-		}
 		if (features.startsLowercase) {
 			score += decision === "C" ? 0.8 : -0.4;
 		}
@@ -593,7 +577,7 @@ function scoreTransition(
 			previousFeatures.endsShortOfDocP75 &&
 			!previousFeatures.startsStructuralHeader
 		) {
-			score += decision === "B" ? 1.6 : -0.8;
+			score += decision === "B" ? 4 : -2;
 		}
 		if (
 			decision === "B" &&

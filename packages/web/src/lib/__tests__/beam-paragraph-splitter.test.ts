@@ -60,6 +60,15 @@ describe("splitParagraphsBeamSearch", () => {
 		expect(paragraphs[0]?.text).toBe("by striking 'old', and inserting 'new'.");
 	});
 
+	it("does not insert a space after trailing en dash on continuation", () => {
+		const lines: Line[] = [line("(7 U.S.C. 1308–", 100), line("3a(d))", 100)];
+
+		const paragraphs = splitParagraphsBeamSearch(lines);
+
+		expect(paragraphs).toHaveLength(1);
+		expect(paragraphs[0]?.text).toBe("(7 U.S.C. 1308–3a(d))");
+	});
+
 	it("splits sibling marker lines that end with semicolons", () => {
 		const lines: Line[] = [
 			line(
@@ -164,6 +173,52 @@ describe("splitParagraphsBeamSearch", () => {
 		]);
 	});
 
+	it("splits II, aa, bb markers into separate paragraphs", () => {
+		const lines: Line[] = [
+			line("“(II) the 5-year average of—", 120, 32),
+			line(
+				"“(aa) the acreage planted on the farm to eligible noncovered commodities for harvest, grazing, haying, silage, or other similar purposes for the 2019 through 2023 crop years; and",
+				120,
+				32,
+			),
+			line(
+				"“(bb) any acreage on the farm that the producers were prevented from planting during the 2019 through 2023 crop years to eligible noncovered commodities because of drought, flood, or other natural disaster, or other condition beyond the control of the producers, as determined by the Secretary.",
+				120,
+				33,
+			),
+		];
+
+		const paragraphs = splitParagraphsBeamSearch(lines);
+
+		expect(paragraphs).toHaveLength(3);
+		expect(paragraphs.map((paragraph) => paragraph.text)).toEqual([
+			"“(II) the 5-year average of—",
+			"“(aa) the acreage planted on the farm to eligible noncovered commodities for harvest, grazing, haying, silage, or other similar purposes for the 2019 through 2023 crop years; and",
+			"“(bb) any acreage on the farm that the producers were prevented from planting during the 2019 through 2023 crop years to eligible noncovered commodities because of drought, flood, or other natural disaster, or other condition beyond the control of the producers, as determined by the Secretary.",
+		]);
+	});
+
+	it("splits quoted first marker when inner hierarchy context is empty", () => {
+		const lines: Line[] = [
+			line(
+				"(B) by striking “at the loan rate” and inserting the following: “at a rate that is the lesser of— ”",
+				120,
+				52,
+			),
+			line("“(1) the loan rate”; and", 120, 52),
+			line("(C) by adding at the end the following:", 120, 52),
+		];
+
+		const paragraphs = splitParagraphsBeamSearch(lines);
+
+		expect(paragraphs).toHaveLength(3);
+		expect(paragraphs[0]?.text).toBe(
+			"(B) by striking “at the loan rate” and inserting the following: “at a rate that is the lesser of— ”",
+		);
+		expect(paragraphs[1]?.text).toBe("“(1) the loan rate”; and");
+		expect(paragraphs[2]?.text).toBe("(C) by adding at the end the following:");
+	});
+
 	it("keeps citation-like chained markers as continuation text", () => {
 		const lines: Line[] = [
 			line(
@@ -182,5 +237,57 @@ describe("splitParagraphsBeamSearch", () => {
 		expect(paragraphs[0]?.text).toBe(
 			"(1) by striking “in subsections (b)(2) and (c)(2)(A)” and inserting “in subsections (b)(2), (c)(2)(A), and in the case of taxable years beginning after 2026, (c)(1)(E)(ii)(II)”,",
 		);
+	});
+
+	it("splits quoted marker sequence at C after B(ii)", () => {
+		const lines: Line[] = [
+			line(
+				"“(ii) EXCLUSIONS.—In this paragraph, the term ‘noncontiguous State’ does not include Guam or the Virgin Islands of the United States.",
+				120,
+				18,
+			),
+			line(
+				"“(B) EXEMPTION.—Subject to subparagraph (D), the Secretary may exempt individuals in a noncontiguous State from compliance with the requirements of paragraph (2) if—",
+				120,
+				19,
+			),
+			line(
+				"“(i) the State agency submits to the Secretary a request for that exemption, made in such form and at such time as the Secretary may require, and including the information described in subparagraph (C); and",
+				120,
+				19,
+			),
+			line(
+				"“(ii) the Secretary determines that based on that request, the State agency is demonstrating a good faith effort to comply with the requirements of paragraph (2).",
+				120,
+				19,
+			),
+			line(
+				"“(C) GOOD FAITH EFFORT DETERMINATION.—In determining whether a State agency is demonstrating a good faith effort for purposes of subparagraph (B)(ii), the Secretary shall consider—",
+				120,
+				19,
+			),
+			line(
+				"“(i) any actions taken by the State agency toward compliance with the requirements of paragraph (2);",
+				120,
+				19,
+			),
+			line(
+				"“(ii) any significant barriers to or challenges in meeting those requirements, including barriers or challenges relating to funding, design, development, procurement, or installation of necessary systems or resources;",
+				120,
+				20,
+			),
+		];
+
+		const paragraphs = splitParagraphsBeamSearch(lines);
+
+		expect(paragraphs.map((paragraph) => paragraph.text)).toEqual([
+			"“(ii) EXCLUSIONS.—In this paragraph, the term ‘noncontiguous State’ does not include Guam or the Virgin Islands of the United States.",
+			"“(B) EXEMPTION.—Subject to subparagraph (D), the Secretary may exempt individuals in a noncontiguous State from compliance with the requirements of paragraph (2) if—",
+			"“(i) the State agency submits to the Secretary a request for that exemption, made in such form and at such time as the Secretary may require, and including the information described in subparagraph (C); and",
+			"“(ii) the Secretary determines that based on that request, the State agency is demonstrating a good faith effort to comply with the requirements of paragraph (2).",
+			"“(C) GOOD FAITH EFFORT DETERMINATION.—In determining whether a State agency is demonstrating a good faith effort for purposes of subparagraph (B)(ii), the Secretary shall consider—",
+			"“(i) any actions taken by the State agency toward compliance with the requirements of paragraph (2);",
+			"“(ii) any significant barriers to or challenges in meeting those requirements, including barriers or challenges relating to funding, design, development, procurement, or installation of necessary systems or resources;",
+		]);
 	});
 });

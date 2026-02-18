@@ -20,7 +20,9 @@ function tokenRankForLevel(level: LevelType, token: string): number {
 		return romanToInt(token);
 	}
 	if (level === LevelType.Item || level === LevelType.Subitem) {
-		if (token[0] === token[1]) return token.charCodeAt(0);
+		// Double-letter markers enumerate as aa, bb, cc... (or AA, BB, CC...),
+		// so rank them as 1, 2, 3... rather than ASCII codes.
+		if (token[0] === token[1]) return alphaToInt(token[0]);
 		return alphaToInt(token);
 	}
 	return Number.NaN;
@@ -156,8 +158,8 @@ export class HierarchyStack {
 			throw new Error("Bad marker provided to stack");
 		}
 		const markers = markersOrNull as HierarchyEntry[];
-		if (!this.hasDenseIncreasingLevels(markers)) {
-			throw new Error("Hierarchy levels must be dense + increasing");
+		if (!this.hasIncreasingLevels(markers)) {
+			throw new Error("Hierarchy levels must be strictly increasing");
 		}
 	}
 
@@ -198,7 +200,7 @@ export class HierarchyStack {
 
 		let last = chain[0];
 		for (const token of chain.slice(1)) {
-			if (token.level !== last.level + 1 || token.rank !== 1) {
+			if (token.level <= last.level || token.rank !== 1) {
 				return false;
 			}
 			last = token;
@@ -207,18 +209,24 @@ export class HierarchyStack {
 		return true;
 	}
 
-	private hasDenseIncreasingLevels(markers: HierarchyEntry[]): boolean {
+	private hasIncreasingLevels(markers: HierarchyEntry[]): boolean {
 		if (markers.length === 0) {
 			return true;
 		}
 		let lastLevel = markers[0].level;
 		for (const { level } of markers.slice(1)) {
-			if (level !== lastLevel + 1) {
+			if (level <= lastLevel) {
 				return false;
 			}
 			lastLevel = level;
 		}
 		return true;
+	}
+
+	private greatestLowerBoundLevel(level: LevelType): HierarchyEntry | null {
+		const candidates = this.entries.filter((entry) => entry.level < level);
+		if (candidates.length === 0) return null;
+		return candidates[candidates.length - 1];
 	}
 
 	private appliedEntries(chain: HierarchyEntry[]): HierarchyEntry[] {
@@ -233,8 +241,8 @@ export class HierarchyStack {
 			// Cut off entries at matchingIndex and after.
 			return [...this.entries.slice(0, matchingIndex), ...chain];
 		}
-		// All existing entries come after the head of this chain, so we just ascended.
-		return [...chain];
+		// No existing entries at or above this level, so this is a descend.
+		return [...this.entries, ...chain];
 	}
 
 	/**
@@ -243,10 +251,13 @@ export class HierarchyStack {
 	 * @returns resolved tokens
 	 */
 	resolveMarkersInContext(tokens: string[]): HierarchyEntry[] {
-		const tailLevel =
-			this.entries.length > 0 ? this.entries[this.entries.length - 1].level : 0;
-
-		return tokens.map((token) => {
+		let contextEntries = [...this.entries];
+		const resolved: HierarchyEntry[] = [];
+		for (const [index, token] of tokens.entries()) {
+			const tailLevel =
+				contextEntries.length > 0
+					? contextEntries[contextEntries.length - 1].level
+					: LevelType.Section;
 			const isAmbiguousRomanSubsection = /^[ivxlc]$/.test(token);
 			const isAmbiguousRomanSubparagraph = /^[IVXLC]$/.test(token);
 			// Resolve ambiguities as sibling or child.
@@ -257,12 +268,47 @@ export class HierarchyStack {
 				isAmbiguousRomanSubparagraph &&
 				tailLevel >= LevelType.Clause
 			) {
-				level = LevelType.Subclause;
+				// Inside a chained marker like "(iii)(I)", keep levels dense by
+				// resolving the second token as a child (subclause).
+				if (index > 0) {
+					level = LevelType.Subclause;
+				} else {
+					const subparagraphCandidate = HierarchyEntry.make(
+						LevelType.Subparagraph,
+						token,
+					);
+					const subclauseCandidate = HierarchyEntry.make(
+						LevelType.Subclause,
+						token,
+					);
+					const canContinueAsSubparagraph =
+						subparagraphCandidate !== null &&
+						new HierarchyStack(contextEntries).continuationRelation([
+							subparagraphCandidate,
+						]) !== null;
+					const canContinueAsSubclause =
+						subclauseCandidate !== null &&
+						new HierarchyStack(contextEntries).continuationRelation([
+							subclauseCandidate,
+						]) !== null;
+					if (!canContinueAsSubparagraph && canContinueAsSubclause) {
+						level = LevelType.Subclause;
+					}
+				}
 			}
 			const result = HierarchyEntry.make(level, token);
 			if (!result) throw new Error(`Bad token ${token}.`);
-			return result;
-		});
+			const matchingIndex = contextEntries.findIndex(
+				({ level }) => result.level <= level,
+			);
+			if (matchingIndex >= 0) {
+				contextEntries = [...contextEntries.slice(0, matchingIndex), result];
+			} else {
+				contextEntries = [...contextEntries, result];
+			}
+			resolved.push(result);
+		}
+		return resolved;
 	}
 
 	continuationRelation(
@@ -286,10 +332,7 @@ export class HierarchyStack {
 		const tail = this.entries[this.entries.length - 1];
 
 		// Check descendant.
-		if (
-			next.level === tail.level + 1 ||
-			(tail.level === LevelType.Section && next.level === LevelType.Paragraph)
-		) {
+		if (next.level > tail.level) {
 			// Descendant case: first must have rank 1.
 			return next.rank === 1 ? "descend" : null;
 		}
@@ -305,13 +348,20 @@ export class HierarchyStack {
 			if (matching) {
 				// If there's an element at the level we're trying to ascend to, next must be after it.
 				return next.rank === matching.rank + 1 ? "ascend" : null;
-			} else if (next.level < head.level) {
+			}
+
+			const parent = this.greatestLowerBoundLevel(next.level);
+			if (parent) {
+				// Sparse stack: no exact level exists, so treat this as starting a
+				// new child branch under the nearest known ancestor.
+				return next.rank === 1 ? "ascend" : null;
+			}
+
+			if (next.level < head.level) {
 				// If we're going back to a level before the known stack, always works if the chain is valid.
 				return "ascend";
-			} else {
-				// Shouldn't happen as range of levels is contiguous.
-				return null;
 			}
+			return null;
 		}
 
 		// Failed to match any known-good case.
@@ -322,7 +372,7 @@ export class HierarchyStack {
 		if (!this.isValidChainShape(chain)) {
 			return false;
 		}
-		return this.hasDenseIncreasingLevels(this.appliedEntries(chain));
+		return this.hasIncreasingLevels(this.appliedEntries(chain));
 	}
 
 	consistencyPenalty(

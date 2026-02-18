@@ -72,7 +72,10 @@ describe("HierarchyStack", () => {
 		copy.applyChain([entry(LevelType.Paragraph, "1")]);
 
 		expect(original.entries).toEqual([entry(LevelType.Subsection, "a")]);
-		expect(copy.entries).toEqual([entry(LevelType.Paragraph, "1")]);
+		expect(copy.entries).toEqual([
+			entry(LevelType.Subsection, "a"),
+			entry(LevelType.Paragraph, "1"),
+		]);
 	});
 
 	it("detects sibling and descend continuation relations", () => {
@@ -203,6 +206,20 @@ describe("HierarchyStack", () => {
 		);
 	});
 
+	it("treats II -> aa as a valid descend into first item", () => {
+		const stack = new HierarchyStack([
+			entry(LevelType.Subsection, "b"),
+			entry(LevelType.Paragraph, "1"),
+			entry(LevelType.Subparagraph, "A"),
+			entry(LevelType.Clause, "i"),
+			entry(LevelType.Subclause, "II"),
+		]);
+
+		expect(stack.continuationRelation([entry(LevelType.Item, "aa")])).toBe(
+			"descend",
+		);
+	});
+
 	it("treats i -> ii as clause siblings in deep context", () => {
 		const stack = new HierarchyStack([
 			entry(LevelType.Subsection, "b"),
@@ -247,5 +264,28 @@ describe("HierarchyStack", () => {
 		expect(stack.resolveMarkersInContext(["C"])).toEqual([
 			entry(LevelType.Subparagraph, "C"),
 		]);
+	});
+
+	it("allows sparse stack levels", () => {
+		const stack = new HierarchyStack([
+			entry(LevelType.Section, "1"),
+			entry(LevelType.Paragraph, "1"),
+		]);
+
+		expect(stack.entries).toEqual([
+			entry(LevelType.Section, "1"),
+			entry(LevelType.Paragraph, "1"),
+		]);
+	});
+
+	it("uses nearest parent when ascending without an exact level match", () => {
+		const stack = new HierarchyStack([
+			entry(LevelType.Subsection, "a"),
+			entry(LevelType.Clause, "ii"),
+		]);
+
+		expect(
+			stack.continuationRelation([entry(LevelType.Subparagraph, "A")]),
+		).toBe("ascend");
 	});
 });
