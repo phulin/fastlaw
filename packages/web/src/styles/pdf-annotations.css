@@ -14,6 +14,11 @@
 	margin: 0;
 }
 
+.pdf-column-annotations h4 {
+	margin: 0;
+	font-size: 1rem;
+}
+
 .pdf-instruction-button {
 	display: block;
 	width: 100%;

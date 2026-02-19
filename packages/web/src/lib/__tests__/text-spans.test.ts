@@ -24,9 +24,12 @@ describe("injectInlineReplacements", () => {
 		);
 
 		expect(rendered).toContain(
-			"\n\n++\n> **(5)** **QUALIFIED PASS-THROUGH ENTITY**",
+			"\n++\n> **(5)** **QUALIFIED PASS-THROUGH ENTITY**",
 		);
-		expect(rendered).toContain("> > **(A)** a partnership;\n++\n\n");
+		expect(rendered).toContain("\n\n> > **(A)** a partnership;\n++\n");
+		expect(rendered).toContain(
+			"> **(5)** **QUALIFIED PASS-THROUGH ENTITY**\n\n> The term 'qualified pass-through entity' means—",
+		);
 	});
 
 	it("renders multiline replacements with separate ~~ and ++ blocks", () => {
@@ -56,14 +59,14 @@ describe("injectInlineReplacements", () => {
 			},
 		);
 
-		expect(rendered).toContain("~~legacy deleted block~~");
+		expect(rendered).toContain("~~\nlegacy deleted block\n~~");
 		expect(rendered).toContain(
 			"++\n> **(5)** **QUALIFIED PASS-THROUGH ENTITY**",
 		);
 		expect(rendered).toContain("~~\n\n++");
 	});
 
-	it("emits parseable block delete delimiters", () => {
+	it("uses block delimiters for full-line replacements even when single-line", () => {
 		const source = "prefix\nnew text\nsuffix";
 		const start = source.indexOf("new text");
 		const end = start + "new text".length;
@@ -83,8 +86,8 @@ describe("injectInlineReplacements", () => {
 			},
 		);
 
-		expect(rendered).toContain("~~BLOCK_TEXT~~");
-		expect(rendered).not.toContain("~~\nBLOCK_TEXT~~");
+		expect(rendered).toContain("~~\nBLOCK_TEXT\n~~");
+		expect(rendered).toContain("++\nnew text\n++");
 	});
 
 	it("injects deletion-only text at zero-width anchor ranges", () => {

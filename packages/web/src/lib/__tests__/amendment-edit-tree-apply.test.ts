@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { buildHighlightedSnippetMarkdown } from "../amended-snippet-markdown";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import {
 	type InstructionSemanticTree,
@@ -102,6 +103,183 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.segments[0]?.text).toBe("This is old text.\nnew text");
 		expect(effect.deleted).toEqual([]);
 		expect(effect.inserted).toEqual(["\nnew text"]);
+	});
+
+	it("formats multiline Insert edits as quoted block content", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Insert,
+						content: "(1) Alpha.\n(2) Beta.",
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(a) Opening line.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain("\n> **(1)** Alpha.");
+		expect(effect.segments[0]?.text).toContain("\n> **(2)** Beta.");
+		expect(effect.inserted[0]).toContain("> **(1)** Alpha.");
+	});
+
+	it("formats scoped Rewrite edits with nested marker indentation", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "u" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.Rewrite,
+								content: [
+									"(u) THRIFTY FOOD PLAN.—",
+									"(1) IN GENERAL.—Alpha.",
+									"(A) Beta.",
+								].join("\n"),
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: [
+				"**(t)** Existing text.",
+				"**(u)** Old text.",
+				"**(v)** Following text.",
+			].join("\n"),
+			instructionText: "Section 1(u) is amended to read as follows.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain("**(u)** **THRIFTY FOOD PLAN**");
+		expect(effect.segments[0]?.text).toContain("\n> **(1)** **IN GENERAL**");
+		expect(effect.segments[0]?.text).toContain("\n> > **(A)** Beta.");
+		expect(effect.inserted[0]).toContain("**(u)** **THRIFTY FOOD PLAN**");
+		expect(effect.inserted[0]).toContain("> **(1)** **IN GENERAL**");
+	});
+
+	it("keeps scoped structural replacements formatted and appends add-at-end blocks after sibling subparagraphs", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "2015",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Paragraph, label: "4" },
+					children: [
+						{
+							type: SemanticNodeType.Scope,
+							scope: { kind: ScopeKind.Subparagraph, label: "A" },
+							children: [
+								{
+									type: SemanticNodeType.Edit,
+									edit: {
+										kind: UltimateEditKind.StrikeInsert,
+										strike: {
+											ref: {
+												kind: ScopeKind.Clause,
+												path: [{ kind: ScopeKind.Clause, label: "ii" }],
+											},
+										},
+										insert:
+											"(ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.",
+									},
+								},
+							],
+						},
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.Insert,
+								content: [
+									"(C) DEFINITION OF NONCONTIGUOUS STATE.—",
+									"(i) IN GENERAL.—In this paragraph, the term 'noncontiguous State' means a State that is not 1 of the contiguous 48 States or the District of Columbia.",
+									"(ii) EXCLUSIONS.—The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
+								].join("\n"),
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"> > **(4)** **Waiver**",
+			"",
+			"> > > **(A)** **In general**",
+			"",
+			"> > > On the request of a State agency and with the support of the chief executive officer of the State, the Secretary may waive the applicability of paragraph (2) to any group of individuals in the State if the Secretary makes a determination that the area in which the individuals reside—",
+			"",
+			"> > > > **(i)** has an unemployment rate of over 10 percent; or",
+			"",
+			"> > > > **(ii)** does not have a sufficient number of jobs to provide employment for the individuals.",
+			"",
+			"> > > **(B)** **Report**",
+			"",
+			"> > > The Secretary shall report the basis for a waiver under subparagraph (A).",
+		].join("\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/7/2015",
+			sectionBody,
+			instructionText: "",
+		});
+
+		expect(effect.status).toBe("ok");
+		const rendered = buildHighlightedSnippetMarkdown(effect, 10_000);
+		const expected = [
+			"> > **(4)** **Waiver**",
+			"",
+			"> > > **(A)** **In general**",
+			"",
+			"> > > On the request of a State agency and with the support of the chief executive officer of the State, the Secretary may waive the applicability of paragraph (2) to any group of individuals in the State if the Secretary makes a determination that the area in which the individuals reside—",
+			"",
+			"> > > > **(i)** has an unemployment rate of over 10 percent; or",
+			"",
+			"~~",
+			"> > > > **(ii)** does not have a sufficient number of jobs to provide employment for the individuals.",
+			"~~",
+			"",
+			"++",
+			"> > > > **(ii)** is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.",
+			"++",
+			"",
+			"> > > **(B)** **Report**",
+			"",
+			"> > > The Secretary shall report the basis for a waiver under subparagraph (A).",
+			"",
+			"++",
+			"> > > **(C)** **DEFINITION OF NONCONTIGUOUS STATE**",
+			"",
+			"> > > > **(i)** **IN GENERAL**",
+			"",
+			"> > > > In this paragraph, the term 'noncontiguous State' means a State that is not 1 of the contiguous 48 States or the District of Columbia.",
+			"",
+			"> > > > **(ii)** **EXCLUSIONS**",
+			"",
+			"> > > > The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
+			"++",
+		].join("\n");
+		expect(rendered.trimEnd()).toBe(expected);
 	});
 
 	it("applies StrikeInsert edits", () => {

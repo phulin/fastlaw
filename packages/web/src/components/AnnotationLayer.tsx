@@ -18,6 +18,8 @@ interface AnnotationLayerProps {
 
 const ITEM_GAP = 0;
 const LEADING_MARKER_RE = /^\(([^)]+)\)/;
+const SECTION_HEADING_RE = /^SEC\.\s+\d+/i;
+const BILL_SECTION_NUMBER_RE = /^SEC\.\s+([0-9A-Za-z-]+)/i;
 
 const extractLeadingMarkers = (text: string): string[] => {
 	const markers: string[] = [];
@@ -59,13 +61,16 @@ const getInstructionLocationHeader = (
 	locationMarkers: string[],
 ): string => {
 	const billSection = instruction.billSection?.trim() ?? "Instruction";
+	const billSectionNumber =
+		billSection.match(BILL_SECTION_NUMBER_RE)?.[1] ?? null;
+	const billSectionLabel = billSectionNumber ?? billSection;
 	const location =
 		locationMarkers.length > 0
-			? `${billSection} ${locationMarkers.join("")}:`
-			: billSection;
+			? `${billSectionLabel}${locationMarkers.join("")}:`
+			: "";
 	const citation =
 		instruction.uscCitation?.replace(/U\.S\.C\./g, "USC") ?? instruction.target;
-	return `${location} Edit ${citation}.`;
+	return location ? `${location} Edit ${citation}.` : `Edit ${citation}.`;
 };
 
 const getInstructionLocationMarkers = (
@@ -187,21 +192,33 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 						<Show
 							when={entry.item.type === "instruction"}
 							fallback={
-								<p
-									class={
-										entry.item.type === "paragraph" &&
-										entry.item.colorIndex !== null
-											? `pdf-amend-color-${entry.item.colorIndex}`
-											: undefined
-									}
-									style={
-										entry.item.type === "paragraph" && entry.item.isBold
-											? { "font-weight": 700 }
-											: undefined
-									}
-								>
-									{entry.item.type === "paragraph" ? entry.item.text : ""}
-								</p>
+								entry.item.type === "paragraph" &&
+								entry.item.colorIndex === null &&
+								SECTION_HEADING_RE.test(entry.item.text) ? (
+									<h4
+										style={
+											entry.item.isBold ? { "font-weight": 700 } : undefined
+										}
+									>
+										{entry.item.text}
+									</h4>
+								) : (
+									<p
+										class={
+											entry.item.type === "paragraph" &&
+											entry.item.colorIndex !== null
+												? `pdf-amend-color-${entry.item.colorIndex}`
+												: undefined
+										}
+										style={
+											entry.item.type === "paragraph" && entry.item.isBold
+												? { "font-weight": 700 }
+												: undefined
+										}
+									>
+										{entry.item.type === "paragraph" ? entry.item.text : ""}
+									</p>
+								)
 							}
 						>
 							{(() => {

@@ -23,6 +23,32 @@ function normalizeBlockText(input: string): string {
 	return input.replace(/^\n+|\n+$/g, "");
 }
 
+function isFullLineRange(text: string, range: TextRange): boolean {
+	if (range.end <= range.start) return false;
+	const startsAtLineBoundary =
+		range.start === 0 || text[range.start - 1] === "\n";
+	const endsAtLineBoundary =
+		range.end >= text.length || text[range.end] === "\n";
+	return startsAtLineBoundary && endsAtLineBoundary;
+}
+
+function expandSingleLineBreaks(input: string): string {
+	if (input.length === 0) return input;
+	let output = "";
+	for (let index = 0; index < input.length; index += 1) {
+		const char = input[index];
+		if (char !== "\n") {
+			output += char;
+			continue;
+		}
+		const prevChar = index > 0 ? input[index - 1] : "";
+		const nextChar = index + 1 < input.length ? input[index + 1] : "";
+		const isSingleBreak = prevChar !== "\n" && nextChar !== "\n";
+		output += isSingleBreak ? "\n\n" : "\n";
+	}
+	return output;
+}
+
 export interface TextReplacementRange extends TextRange {
 	deletedText: string;
 }
@@ -157,6 +183,7 @@ export function injectInlineReplacements(
 		}
 
 		const previousChar = range.start > 0 ? result[range.start - 1] : "";
+		const nextChar = range.end < result.length ? result[range.end] : "";
 		const needsLeadingSpace =
 			options.addSpaceBeforeIfNeeded === true &&
 			range.start > 0 &&
@@ -170,11 +197,15 @@ export function injectInlineReplacements(
 		}
 		const escapedDeletedText = escapeMarkdownDelimiters(normalizedDeletedText);
 		const normalizedInsertedText = normalizeBlockText(insertedText);
-		const escapedInsertedText = escapeMarkdownDelimiters(
-			normalizedInsertedText,
-		);
 		const isMultilineInsertion = insertedText.includes("\n");
+		const isLineScoped = isFullLineRange(result, range);
+		const markdownInsertedText = isMultilineInsertion
+			? expandSingleLineBreaks(normalizedInsertedText)
+			: normalizedInsertedText;
+		const escapedInsertedText = escapeMarkdownDelimiters(markdownInsertedText);
 		const isMultilineDeletion = normalizedDeletedText.includes("\n");
+		const shouldUseBlockDelimiters =
+			isMultilineInsertion || isMultilineDeletion || isLineScoped;
 		const deletedInline = normalizedDeletedText
 			? `~~${escapedDeletedText}~~`
 			: "";
@@ -185,23 +216,28 @@ export function injectInlineReplacements(
 			insertedText.length === 0
 				? (() => {
 						const prefix = needsLeadingSpace ? " " : "";
-						return normalizedDeletedText.length > 0
-							? `${prefix}${isMultilineDeletion ? deletedBlock : deletedInline}`
-							: "";
+						const blockSuffix =
+							range.end >= result.length || nextChar === "\n" ? "" : "\n\n";
+						if (normalizedDeletedText.length === 0) return "";
+						if (!shouldUseBlockDelimiters) {
+							return `${prefix}${deletedInline}`;
+						}
+						return `${prefix}${deletedBlock}${blockSuffix}`;
 					})()
-				: isMultilineInsertion
+				: shouldUseBlockDelimiters
 					? (() => {
+							const blockPrefix =
+								range.start === 0 || previousChar === "\n" ? "" : "\n\n";
+							const blockSuffix =
+								range.end >= result.length || nextChar === "\n" ? "" : "\n\n";
 							const deletedPrefix =
-								normalizedDeletedText.length > 0
-									? `${isMultilineDeletion ? deletedBlock : deletedInline}\n\n`
-									: "";
-							return `\n\n${deletedPrefix}++\n${escapedInsertedText}\n++\n\n`;
+								normalizedDeletedText.length > 0 ? `${deletedBlock}\n\n` : "";
+							const insertionPrefix =
+								deletedPrefix.length > 0 ? "" : blockPrefix;
+							return `${deletedPrefix}${insertionPrefix}++\n${escapedInsertedText}\n++${blockSuffix}`;
 						})()
 					: (() => {
 							const prefix = needsLeadingSpace ? " " : "";
-							if (isMultilineDeletion) {
-								return `${prefix}${deletedBlock}\n\n++${escapeMarkdownDelimiters(insertedText)}++`;
-							}
 							const deletedPrefix =
 								deletedInline.length > 0 ? `${deletedInline} ` : "";
 							return `${prefix}${deletedPrefix}++${escapeMarkdownDelimiters(insertedText)}++`;

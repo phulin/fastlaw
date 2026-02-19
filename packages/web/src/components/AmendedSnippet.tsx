@@ -1,9 +1,7 @@
-import type { AmendmentEffect } from "../lib/amendment-effects";
+import { buildHighlightedSnippetMarkdown } from "../lib/amended-snippet-markdown";
+import type { AmendmentEffect } from "../lib/amendment-edit-tree-apply";
 import { renderMarkdown } from "../lib/markdown";
-import {
-	injectInlineReplacements,
-	resolveInsertionRanges,
-} from "../lib/text-spans";
+import { resolveInsertionRanges } from "../lib/text-spans";
 
 interface AmendedSnippetProps {
 	effect: AmendmentEffect;
@@ -89,13 +87,10 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 	const getAbsoluteAttemptAnchorIndex = (
 		attempt: (typeof props.effect.debug.operationAttempts)[number],
 	): number | null => {
-		const searchIndex = attempt.searchIndex;
-		const scopeStart = attempt.scopedRange?.start;
-		if (searchIndex === null || searchIndex === undefined) {
-			return scopeStart ?? null;
+		if (typeof attempt.searchIndex === "number") {
+			return attempt.searchIndex;
 		}
-		if (scopeStart === undefined) return searchIndex;
-		return scopeStart + searchIndex;
+		return attempt.scopedRange?.start ?? null;
 	};
 
 	const resolveDeletionAnchorRanges = () => {
@@ -215,52 +210,8 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 		return [...deletionAnchors.unresolved, ...outOfRangeResolved];
 	};
 
-	const highlightedSnippet = () => {
-		const {
-			text,
-			insertions: resolvedInsertions,
-			deletions: resolvedDeletions,
-		} = resolvedInlineRanges();
-		if (!text) return "";
-
-		const snippetWindows = getContextWindows(
-			text,
-			[...resolvedInsertions, ...resolvedDeletions],
-			5,
-		);
-
-		return snippetWindows
-			.map((window) => {
-				const snippet = text.slice(window.start, window.end);
-				const localInsertions = resolvedInsertions
-					.filter((item) => item.start < window.end && item.end > window.start)
-					.map((item) => ({
-						start: Math.max(0, item.start - window.start),
-						end: Math.min(window.end - window.start, item.end - window.start),
-						deletedText: item.deletedText,
-					}))
-					.filter((item) => item.end > item.start);
-				const localDeletions = resolvedDeletions
-					.filter(
-						(item) => item.start >= window.start && item.start < window.end,
-					)
-					.map((item) => ({
-						start: item.start - window.start,
-						end: item.start - window.start,
-						deletedText: item.deletedText,
-					}));
-				return injectInlineReplacements(
-					snippet,
-					[...localInsertions, ...localDeletions],
-					{
-						insertedClassName: "pdf-amended-snippet-inserted",
-						deletedClassName: "pdf-amended-snippet-deleted",
-						addSpaceBeforeIfNeeded: true,
-					},
-				);
-			})
-			.join("\n\n...\n\n");
-	};
+	const highlightedSnippet = () =>
+		buildHighlightedSnippetMarkdown(props.effect);
 
 	return (
 		<div class="pdf-amended-snippet">

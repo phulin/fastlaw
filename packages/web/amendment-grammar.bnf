@@ -1,5 +1,5 @@
 instruction ::= preceding parent amended_by? " " ( resolution | "is" " further"? " amended" ( " " text_location )? "—\n" subinstructions ) "."?
-preceding ::= ( subsection_or_sub " " )? ( [A-Z0-9 .-;(),]+ ".—" )?
+preceding ::= ( subsection_or_sub " " )? ( [A-Z0-9 .;(),\-]+ ".—" )?
 
 parent ::= initial_locator ( " of " underlying )? ( " (" codification ")" ")"? )?
 initial_locator ::= "Section " section_or_sub
@@ -133,7 +133,7 @@ sub_name ::= "subsection" | "paragraph" | "subparagraph" | "clause" | "subclause
 sub_name_plural ::= "subsections" | "paragraphs" | "subparagraphs" | "clauses" | "subclauses" | "items" | "subitems"
 sub_name_caps ::= "Subsection" | "Paragraph" | "Subparagraph" | "Clause" | "Subclause" | "Item" | "Subitem"
 
-text ::= [a-zA-Z0-9 ()-–—.,;:‘’$&/\u2044]+
+text ::= [a-zA-Z0-9 ()\-–—.,;:‘’$&/\u2044]+
 inline ::= "“" text "”"
 block ::= block_line ("\n" block_line)*
 block_line ::= "“" text "”" | text "”" | "“" text

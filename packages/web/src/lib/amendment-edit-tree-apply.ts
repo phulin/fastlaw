@@ -10,6 +10,7 @@ import {
 	type StructuralReference,
 	UltimateEditKind,
 } from "./amendment-edit-tree";
+import { formatInsertedBlockContent } from "./inserted-block-format";
 import {
 	findHierarchyNodeByMarkerPath,
 	parseMarkdownHierarchy,
@@ -717,92 +718,31 @@ function adjustIndexForRemovedRanges(
 	return adjusted;
 }
 
-function rankForMarkerLabel(label: string): number {
-	if (/^[a-z]+$/.test(label) && !/^[ivxlcdm]+$/.test(label)) return 1;
-	if (/^\d+$/.test(label)) return 2;
-	if (/^[A-Z]+$/.test(label) && !/^[IVXLCDM]+$/.test(label)) return 3;
-	if (/^[ivxlcdm]+$/.test(label)) return 4;
-	if (/^[IVXLCDM]+$/.test(label)) return 5;
-	return 6;
+function formatInsertionContent(content: string, targetLevel: number): string {
+	return formatInsertedBlockContent(content, {
+		baseDepth: targetLevel + 1,
+		quotePlainMultiline: true,
+	});
 }
 
-function quotePrefix(level: number): string {
-	if (level <= 0) return "";
-	return `${Array.from({ length: level }, () => ">").join(" ")} `;
-}
-
-function splitHeadingFromBody(
-	rest: string,
-): { heading: string; body: string | null } | null {
-	const match = rest.match(/^([A-Z0-9][A-Z0-9 '"()\-.,/&]+)\.\u2014\s*(.*)$/);
-	if (!match) return null;
-	const heading = match[1]?.trim();
-	if (!heading) return null;
-	const body = (match[2] ?? "").trim();
-	return { heading, body: body.length > 0 ? body : null };
-}
-
-function sanitizeQuotedLine(line: string): string {
-	return line
-		.trim()
-		.replace(/^[“”"'‘’]+/, "")
-		.replace(/[“”"'‘’]+[.;,]*$/, "")
-		.trim();
-}
-
-function formatBlockInsertContent(
+function formatReplacementContent(
 	content: string,
 	targetLevel: number,
 ): string {
-	const rawLines = content.split("\n");
-	const markerMatches = rawLines
-		.map((line) => sanitizeQuotedLine(line).match(/^\(([^)]+)\)\s*(.*)$/))
-		.filter((match): match is RegExpMatchArray => match !== null);
+	return formatInsertedBlockContent(content, {
+		baseDepth: targetLevel,
+		quotePlainMultiline: true,
+	});
+}
 
-	if (markerMatches.length === 0) return content;
-
-	const markerRanks = markerMatches.map((match) =>
-		rankForMarkerLabel(match[1] ?? ""),
-	);
-	const minRank = Math.min(...markerRanks);
-	const formattedLines: string[] = [];
-	let markerIndex = 0;
-	let activeLevel = targetLevel + 1;
-
-	for (const rawLine of rawLines) {
-		const cleaned = sanitizeQuotedLine(rawLine);
-		if (cleaned.length === 0) {
-			formattedLines.push("");
-			continue;
-		}
-		const markerMatch = cleaned.match(/^\(([^)]+)\)\s*(.*)$/);
-		if (!markerMatch) {
-			formattedLines.push(`${quotePrefix(activeLevel)}${cleaned}`);
-			continue;
-		}
-
-		const marker = markerMatch[1] ?? "";
-		const rest = markerMatch[2] ?? "";
-		const markerRank = markerRanks[markerIndex] ?? minRank;
-		markerIndex += 1;
-		activeLevel = targetLevel + 1 + (markerRank - minRank);
-		const headingSplit = splitHeadingFromBody(rest);
-		if (headingSplit) {
-			formattedLines.push(
-				`${quotePrefix(activeLevel)}**(${marker})** **${headingSplit.heading}**`,
-			);
-			if (headingSplit.body) {
-				formattedLines.push(`${quotePrefix(activeLevel)}${headingSplit.body}`);
-			}
-			continue;
-		}
-
-		formattedLines.push(
-			`${quotePrefix(activeLevel)}**(${marker})**${rest ? ` ${rest}` : ""}`,
-		);
-	}
-
-	return formattedLines.join("\n");
+function formatBlockInsertionContent(
+	content: string,
+	targetLevel: number,
+): string {
+	return formatInsertedBlockContent(content, {
+		baseDepth: targetLevel + 1,
+		quotePlainMultiline: true,
+	});
 }
 
 function makeUnsupportedResult(
@@ -915,11 +855,24 @@ export function applyAmendmentEditTreeToSection(
 				const replacementContent = node.operation.content;
 				if (!replacementContent) break;
 				if (!strikingContent) {
+					const formattedReplacement = formatReplacementContent(
+						replacementContent,
+						range.targetLevel ?? 0,
+					);
+					const trailingWhitespace = scopedText.match(/\s*$/)?.[0] ?? "";
+					const trailingLineBreaks = trailingWhitespace.includes("\n")
+						? trailingWhitespace
+						: "";
+					const boundedReplacement =
+						trailingLineBreaks.length > 0 &&
+						!formattedReplacement.endsWith(trailingLineBreaks)
+							? `${formattedReplacement}${trailingLineBreaks}`
+							: formattedReplacement;
 					patch = {
 						start: range.start,
 						end: range.end,
 						deleted: scopedText,
-						inserted: replacementContent,
+						inserted: boundedReplacement,
 					};
 					break;
 				}
@@ -1019,9 +972,13 @@ export function applyAmendmentEditTreeToSection(
 					if (anchorRange) anchorStart = anchorRange.start;
 				}
 				if (anchorStart === null) break;
+				const formatted = formatInsertionContent(
+					content,
+					range.targetLevel ?? 0,
+				);
 				const value = anchor
-					? `${content}${/[A-Za-z0-9)]$/.test(content) && /^[A-Za-z0-9(]/.test(anchor) ? " " : ""}`
-					: `${content}${content.endsWith("\n") ? "" : "\n"}`;
+					? `${formatted}${/[A-Za-z0-9)]$/.test(formatted) && /^[A-Za-z0-9(]/.test(anchor) ? " " : ""}`
+					: `${formatted}${formatted.endsWith("\n") ? "" : "\n"}`;
 				patch = {
 					start: anchorStart,
 					end: anchorStart,
@@ -1055,9 +1012,13 @@ export function applyAmendmentEditTreeToSection(
 					if (anchorRange) anchorEnd = anchorRange.end;
 				}
 				if (anchorEnd === null) break;
+				const formatted = formatInsertionContent(
+					content,
+					range.targetLevel ?? 0,
+				);
 				const value = anchor
-					? `${/[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(content) ? " " : ""}${content}`
-					: `${workingText[anchorEnd - 1] === "\n" || anchorEnd === 0 ? "" : "\n"}${content}`;
+					? `${/[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(formatted) ? " " : ""}${formatted}`
+					: `${workingText[anchorEnd - 1] === "\n" || anchorEnd === 0 ? "" : "\n"}${formatted}`;
 				patch = {
 					start: anchorEnd,
 					end: anchorEnd,
@@ -1072,11 +1033,15 @@ export function applyAmendmentEditTreeToSection(
 				const insertAt = range.end;
 				const beforeChar = workingText[insertAt - 1] ?? "";
 				const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
+				const formatted = formatInsertionContent(
+					content,
+					range.targetLevel ?? 0,
+				);
 				patch = {
 					start: insertAt,
 					end: insertAt,
 					deleted: "",
-					inserted: `${prefix}${content}`,
+					inserted: `${prefix}${formatted}`,
 				};
 				break;
 			}
@@ -1087,7 +1052,7 @@ export function applyAmendmentEditTreeToSection(
 				const beforeChar = workingText[insertAt - 1] ?? "";
 				const afterChar = workingText[insertAt] ?? "";
 				const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
-				const formatted = formatBlockInsertContent(
+				const formatted = formatBlockInsertionContent(
 					content,
 					range.targetLevel ?? 0,
 				);

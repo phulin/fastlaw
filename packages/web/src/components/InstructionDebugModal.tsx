@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import { buildHighlightedSnippetMarkdown } from "../lib/amended-snippet-markdown";
 import { renderMarkdown } from "../lib/markdown";
 import { formatEditTree, formatParseTree } from "../lib/pdf/debug-formatters";
 import "../styles/pdf-instruction-modal.css";
@@ -18,6 +19,9 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 				const effect = item.amendmentEffect;
 				const workflowDebug = item.workflowDebug;
 				const instructionPageRange = `${instruction.startPage}-${instruction.endPage}`;
+				const finalRenderedMarkdown = effect
+					? buildHighlightedSnippetMarkdown(effect)
+					: null;
 
 				return (
 					<div class="pdf-instruction-modal-backdrop">
@@ -286,6 +290,19 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 											</For>
 										</section>
 									)}
+								</Show>
+
+								<Show when={effect}>
+									<section class="pdf-instruction-modal-section">
+										<h3>Final Rendered Markdown</h3>
+										<pre class="pdf-instruction-modal-code">
+											{finalRenderedMarkdown}
+										</pre>
+										<div
+											class="pdf-instruction-modal-markdown markdown"
+											innerHTML={renderMarkdown(finalRenderedMarkdown ?? "")}
+										/>
+									</section>
 								</Show>
 							</div>
 						</div>

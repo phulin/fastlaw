@@ -3,6 +3,7 @@ import type {
 	HierarchyLevel,
 	InstructionNode,
 } from "./amendatory-instructions";
+import { formatInsertedBlockContent } from "./inserted-block-format";
 import { buildInferredMarkerLevels } from "./marker-level-inference";
 import type { NodeContent } from "./types";
 
@@ -693,92 +694,17 @@ function getBlockquoteDepthForLineAt(text: string, index: number): number {
 	return 0;
 }
 
-function quotePrefix(depth: number): string {
-	if (depth <= 0) return "";
-	return `${Array.from({ length: depth }, () => ">").join(" ")} `;
-}
-
-function splitHeadingFromBody(
-	rest: string,
-): { heading: string; body: string | null } | null {
-	const match = rest.match(/^([A-Z0-9][A-Z0-9 '"()\-.,/&]+)\.\u2014\s*(.*)$/);
-	if (!match) return null;
-	const heading = match[1]?.trim();
-	if (!heading) return null;
-	const body = (match[2] ?? "").trim();
-	return { heading, body: body.length > 0 ? body : null };
-}
-
 function formatInsertedMultilineContent(
 	text: string,
 	insertAt: number,
 	content: string,
 ): string {
 	if (!content.includes("\n")) return content;
-	const rawLines = content.split("\n");
 	const baseDepth = getBlockquoteDepthForLineAt(text, insertAt);
-	const markerLines = rawLines
-		.map((line) =>
-			line
-				.trim()
-				.replace(/^[“”"‘’']+/, "")
-				.replace(/[“”"‘’']+$/, ""),
-		)
-		.map((line) => line.match(/^\(([A-Za-z0-9]+)\)\s*(.*)$/))
-		.filter((match): match is RegExpMatchArray => match !== null);
-	if (markerLines.length === 0) return content;
-
-	const inferredMarkerRanks =
-		buildInferredMarkerLevels([
-			{
-				markers: markerLines.map((markerLine) => markerLine[1] ?? ""),
-				indentationHint: baseDepth,
-			},
-		])[0]?.map((level) => level.rank) ?? [];
-
-	const minMarkerRank = Math.min(...inferredMarkerRanks);
-	let activeDepth = baseDepth;
-	const formattedLines: string[] = [];
-	let markerIndex = 0;
-
-	for (const rawLine of rawLines) {
-		const trimmed = rawLine.trim();
-		const unquoted = trimmed
-			.replace(/^[“”"‘’']+/, "")
-			.replace(/[“”"‘’']+[.;,]*$/, "");
-		if (unquoted.length === 0) {
-			formattedLines.push("");
-			continue;
-		}
-		const markerMatch = unquoted.match(/^\(([A-Za-z0-9]+)\)\s*(.*)$/);
-		if (!markerMatch) {
-			formattedLines.push(`${quotePrefix(activeDepth)}${unquoted}`);
-			continue;
-		}
-
-		const marker = markerMatch[1] ?? "";
-		const rest = markerMatch[2] ?? "";
-		const markerRank = inferredMarkerRanks[markerIndex] ?? getLevelRank("item");
-		markerIndex += 1;
-		const markerDepth = baseDepth + (markerRank - minMarkerRank);
-		activeDepth = markerDepth;
-		const headingSplit = splitHeadingFromBody(rest);
-		if (headingSplit) {
-			formattedLines.push(
-				`${quotePrefix(markerDepth)}**(${marker})** **${headingSplit.heading}**`,
-			);
-			if (headingSplit.body) {
-				formattedLines.push(`${quotePrefix(markerDepth)}${headingSplit.body}`);
-			}
-			continue;
-		}
-
-		formattedLines.push(
-			`${quotePrefix(markerDepth)}**(${marker})**${rest ? ` ${rest}` : ""}`,
-		);
-	}
-
-	return formattedLines.join("\n");
+	return formatInsertedBlockContent(content, {
+		baseDepth,
+		quotePlainMultiline: false,
+	});
 }
 
 function patchFromReplace(
