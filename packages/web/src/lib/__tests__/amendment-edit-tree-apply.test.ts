@@ -80,6 +80,71 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.inserted).toEqual([]);
 	});
 
+	it("applies StrikeInsert edits at each place when requested", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: {
+							kind: SearchTargetKind.Text,
+							text: "2023",
+							eachPlaceItAppears: true,
+						},
+						insert: "2031",
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "For 2023 and 2023 only.",
+			instructionText:
+				'Section 1 is amended by striking "2023" each place it appears and inserting "2031".',
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toBe("For 2031 and 2031 only.");
+		expect(effect.segments[0]?.text).not.toContain("2023");
+	});
+
+	it("applies Strike edits at each place when requested", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Strike,
+						target: {
+							kind: SearchTargetKind.Text,
+							text: "x",
+							eachPlaceItAppears: true,
+						},
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "x alpha x beta x",
+			instructionText:
+				'Section 1 is amended by striking "x" each place it appears.',
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toBe(" alpha  beta ");
+		expect(effect.segments[0]?.text).not.toContain("x");
+	});
+
 	it("applies Insert edits", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

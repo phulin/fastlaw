@@ -43,6 +43,7 @@ type InstructionOperation =
 			sentenceOrdinal?: number;
 			content?: string;
 			strikingContent?: string;
+			eachPlaceItAppears?: boolean;
 			throughContent?: string;
 			throughPunctuation?: PunctuationKind;
 	  }
@@ -51,6 +52,7 @@ type InstructionOperation =
 			target?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			strikingContent?: string;
+			eachPlaceItAppears?: boolean;
 			throughContent?: string;
 			throughPunctuation?: PunctuationKind;
 	  }
@@ -230,11 +232,25 @@ function mergeTargets(
 	return [...base, ...override];
 }
 
-function textFromEditTarget(target: EditTarget): string | null {
+interface TextSearchTargetPayload {
+	text: string;
+	eachPlaceItAppears: boolean;
+}
+
+function textSearchFromEditTarget(
+	target: EditTarget,
+): TextSearchTargetPayload | null {
 	if ("kind" in target && target.kind === SearchTargetKind.Text) {
-		return target.text;
+		return {
+			text: target.text,
+			eachPlaceItAppears: target.eachPlaceItAppears ?? false,
+		};
 	}
 	return null;
+}
+
+function textFromEditTarget(target: EditTarget): string | null {
+	return textSearchFromEditTarget(target)?.text ?? null;
 }
 
 function targetPathFromEditTarget(target: EditTarget): HierarchyLevel[] | null {
@@ -280,7 +296,8 @@ function flattenEdit(
 
 	switch (edit.kind) {
 		case UltimateEditKind.StrikeInsert: {
-			const strikingContent = textFromEditTarget(edit.strike);
+			const strikeTarget = textSearchFromEditTarget(edit.strike);
+			const strikingContent = strikeTarget?.text ?? null;
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.strike),
 			);
@@ -301,6 +318,7 @@ function flattenEdit(
 							target: scopedTarget,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							strikingContent: strikingContent ?? undefined,
+							eachPlaceItAppears: strikeTarget?.eachPlaceItAppears || undefined,
 							content: edit.insert,
 						},
 						text,
@@ -310,7 +328,8 @@ function flattenEdit(
 			};
 		}
 		case UltimateEditKind.Strike: {
-			const strikingContent = textFromEditTarget(edit.target);
+			const strikeTarget = textSearchFromEditTarget(edit.target);
+			const strikingContent = strikeTarget?.text ?? null;
 			const throughContent = edit.through
 				? textFromEditTarget(edit.through)
 				: undefined;
@@ -335,6 +354,7 @@ function flattenEdit(
 							target: scopedTarget,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							strikingContent: strikingContent ?? undefined,
+							eachPlaceItAppears: strikeTarget?.eachPlaceItAppears || undefined,
 							throughContent: throughContent ?? undefined,
 							throughPunctuation,
 						},
@@ -853,6 +873,7 @@ export function applyAmendmentEditTreeToSection(
 			case "replace": {
 				const strikingContent = node.operation.strikingContent;
 				const replacementContent = node.operation.content;
+				const eachPlaceItAppears = node.operation.eachPlaceItAppears === true;
 				if (!replacementContent) break;
 				if (!strikingContent) {
 					const formattedReplacement = formatReplacementContent(
@@ -881,6 +902,18 @@ export function applyAmendmentEditTreeToSection(
 				attempt.searchTextKind = "striking";
 				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
 				if (localIndex < 0) break;
+				if (eachPlaceItAppears) {
+					const replacedScopedText = scopedText
+						.split(strikingContent)
+						.join(replacementContent);
+					patch = {
+						start: range.start,
+						end: range.end,
+						deleted: scopedText,
+						inserted: replacedScopedText,
+					};
+					break;
+				}
 				patch = {
 					start: range.start + localIndex,
 					end: range.start + localIndex + strikingContent.length,
@@ -891,6 +924,7 @@ export function applyAmendmentEditTreeToSection(
 			}
 			case "delete": {
 				const strikingContent = node.operation.strikingContent;
+				const eachPlaceItAppears = node.operation.eachPlaceItAppears === true;
 				if (!strikingContent) {
 					patch = {
 						start: range.start,
@@ -905,6 +939,19 @@ export function applyAmendmentEditTreeToSection(
 				attempt.searchTextKind = "striking";
 				attempt.searchIndex = localStart >= 0 ? range.start + localStart : null;
 				if (localStart < 0) break;
+				if (
+					eachPlaceItAppears &&
+					!node.operation.throughContent &&
+					!node.operation.throughPunctuation
+				) {
+					patch = {
+						start: range.start,
+						end: range.end,
+						deleted: scopedText,
+						inserted: scopedText.split(strikingContent).join(""),
+					};
+					break;
+				}
 				let localEnd = localStart + strikingContent.length;
 				const throughContent = node.operation.throughContent;
 				if (throughContent) {
