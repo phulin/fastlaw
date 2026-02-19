@@ -10,17 +10,6 @@ function quotePrefix(depth: number): string {
 	return `${Array.from({ length: depth }, () => ">").join(" ")} `;
 }
 
-function splitHeadingFromBody(
-	rest: string,
-): { heading: string; body: string | null } | null {
-	const match = rest.match(/^([A-Z0-9][A-Z0-9 '"()\-.,/&]+)\.\u2014\s*(.*)$/);
-	if (!match) return null;
-	const heading = match[1]?.trim();
-	if (!heading) return null;
-	const body = (match[2] ?? "").trim();
-	return { heading, body: body.length > 0 ? body : null };
-}
-
 function sanitizeQuotedLine(line: string): string {
 	return line
 		.trim()
@@ -84,19 +73,8 @@ export function formatInsertedBlockContent(
 		const markerDepth = baseDepth + (markerRank - minMarkerRank);
 		activeDepth = markerDepth;
 
-		const headingSplit = splitHeadingFromBody(rest);
-		if (headingSplit) {
-			formattedLines.push(
-				`${quotePrefix(markerDepth)}**(${marker})** **${headingSplit.heading}**`,
-			);
-			if (headingSplit.body) {
-				formattedLines.push(`${quotePrefix(markerDepth)}${headingSplit.body}`);
-			}
-			continue;
-		}
-
 		formattedLines.push(
-			`${quotePrefix(markerDepth)}**(${marker})**${rest ? ` ${rest}` : ""}`,
+			`${quotePrefix(markerDepth)}(${marker})${rest ? ` ${rest}` : ""}`,
 		);
 	}
 

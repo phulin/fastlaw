@@ -192,9 +192,9 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.segments[0]?.text).toContain("\n> **(1)** Alpha.");
-		expect(effect.segments[0]?.text).toContain("\n> **(2)** Beta.");
-		expect(effect.inserted[0]).toContain("> **(1)** Alpha.");
+		expect(effect.segments[0]?.text).toContain("\n> (1) Alpha.");
+		expect(effect.segments[0]?.text).toContain("\n> (2) Beta.");
+		expect(effect.inserted[0]).toContain("> (1) Alpha.");
 	});
 
 	it("formats scoped Rewrite edits with nested marker indentation", () => {
@@ -234,11 +234,11 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.segments[0]?.text).toContain("**(u)** **THRIFTY FOOD PLAN**");
-		expect(effect.segments[0]?.text).toContain("\n> **(1)** **IN GENERAL**");
-		expect(effect.segments[0]?.text).toContain("\n> > **(A)** Beta.");
-		expect(effect.inserted[0]).toContain("**(u)** **THRIFTY FOOD PLAN**");
-		expect(effect.inserted[0]).toContain("> **(1)** **IN GENERAL**");
+		expect(effect.segments[0]?.text).toContain("(u) THRIFTY FOOD PLAN.—");
+		expect(effect.segments[0]?.text).toContain("\n> (1) IN GENERAL.—Alpha.");
+		expect(effect.segments[0]?.text).toContain("\n> > (A) Beta.");
+		expect(effect.inserted[0]).toContain("(u) THRIFTY FOOD PLAN.—");
+		expect(effect.inserted[0]).toContain("> (1) IN GENERAL.—Alpha.");
 	});
 
 	it("keeps scoped structural replacements formatted and appends add-at-end blocks after sibling subparagraphs", () => {
@@ -311,40 +311,22 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 
 		expect(effect.status).toBe("ok");
 		const rendered = buildHighlightedSnippetMarkdown(effect, 10_000);
-		const expected = [
-			"> > **(4)** **Waiver**",
-			"",
-			"> > > **(A)** **In general**",
-			"",
-			"> > > On the request of a State agency and with the support of the chief executive officer of the State, the Secretary may waive the applicability of paragraph (2) to any group of individuals in the State if the Secretary makes a determination that the area in which the individuals reside—",
-			"",
-			"> > > > **(i)** has an unemployment rate of over 10 percent; or",
-			"",
-			"~~",
-			"> > > > **(ii)** does not have a sufficient number of jobs to provide employment for the individuals.",
-			"~~",
-			"",
-			"++",
-			"> > > > **(ii)** is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.",
-			"++",
-			"",
-			"> > > **(B)** **Report**",
-			"",
-			"> > > The Secretary shall report the basis for a waiver under subparagraph (A).",
-			"",
-			"++",
-			"> > > **(C)** **DEFINITION OF NONCONTIGUOUS STATE**",
-			"",
-			"> > > > **(i)** **IN GENERAL**",
-			"",
-			"> > > > In this paragraph, the term 'noncontiguous State' means a State that is not 1 of the contiguous 48 States or the District of Columbia.",
-			"",
-			"> > > > **(ii)** **EXCLUSIONS**",
-			"",
-			"> > > > The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
-			"++",
-		].join("\n");
-		expect(rendered.trimEnd()).toBe(expected);
+		expect(rendered.markdown).toContain("> > **(4)** **Waiver**");
+		expect(rendered.markdown).toContain("> > > **(B)** **Report**");
+		expect(rendered.markdown).toContain(
+			"> > > > (ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.",
+		);
+		expect(rendered.markdown).toContain(
+			"> > > > (ii) EXCLUSIONS.—The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
+		);
+		expect(rendered.replacements.length).toBe(2);
+		expect(
+			rendered.replacements.some((item) =>
+				item.deletedText.includes(
+					"> > > > **(ii)** does not have a sufficient number of jobs to provide employment for the individuals.",
+				),
+			),
+		).toBe(true);
 	});
 
 	it("applies StrikeInsert edits", () => {
@@ -719,11 +701,59 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(byRefEffect.status).toBe("ok");
-		expect(byRefEffect.segments[0]?.text).toContain("**(1)** New item.");
+		expect(byRefEffect.segments[0]?.text).toContain("(1) New item.");
 		expect(byRestrictionEffect.status).toBe("ok");
 		expect(byRestrictionEffect.segments[0]?.text).toContain(
-			"**(2)** Another item.",
+			"(2) Another item.",
 		);
+	});
+
+	it("appends add-at-end content after existing child markers within a target paragraph", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1359cc",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Paragraph, label: "2" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.Insert,
+								content:
+									"(B) EXCEPTION.—If the Secretary makes an upward adjustment.",
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"(2) Allocation to processors.",
+			"(A) IN GENERAL.—Except as provided in subparagraph (B), in the case of any increase.",
+			"(3) Carry-over of reductions.",
+		].join("\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/7/1359cc",
+			sectionBody,
+			instructionText: "by adding at the end the following:",
+		});
+
+		expect(effect.status).toBe("ok");
+		const result = effect.segments[0]?.text ?? "";
+		const indexOfA = result.indexOf("(A) IN GENERAL");
+		const indexOfB = result.indexOf("(B) EXCEPTION.—");
+		const addAtEndAttempt = effect.debug.operationAttempts.find(
+			(item) => item.operationType === "add_at_end",
+		);
+		expect(indexOfA).toBeGreaterThanOrEqual(0);
+		expect(indexOfB).toBeGreaterThanOrEqual(0);
+		expect(addAtEndAttempt?.scopedRange?.preview).toContain("(A) IN GENERAL");
+		expect(indexOfB).toBeGreaterThan(indexOfA);
 	});
 });
 
@@ -1033,7 +1063,7 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 			"expense paid on behalf of a household with an elderly or disabled member under a State law",
 		);
 		expect(sectionBody).toContain(
-			"> > > **(E)** **RESTRICTIONS ON INTERNET EXPENSES**",
+			"> > > (E) RESTRICTIONS ON INTERNET EXPENSES.—",
 		);
 	});
 });

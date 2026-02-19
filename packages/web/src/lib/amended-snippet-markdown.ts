@@ -1,5 +1,8 @@
 import type { AmendmentEffect } from "./amendment-edit-tree-apply";
-import { injectInlineReplacements, resolveInsertionRanges } from "./text-spans";
+import {
+	resolveInsertionRanges,
+	type TextReplacementRange,
+} from "./text-spans";
 
 function lineStartsForText(text: string): number[] {
 	const starts = [0];
@@ -108,15 +111,25 @@ function resolveDeletionAnchorRanges(effect: AmendmentEffect) {
 	};
 }
 
+export interface HighlightedSnippetMarkdown {
+	markdown: string;
+	replacements: TextReplacementRange[];
+}
+
 export function buildHighlightedSnippetMarkdown(
 	effect: AmendmentEffect,
 	contextLines = 5,
-): string {
+): HighlightedSnippetMarkdown {
 	const unchanged = effect.segments.find(
 		(segment) => segment.kind === "unchanged",
 	);
 	const text = unchanged?.text ?? "";
-	if (!text) return "";
+	if (!text) {
+		return {
+			markdown: "",
+			replacements: [],
+		};
+	}
 
 	const insertionChanges = effect.changes.filter(
 		(change) => change.inserted.length > 0,
@@ -141,33 +154,62 @@ export function buildHighlightedSnippetMarkdown(
 		contextLines,
 	);
 
-	return snippetWindows
-		.map((window) => {
-			const snippet = text.slice(window.start, window.end);
-			const localInsertions = resolvedInsertions
-				.filter((item) => item.start < window.end && item.end > window.start)
-				.map((item) => ({
-					start: Math.max(0, item.start - window.start),
-					end: Math.min(window.end - window.start, item.end - window.start),
-					deletedText: item.deletedText,
-				}))
-				.filter((item) => item.end > item.start);
-			const localDeletions = resolvedDeletions
-				.filter((item) => item.start >= window.start && item.start < window.end)
-				.map((item) => ({
-					start: item.start - window.start,
-					end: item.start - window.start,
-					deletedText: item.deletedText,
-				}));
-			return injectInlineReplacements(
-				snippet,
-				[...localInsertions, ...localDeletions],
-				{
-					insertedClassName: "pdf-amended-snippet-inserted",
-					deletedClassName: "pdf-amended-snippet-deleted",
-					addSpaceBeforeIfNeeded: true,
-				},
-			);
-		})
+	const snippets = snippetWindows.map((window) => {
+		const snippet = text.slice(window.start, window.end);
+		const localInsertions = resolvedInsertions
+			.filter((item) => item.start < window.end && item.end > window.start)
+			.map((item) => ({
+				start: Math.max(0, item.start - window.start),
+				end: Math.min(window.end - window.start, item.end - window.start),
+				deletedText: item.deletedText,
+			}))
+			.filter((item) => item.end > item.start);
+		const localDeletions = resolvedDeletions
+			.filter((item) => item.start >= window.start && item.start < window.end)
+			.map((item) => ({
+				start: item.start - window.start,
+				end: item.start - window.start,
+				deletedText: item.deletedText,
+			}));
+		return {
+			markdown: snippet,
+			replacements: [...localInsertions, ...localDeletions],
+		};
+	});
+
+	if (snippets.length === 0) {
+		return {
+			markdown: text,
+			replacements: [],
+		};
+	}
+
+	if (snippets.length === 1) {
+		return snippets[0];
+	}
+
+	const joinedMarkdown = snippets
+		.map((item) => item.markdown)
 		.join("\n\n...\n\n");
+	const joinedReplacements: TextReplacementRange[] = [];
+	let cursor = 0;
+	for (let index = 0; index < snippets.length; index += 1) {
+		const snippet = snippets[index];
+		for (const replacement of snippet.replacements) {
+			joinedReplacements.push({
+				start: replacement.start + cursor,
+				end: replacement.end + cursor,
+				deletedText: replacement.deletedText,
+			});
+		}
+		cursor += snippet.markdown.length;
+		if (index < snippets.length - 1) {
+			cursor += "\n\n...\n\n".length;
+		}
+	}
+
+	return {
+		markdown: joinedMarkdown,
+		replacements: joinedReplacements,
+	};
 }

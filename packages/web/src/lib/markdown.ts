@@ -1,165 +1,47 @@
-import { marked } from "marked";
-
-type MarkdownToken = {
-	type: string;
-	href?: string;
-	tokens?: MarkdownToken[];
-	items?: MarkdownToken[];
-	[key: string]: unknown;
-};
-
-type BlockquoteToken = MarkdownToken & {
-	tokens: MarkdownToken[];
-};
-
-const isBlockquoteToken = (token: MarkdownToken): token is BlockquoteToken =>
-	token.type === "blockquote";
-
-type HtmlToken = MarkdownToken & {
-	type: "html";
-	text: string;
-};
-
-const isHtmlToken = (token: MarkdownToken): token is HtmlToken =>
-	token.type === "html" && typeof token.text === "string";
+import type { Content, Root } from "mdast";
+import rehypeStringify from "rehype-stringify";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { unified } from "unified";
+import type { Node, Parent } from "unist";
+import { visit } from "unist-util-visit";
 
 const MAX_INDENT_DEPTH = 5;
-
-type RenderMarkdownOptions = {
-	statuteRoutePrefix?: string;
-	sourceCode?: string;
-};
-
 const STATUTES_PREFIX = "/statutes/";
 const INSERTED_CLASS = "pdf-amended-snippet-inserted";
 const DELETED_CLASS = "pdf-amended-snippet-deleted";
 
-marked.use({
-	extensions: [
-		{
-			name: "delBlock",
-			level: "block",
-			start(src: string) {
-				return src.indexOf("~~\n");
-			},
-			tokenizer(src: string) {
-				const canonicalMatch = /^~~\n([\s\S]+?)\n~~(?:\n|$)/.exec(src);
-				if (canonicalMatch) {
-					return {
-						type: "delBlock",
-						raw: canonicalMatch[0],
-						text: canonicalMatch[1] ?? "",
-					};
-				}
-				const fallbackMatch = /^~~\n([\s\S]+?)~~(?:\n|$)/.exec(src);
-				if (!fallbackMatch) return undefined;
-				return {
-					type: "delBlock",
-					raw: fallbackMatch[0],
-					text: fallbackMatch[1] ?? "",
-				};
-			},
-			renderer(token: unknown) {
-				const text =
-					typeof token === "object" &&
-					token !== null &&
-					"text" in token &&
-					typeof token.text === "string"
-						? token.text
-						: "";
-				return `<del class="${DELETED_CLASS}">${renderTokenizedMarkdown(text, {}, 0)}</del>`;
-			},
-		},
-		{
-			name: "insBlock",
-			level: "block",
-			start(src: string) {
-				return src.indexOf("++\n");
-			},
-			tokenizer(src: string) {
-				const match = /^\+\+\n([\s\S]+?)\n\+\+(?:\n|$)/.exec(src);
-				if (!match) return undefined;
-				return {
-					type: "insBlock",
-					raw: match[0],
-					text: match[1] ?? "",
-				};
-			},
-			renderer(token: unknown) {
-				const text =
-					typeof token === "object" &&
-					token !== null &&
-					"text" in token &&
-					typeof token.text === "string"
-						? token.text
-						: "";
-				return `<ins class="${INSERTED_CLASS}">${renderTokenizedMarkdown(text, {}, 0)}</ins>`;
-			},
-		},
-		{
-			name: "del",
-			level: "inline",
-			start(src: string) {
-				return src.indexOf("~~");
-			},
-			tokenizer(this: { lexer: typeof marked.Lexer.prototype }, src: string) {
-				const match = /^~~([^\n]+?)~~/.exec(src);
-				if (!match) return undefined;
-				const text = match[1] ?? "";
-				return {
-					type: "del",
-					raw: match[0],
-					text,
-					tokens: this.lexer.inlineTokens(text),
-				};
-			},
-			renderer(
-				this: { parser: typeof marked.Parser.prototype },
-				token: unknown,
-			) {
-				const tokens =
-					typeof token === "object" &&
-					token !== null &&
-					"tokens" in token &&
-					Array.isArray(token.tokens)
-						? (token.tokens as never)
-						: [];
-				return `<del class="${DELETED_CLASS}">${this.parser.parseInline(tokens)}</del>`;
-			},
-		},
-		{
-			name: "ins",
-			level: "inline",
-			start(src: string) {
-				return src.indexOf("++");
-			},
-			tokenizer(this: { lexer: typeof marked.Lexer.prototype }, src: string) {
-				const match = /^\+\+([\s\S]+?)\+\+/.exec(src);
-				if (!match) return undefined;
-				const text = match[1] ?? "";
-				return {
-					type: "ins",
-					raw: match[0],
-					text,
-					tokens: this.lexer.inlineTokens(text),
-				};
-			},
-			renderer(
-				this: { parser: typeof marked.Parser.prototype },
-				token: unknown,
-			) {
-				const tokens =
-					typeof token === "object" &&
-					token !== null &&
-					"tokens" in token &&
-					Array.isArray(token.tokens)
-						? (token.tokens as never)
-						: [];
-				return `<ins class="${INSERTED_CLASS}">${this.parser.parseInline(tokens)}</ins>`;
-			},
-		},
-	],
-});
+export interface MarkdownReplacementRange {
+	start: number;
+	end: number;
+	deletedText: string;
+}
+
+type RenderMarkdownOptions = {
+	statuteRoutePrefix?: string;
+	sourceCode?: string;
+	replacements?: MarkdownReplacementRange[];
+};
+
+type NodeWithPosition = Node & {
+	position?: {
+		start?: { offset?: number };
+		end?: { offset?: number };
+	};
+};
+
+type ParentWithChildren = Parent & {
+	children: Content[];
+};
+
+const parseProcessor = unified().use(remarkParse).use(remarkGfm);
+const renderProcessor = unified()
+	.use(remarkRehype, { allowDangerousHtml: true })
+	.use(rehypeStringify, { allowDangerousHtml: true });
+
+const hasChildren = (node: Node): node is ParentWithChildren =>
+	Array.isArray((node as Parent).children);
 
 const rewriteStatuteHref = (
 	href: string,
@@ -192,159 +74,365 @@ const rewriteStatuteHref = (
 	return `${statuteRoutePrefix}${joinedTail}${query}${hash}`;
 };
 
-const rewriteTokenLinks = (
-	tokens: MarkdownToken[],
-	options: RenderMarkdownOptions,
-) => {
-	for (const token of tokens) {
-		if (token.type === "link" && typeof token.href === "string") {
-			token.href = rewriteStatuteHref(token.href, options);
-		}
+const escapeHtml = (input: string): string =>
+	input
+		.replaceAll("&", "&amp;")
+		.replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;")
+		.replaceAll('"', "&quot;")
+		.replaceAll("'", "&#39;");
 
-		if (Array.isArray(token.tokens)) {
-			rewriteTokenLinks(token.tokens, options);
-		}
-		if (Array.isArray(token.items)) {
-			rewriteTokenLinks(token.items, options);
-		}
+const htmlNode = (value: string): Content =>
+	({ type: "html", value }) as unknown as Content;
+
+const textNode = (value: string): Content =>
+	({ type: "text", value }) as unknown as Content;
+
+const strongNode = (value: string): Content =>
+	({
+		type: "strong",
+		children: [{ type: "text", value }],
+	}) as unknown as Content;
+
+const paragraphNode = (children: Content[]): Content =>
+	({ type: "paragraph", children }) as unknown as Content;
+
+const sanitizeIndentClass = (value?: string): string | null =>
+	value && /^indent\d+$/.test(value) ? value : null;
+
+const paragraphClassAttr = (indentClass?: string): string => {
+	const safeIndentClass = sanitizeIndentClass(indentClass);
+	return safeIndentClass ? ` class="${safeIndentClass}"` : "";
+};
+
+const renderParagraphs = (value: string, indentClass?: string): string => {
+	const paragraphs = value
+		.split(/\n+/)
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+	if (paragraphs.length <= 1) {
+		return escapeHtml(value);
 	}
+	const classAttr = paragraphClassAttr(indentClass);
+	return paragraphs
+		.map((item) => `<p${classAttr}>${escapeHtml(item)}</p>`)
+		.join("");
 };
 
-const addIndentClassToParagraphs = (
-	html: string,
-	blockquoteDepth: number,
-): string => {
-	return html.replace(
-		/<p\b([^>]*)>([\s\S]*?)<\/p>/g,
-		(_fullMatch, attrs: string, body: string) => {
-			const classMatch = attrs.match(/\bclass\s*=\s*(["'])(.*?)\1/);
-			const quote = classMatch?.[1] ?? '"';
-			const existingClasses = classMatch
-				? classMatch[2].split(/\s+/).filter((v) => v.length > 0)
-				: [];
+const expandSingleLineBreaks = (input: string): string => {
+	if (input.length === 0) return input;
+	let output = "";
+	for (let index = 0; index < input.length; index += 1) {
+		const char = input[index];
+		if (char !== "\n") {
+			output += char;
+			continue;
+		}
+		const prevChar = index > 0 ? input[index - 1] : "";
+		const nextChar = index + 1 < input.length ? input[index + 1] : "";
+		const isSingleBreak = prevChar !== "\n" && nextChar !== "\n";
+		output += isSingleBreak ? "\n\n" : "\n";
+	}
+	return output;
+};
 
-			let foundIndent = false;
-			const newClasses = existingClasses.map((cls) => {
-				const match = cls.match(/^indent(\d+)$/);
-				if (match) {
-					foundIndent = true;
-					const depth =
-						Number.parseInt(match[1], 10) +
-						Math.min(blockquoteDepth, MAX_INDENT_DEPTH);
-					return `indent${Math.min(depth, MAX_INDENT_DEPTH)}`;
-				}
-				return cls;
-			});
+const HEADING_WITH_DASH_RE =
+	/^\(([^)]+)\)\s+([A-Z0-9][A-Z0-9 '"()\-.,/&]*?)(\.\u2014)([\s\S]*)$/;
 
-			if (!foundIndent) {
-				newClasses.push(`indent${Math.min(blockquoteDepth, MAX_INDENT_DEPTH)}`);
-			}
+const emphasizeInsertedMarkerHeadings = (tree: Root) => {
+	visit(tree as Node, "paragraph", (node) => {
+		const paragraph = node as ParentWithChildren;
+		if (paragraph.children.length !== 1) return;
+		const onlyChild = paragraph.children[0] as Node & { value?: string };
+		if (onlyChild.type !== "text" || typeof onlyChild.value !== "string")
+			return;
+		const match = onlyChild.value.match(HEADING_WITH_DASH_RE);
+		if (!match) return;
+		const marker = match[1] ?? "";
+		const heading = (match[2] ?? "").trim();
+		const punctuation = match[3] ?? "";
+		const tail = match[4] ?? "";
+		if (marker.length === 0 || heading.length === 0) return;
+		paragraph.children = [
+			strongNode(`(${marker})`),
+			textNode(" "),
+			strongNode(heading),
+			textNode(`${punctuation}${tail}`),
+		];
+	});
+};
 
-			const replacement = `class=${quote}${newClasses.join(" ")}${quote}`;
-			const newAttrs = classMatch
-				? attrs.replace(classMatch[0], replacement)
-				: `${attrs} ${replacement}`;
+const renderInsertedHtml = (value: string): string => {
+	const normalizedValue = value.includes("\n")
+		? expandSingleLineBreaks(value)
+		: value;
+	const parsed = parseProcessor.parse(normalizedValue) as Root;
+	emphasizeInsertedMarkerHeadings(parsed);
+	const hastTree = renderProcessor.runSync(parsed);
+	const rendered = String(renderProcessor.stringify(hastTree));
+	if (!value.includes("\n")) {
+		return rendered.replace(/^<p>/, "").replace(/<\/p>\s*$/, "");
+	}
+	return rendered;
+};
 
-			if (blockquoteDepth <= 0 || !body.includes("\n")) {
-				return `<p${newAttrs}>${body}</p>`;
-			}
+const wrapInsHtml = (value: string, indentClass?: string): string => {
+	const rendered = renderInsertedHtml(value);
+	if (!value.includes("\n")) {
+		return `<ins class="${INSERTED_CLASS}">${rendered}</ins>`;
+	}
 
-			const lines = body
-				.split("\n")
-				.map((line) => line.trim())
-				.filter((line) => line.length > 0);
-			if (lines.length <= 1) {
-				return `<p${newAttrs}>${body}</p>`;
-			}
-
-			return lines.map((line) => `<p${newAttrs}>${line}</p>`).join("");
-		},
+	const classAttr = paragraphClassAttr(indentClass);
+	return rendered.replace(
+		/<p>([\s\S]*?)<\/p>/g,
+		`<p${classAttr}><ins class="${INSERTED_CLASS}">$1</ins></p>`,
 	);
 };
 
-const renderQuotedInsBlock = (
-	htmlTokenText: string,
-	blockquoteDepth: number,
-	options: RenderMarkdownOptions,
+const wrapDelHtml = (value: string, indentClass?: string): string =>
+	`<del class="${DELETED_CLASS}">${renderParagraphs(value, indentClass)}</del>`;
+
+const getIndentClassFromParent = (
+	parent: ParentWithChildren,
 ): string | null => {
-	const insMatch = htmlTokenText.match(
-		/^<ins\b([^>]*)>\s*\n([\s\S]*?)\n\s*<\/ins>\s*$/,
-	);
-	if (!insMatch) return null;
-
-	const insBody = insMatch[2];
-	if (!insBody || !/^\s*>/m.test(insBody)) return null;
-	const insAttributes = insMatch[1] ?? "";
-	const renderedBody = renderTokenizedMarkdown(
-		insBody,
-		options,
-		blockquoteDepth,
-	);
-	return `<ins${insAttributes}>${renderedBody}</ins>`;
+	if (parent.type !== "paragraph") return null;
+	const className = (
+		parent as Node & { data?: { hProperties?: { className?: string[] } } }
+	).data?.hProperties?.className;
+	if (!Array.isArray(className)) return null;
+	return className.find((name) => /^indent\d+$/.test(name)) ?? null;
 };
 
-const renderTokensWithIndent = (
-	tokens: MarkdownToken[],
-	blockquoteDepth: number,
-	options: RenderMarkdownOptions,
-): string => {
-	const parts: string[] = [];
-	const passthrough: MarkdownToken[] = [];
+const getOffset = (node: Node, key: "start" | "end"): number | undefined => {
+	return (node as NodeWithPosition).position?.[key]?.offset;
+};
 
-	const flushPassthrough = () => {
-		if (passthrough.length === 0) {
+const addParagraphIndentClasses = (tree: Root) => {
+	const walk = (node: Node, blockquoteDepth: number) => {
+		if (node.type === "paragraph") {
+			const dataNode = node as Node & {
+				data?: {
+					hProperties?: { className?: string[] };
+				};
+			};
+			const className = dataNode.data?.hProperties?.className ?? [];
+			const filtered = className.filter((item) => !/^indent\d+$/.test(item));
+			filtered.push(`indent${Math.min(blockquoteDepth, MAX_INDENT_DEPTH)}`);
+			dataNode.data = {
+				...(dataNode.data ?? {}),
+				hProperties: {
+					...(dataNode.data?.hProperties ?? {}),
+					className: filtered,
+				},
+			};
+		}
+
+		if (!hasChildren(node)) {
 			return;
 		}
 
-		const parsed = marked.parser([...passthrough] as never);
-		parts.push(addIndentClassToParagraphs(parsed, blockquoteDepth));
-		passthrough.length = 0;
+		const nextDepth = node.type === "blockquote" ? blockquoteDepth + 1 : 0;
+		for (const child of node.children) {
+			walk(child as Node, nextDepth);
+		}
 	};
 
-	for (const token of tokens) {
-		if (isHtmlToken(token)) {
-			const renderedInsBlock = renderQuotedInsBlock(
-				token.text,
-				blockquoteDepth,
-				options,
-			);
-			if (renderedInsBlock) {
-				flushPassthrough();
-				parts.push(renderedInsBlock);
-				continue;
-			}
-		}
-
-		if (!isBlockquoteToken(token)) {
-			passthrough.push(token);
-			continue;
-		}
-
-		flushPassthrough();
-
-		parts.push(
-			renderTokensWithIndent(token.tokens, blockquoteDepth + 1, options),
-		);
-	}
-
-	flushPassthrough();
-
-	return parts.join("");
+	walk(tree as Node, 0);
 };
 
-const renderTokenizedMarkdown = (
-	content: string,
-	options: RenderMarkdownOptions,
-	blockquoteDepth = 0,
-): string => {
-	const tokens = marked.lexer(content) as MarkdownToken[];
-	rewriteTokenLinks(tokens, options);
-	return renderTokensWithIndent(tokens, blockquoteDepth, options);
+const unwrapBlockquotes = (tree: Root) => {
+	const unwrapInParent = (parent: ParentWithChildren) => {
+		const nextChildren: Content[] = [];
+		for (const child of parent.children) {
+			const node = child as Node;
+			if (node.type === "blockquote" && hasChildren(node)) {
+				unwrapInParent(node);
+				nextChildren.push(...node.children);
+				continue;
+			}
+			if (hasChildren(node)) {
+				unwrapInParent(node);
+			}
+			nextChildren.push(child);
+		}
+		parent.children = nextChildren;
+	};
+
+	unwrapInParent(tree as ParentWithChildren);
+};
+
+const rewriteTreeLinks = (tree: Root, options: RenderMarkdownOptions) => {
+	visit(tree as Node, "link", (node) => {
+		const link = node as Node & { url?: string };
+		if (typeof link.url !== "string") return;
+		link.url = rewriteStatuteHref(link.url, options);
+	});
+};
+
+const applyMarkdownReplacements = (
+	tree: Root,
+	source: string,
+	ranges: MarkdownReplacementRange[],
+) => {
+	if (ranges.length === 0) return;
+
+	const normalized = ranges
+		.map((range, id) => ({
+			...range,
+			id,
+			start: Math.max(0, Math.min(source.length, range.start)),
+			end: Math.max(0, Math.min(source.length, range.end)),
+		}))
+		.filter((range) => range.end >= range.start)
+		.sort((a, b) => a.start - b.start || a.end - b.end);
+	if (normalized.length === 0) return;
+
+	const pointRanges = normalized.filter((range) => range.start === range.end);
+	const segmentRanges = normalized.filter((range) => range.end > range.start);
+	const touchedRangeIds = new Set<number>();
+	const insertedDeletionIds = new Set<number>();
+	const editsByParent = new Map<ParentWithChildren, Map<number, Content[]>>();
+
+	visit(tree as Node, "text", (node, index, parent) => {
+		if (typeof index !== "number") return;
+		if (!parent || !hasChildren(parent as Node)) {
+			return;
+		}
+
+		const start = getOffset(node as Node, "start");
+		const end = getOffset(node as Node, "end");
+		if (typeof start !== "number" || typeof end !== "number" || end < start) {
+			return;
+		}
+
+		const overlaps = segmentRanges.filter(
+			(range) => range.start < end && range.end > start,
+		);
+		const points = pointRanges.filter(
+			(range) => range.start >= start && range.start <= end,
+		);
+		if (overlaps.length === 0 && points.length === 0) {
+			return;
+		}
+
+		const boundaries = new Set<number>([start, end]);
+		for (const range of overlaps) {
+			boundaries.add(Math.max(start, range.start));
+			boundaries.add(Math.min(end, range.end));
+		}
+		for (const point of points) {
+			boundaries.add(point.start);
+		}
+		const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
+		const pointByOffset = new Map<number, typeof pointRanges>();
+		for (const point of points) {
+			const existing = pointByOffset.get(point.start);
+			if (existing) {
+				existing.push(point);
+				continue;
+			}
+			pointByOffset.set(point.start, [point]);
+		}
+
+		const nodeValue = (node as Node & { value: string }).value;
+		const indentClass = getIndentClassFromParent(parent as ParentWithChildren);
+		const replacementChildren: Content[] = [];
+
+		for (let cursor = 0; cursor < sortedBoundaries.length; cursor += 1) {
+			const segmentStart = sortedBoundaries[cursor];
+			const segmentEnd = sortedBoundaries[cursor + 1];
+			const pointInserts = pointByOffset.get(segmentStart) ?? [];
+			for (const point of pointInserts) {
+				if (point.deletedText.length === 0) continue;
+				replacementChildren.push(
+					htmlNode(wrapDelHtml(point.deletedText, indentClass ?? undefined)),
+				);
+				touchedRangeIds.add(point.id);
+			}
+
+			if (typeof segmentEnd !== "number" || segmentEnd <= segmentStart) {
+				continue;
+			}
+
+			const relativeStart = segmentStart - start;
+			const relativeEnd = segmentEnd - start;
+			const segmentText = nodeValue.slice(relativeStart, relativeEnd);
+			if (segmentText.length === 0) continue;
+
+			const activeRange = overlaps.find(
+				(range) => segmentStart < range.end && segmentEnd > range.start,
+			);
+			if (!activeRange) {
+				replacementChildren.push(textNode(segmentText));
+				continue;
+			}
+
+			if (
+				activeRange.deletedText.length > 0 &&
+				!insertedDeletionIds.has(activeRange.id)
+			) {
+				replacementChildren.push(
+					htmlNode(
+						wrapDelHtml(activeRange.deletedText, indentClass ?? undefined),
+					),
+				);
+				insertedDeletionIds.add(activeRange.id);
+			}
+
+			replacementChildren.push(
+				htmlNode(wrapInsHtml(segmentText, indentClass ?? undefined)),
+			);
+			touchedRangeIds.add(activeRange.id);
+		}
+
+		const typedParent = parent as ParentWithChildren;
+		const replacements = editsByParent.get(typedParent);
+		if (!replacements) {
+			editsByParent.set(typedParent, new Map([[index, replacementChildren]]));
+			return;
+		}
+		replacements.set(index, replacementChildren);
+	});
+
+	for (const [parent, replacementMap] of editsByParent) {
+		const sortedIndexes = Array.from(replacementMap.keys()).sort(
+			(a, b) => b - a,
+		);
+		for (const index of sortedIndexes) {
+			const replacementChildren = replacementMap.get(index);
+			if (!replacementChildren) continue;
+			parent.children.splice(index, 1, ...replacementChildren);
+		}
+	}
+
+	for (const range of normalized) {
+		if (touchedRangeIds.has(range.id)) continue;
+		const fallbackChildren: Content[] = [];
+		if (range.deletedText.length > 0) {
+			fallbackChildren.push(htmlNode(wrapDelHtml(range.deletedText)));
+		}
+		if (range.end > range.start) {
+			const insertedText = source.slice(range.start, range.end);
+			if (insertedText.length > 0) {
+				fallbackChildren.push(htmlNode(wrapInsHtml(insertedText)));
+			}
+		}
+		if (fallbackChildren.length === 0) continue;
+		tree.children.push(paragraphNode(fallbackChildren));
+	}
 };
 
 export const renderMarkdown = (
 	content: string,
 	options: RenderMarkdownOptions = {},
 ): string => {
-	return renderTokenizedMarkdown(content, options);
+	const tree = parseProcessor.parse(content) as Root;
+	rewriteTreeLinks(tree, options);
+	addParagraphIndentClasses(tree);
+	unwrapBlockquotes(tree);
+	if (options.replacements && options.replacements.length > 0) {
+		applyMarkdownReplacements(tree, content, options.replacements);
+	}
+	const hastTree = renderProcessor.runSync(tree);
+	return String(renderProcessor.stringify(hastTree));
 };

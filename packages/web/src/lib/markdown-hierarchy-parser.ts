@@ -1,3 +1,5 @@
+import { buildInferredMarkerLevels } from "./marker-level-inference";
+
 export interface HierarchyParagraph {
 	index: number;
 	startLine: number;
@@ -13,6 +15,7 @@ interface ParsedParagraph extends HierarchyParagraph {
 interface MarkerOccurrence {
 	label: string;
 	level: number;
+	quoteDepth: number;
 	paragraphIndex: number;
 }
 
@@ -129,9 +132,21 @@ function parseParagraphs(markdown: string): ParsedParagraph[] {
 	return paragraphs;
 }
 
-function collectMarkers(paragraphs: ParsedParagraph[]): MarkerOccurrence[] {
+function collectMarkers(paragraphs: ParsedParagraph[]): {
+	occurrences: MarkerOccurrence[];
+	firstLevelByParagraph: Map<number, number>;
+} {
 	const occurrences: MarkerOccurrence[] = [];
+	const firstLevelByParagraph = new Map<number, number>();
+	const inferredByParagraph = buildInferredMarkerLevels(
+		paragraphs.map((paragraph) => ({
+			markers: paragraph.leadingLabels,
+			indentationHint: paragraph.quoteDepth,
+		})),
+	);
+
 	for (const paragraph of paragraphs) {
+		const inferred = inferredByParagraph[paragraph.index] ?? [];
 		for (
 			let markerIndex = 0;
 			markerIndex < paragraph.leadingLabels.length;
@@ -139,14 +154,20 @@ function collectMarkers(paragraphs: ParsedParagraph[]): MarkerOccurrence[] {
 		) {
 			const label = paragraph.leadingLabels[markerIndex];
 			if (!label) continue;
+			const inferredRank = inferred[markerIndex]?.rank ?? markerIndex + 1;
+			const level = paragraph.quoteDepth * 10 + inferredRank;
 			occurrences.push({
 				label,
-				level: paragraph.quoteDepth + markerIndex,
+				level,
+				quoteDepth: paragraph.quoteDepth,
 				paragraphIndex: paragraph.index,
 			});
+			if (!firstLevelByParagraph.has(paragraph.index)) {
+				firstLevelByParagraph.set(paragraph.index, level);
+			}
 		}
 	}
-	return occurrences;
+	return { occurrences, firstLevelByParagraph };
 }
 
 interface MutableNode {
@@ -196,7 +217,8 @@ export function parseMarkdownHierarchy(markdown: string): MarkdownHierarchy {
 			text: paragraph.text,
 		}),
 	);
-	const markers = collectMarkers(parsedParagraphs);
+	const { occurrences: markers, firstLevelByParagraph } =
+		collectMarkers(parsedParagraphs);
 	if (markers.length === 0) {
 		return {
 			paragraphs,
@@ -213,13 +235,12 @@ export function parseMarkdownHierarchy(markdown: string): MarkdownHierarchy {
 		) {
 			const paragraph = parsedParagraphs[paragraphIndex];
 			if (!paragraph) continue;
-			if (paragraph.quoteDepth < marker.level) {
+			if (paragraph.quoteDepth < marker.quoteDepth) {
 				endParagraph = paragraphIndex;
 				break;
 			}
-			if (paragraph.leadingLabels.length === 0) continue;
-			const firstMarkerLevel = paragraph.quoteDepth;
-			if (firstMarkerLevel <= marker.level) {
+			const firstMarkerLevel = firstLevelByParagraph.get(paragraphIndex);
+			if (firstMarkerLevel !== undefined && firstMarkerLevel <= marker.level) {
 				endParagraph = paragraphIndex;
 				break;
 			}

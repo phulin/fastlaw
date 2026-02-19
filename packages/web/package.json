@@ -23,7 +23,13 @@
 		"marked": "^12.0.2",
 		"nearley": "^2.20.1",
 		"pdfjs-dist": "^5.4.624",
+		"rehype-stringify": "^10.0.1",
+		"remark-gfm": "^4.0.1",
+		"remark-parse": "^11.0.0",
+		"remark-rehype": "^11.1.2",
 		"solid-js": "^1.9.5",
+		"unified": "^11.0.5",
+		"unist-util-visit": "^5.1.0",
 		"xxhash-wasm": "^1.1.0"
 	},
 	"devDependencies": {

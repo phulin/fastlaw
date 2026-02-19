@@ -231,7 +231,9 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 			) : null}
 			<div
 				class="pdf-amended-snippet-main markdown"
-				innerHTML={renderMarkdown(highlightedSnippet())}
+				innerHTML={renderMarkdown(highlightedSnippet().markdown, {
+					replacements: highlightedSnippet().replacements,
+				})}
 			/>
 			{hasUnresolvedInlineChanges() ? (
 				<div class="pdf-amended-snippet-replacements">

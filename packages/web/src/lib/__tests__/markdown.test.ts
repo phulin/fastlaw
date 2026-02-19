@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderMarkdown } from "../markdown";
 
 describe("renderMarkdown", () => {
-	it("renders quoted paragraphs with indent classes and no nested indent divs", () => {
+	it("renders quoted paragraphs with indent classes", () => {
 		const rendered = renderMarkdown(
 			[
 				"> (19) REFERENCE PRICE.",
@@ -16,58 +16,70 @@ describe("renderMarkdown", () => {
 		expect(rendered).toContain(
 			'<p class="indent3">(i) For wheat, $6.35 per bushel.</p>',
 		);
-		expect(rendered).not.toContain('<div class="indent');
+		expect(rendered).not.toContain("<blockquote>");
 	});
 
-	it("renders quoted paragraphs inside ++ blocks as p.indentX", () => {
-		const rendered = renderMarkdown(
-			[
-				"++",
-				"> **(5)** **QUALIFIED PASS-THROUGH ENTITY**",
-				"> The term 'qualified pass-through entity' means—",
-				"> > **(A)** a partnership;",
-				"> > **(B)** an S corporation;",
-				"> > **(C)** a limited liability company; and",
-				"> > **(D)** a joint venture or general partnership.",
-				"++",
-			].join("\n"),
-		);
-
-		expect(rendered).toContain('<ins class="pdf-amended-snippet-inserted">');
-		expect(rendered).toContain(
-			"<strong>(5)</strong> <strong>QUALIFIED PASS-THROUGH ENTITY</strong>",
-		);
-		expect(rendered).toContain(
-			"The term &#39;qualified pass-through entity&#39; means—",
-		);
-		expect(rendered).toContain("<strong>(A)</strong> a partnership;");
-		expect(rendered).toContain("<strong>(B)</strong> an S corporation;");
-		expect(rendered).toContain(
-			"<strong>(C)</strong> a limited liability company; and",
-		);
-		expect(rendered).toContain(
-			"<strong>(D)</strong> a joint venture or general partnership.",
-		);
-		expect(rendered).not.toContain('<div class="indent');
+	it("rewrites statute links against route prefix", () => {
+		const rendered = renderMarkdown("[link](/statutes/usc/section/7/2014)", {
+			statuteRoutePrefix: "/preview/statutes",
+			sourceCode: "usc",
+		});
+		expect(rendered).toContain('href="/preview/statutes/section/7/2014"');
 	});
 
-	it("renders ~~ as del", () => {
-		const rendered = renderMarkdown("~~old text~~ ++new text++");
+	it("renders inline replacement ranges as ins/del without markdown delimiters", () => {
+		const markdown = "This is old text.";
+		const start = markdown.indexOf("old");
+		const end = start + "old".length;
+		const rendered = renderMarkdown(markdown, {
+			replacements: [{ start, end, deletedText: "legacy" }],
+		});
+
 		expect(rendered).toContain(
-			'<del class="pdf-amended-snippet-deleted">old text</del>',
+			'<del class="pdf-amended-snippet-deleted">legacy</del>',
 		);
 		expect(rendered).toContain(
-			'<ins class="pdf-amended-snippet-inserted">new text</ins>',
+			'<ins class="pdf-amended-snippet-inserted">old</ins>',
 		);
 	});
 
-	it("renders block ~~ and block ++ delimiters", () => {
-		const rendered = renderMarkdown("~~\nold block\n~~\n\n++\nnew block\n++");
+	it("renders deletion-only anchors", () => {
+		const markdown = "alpha beta";
+		const anchor = markdown.indexOf("beta");
+		const rendered = renderMarkdown(markdown, {
+			replacements: [{ start: anchor, end: anchor, deletedText: "deleted" }],
+		});
+
 		expect(rendered).toContain(
-			'<del class="pdf-amended-snippet-deleted"><p class="indent0">old block</p>',
+			'<del class="pdf-amended-snippet-deleted">deleted</del>beta',
+		);
+	});
+
+	it("preserves line breaks inside inserted replacements", () => {
+		const markdown = "line1\nline2\nline3";
+		const rendered = renderMarkdown(markdown, {
+			replacements: [{ start: 0, end: markdown.length, deletedText: "" }],
+		});
+
+		expect(rendered).toContain(
+			'<p class="indent0"><ins class="pdf-amended-snippet-inserted">line1</ins></p>',
 		);
 		expect(rendered).toContain(
-			'<ins class="pdf-amended-snippet-inserted"><p class="indent0">new block</p>',
+			'<p class="indent0"><ins class="pdf-amended-snippet-inserted">line2</ins></p>',
+		);
+		expect(rendered).toContain(
+			'<p class="indent0"><ins class="pdf-amended-snippet-inserted">line3</ins></p>',
+		);
+	});
+
+	it("bolds inserted marker headings in AST while keeping .— outside bold", () => {
+		const markdown = "(B) TIMING.—In carrying out";
+		const rendered = renderMarkdown(markdown, {
+			replacements: [{ start: 0, end: markdown.length, deletedText: "" }],
+		});
+
+		expect(rendered).toContain(
+			"<strong>(B)</strong> <strong>TIMING</strong>.—In carrying out",
 		);
 	});
 });

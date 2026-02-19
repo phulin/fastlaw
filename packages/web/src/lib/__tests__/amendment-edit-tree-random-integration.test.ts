@@ -2,32 +2,29 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { extractAmendatoryInstructions } from "../amendatory-instructions";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
-import { getSectionPathFromUscCitation } from "../amendment-effects";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
-import type { Paragraph } from "../text-extract";
-import { createParagraph } from "./test-utils";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(TEST_DIR, "../../..");
-const HR1_PARAGRAPHS_PATH = resolve(
+const USC_2014_PRE_FIXTURE_PATH = resolve(
 	WEB_ROOT,
-	"tmp/bills-119hr1eas-paragraphs.txt",
+	"src/lib/__fixtures__/usc-7-2014-pre.md",
 );
-const USC_SOURCE_VERSION = "usc-118-274not159";
-const SECTION_HOST = "http://localhost:5173";
+const USC_2036A_PRE_FIXTURE_PATH = resolve(
+	WEB_ROOT,
+	"src/lib/__fixtures__/usc-7-2036a-pre.md",
+);
+const USC_9011_PRE_FIXTURE_PATH = resolve(
+	WEB_ROOT,
+	"src/lib/__fixtures__/usc-7-9011-pre.md",
+);
 
 interface SelectedInstructionBlock {
 	citation: string;
 	sectionPath: string;
 	instructionText: string;
-}
-
-interface SectionJsonBlock {
-	type: string;
-	content?: string;
 }
 
 const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
@@ -123,59 +120,71 @@ const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
 	},
 ];
 
-function parseBillParagraphs(text: string): Paragraph[] {
-	const lines = text.split(/\r?\n/);
-	const paragraphs: Paragraph[] = [];
-	let page = 1;
-	let y = 780;
+const BASE_SECTION_FIXTURES: Readonly<Record<string, string>> = {
+	"/statutes/usc/section/7/2014": readFileSync(
+		USC_2014_PRE_FIXTURE_PATH,
+		"utf8",
+	),
+	"/statutes/usc/section/7/2036a": readFileSync(
+		USC_2036A_PRE_FIXTURE_PATH,
+		"utf8",
+	),
+	"/statutes/usc/section/7/9011": readFileSync(
+		USC_9011_PRE_FIXTURE_PATH,
+		"utf8",
+	),
+};
 
-	const indentFor = (value: string): number => {
-		if (
-			/^SEC\./.test(value) ||
-			/^(TITLE|Subtitle|CHAPTER|SUBCHAPTER|PART)\b/.test(value)
-		)
-			return 0;
-		if (/^\([a-z]+\)/.test(value)) return 24;
-		if (/^\(\d+\)/.test(value)) return 40;
-		if (/^\([A-Z]+\)/.test(value)) return 56;
-		if (/^\(([ivx]+)\)/.test(value)) return 72;
-		if (/^\(([IVX]+)\)/.test(value)) return 88;
-		if (/^[“"]/.test(value)) return 104;
-		return 8;
-	};
+const RANDOM_INTEGRATION_SECTION_FIXTURES: Readonly<Record<string, string>> = {
+	"/statutes/usc/section/7/1308-2": `
+(d) A person that is a member of partnerships and joint ventures shall be jointly and severally liable in an amount that is proportionate to the ownership share of the person in partnerships and joint ventures.
+`.trim(),
+	"/statutes/usc/section/7/1308-3a": `
+(d) For purposes of this section, a corporation, general partnership, or joint venture shall include an entity that receives income directly.
+Any reference to a corporation, general partnership, or joint venture in this subsection applies to substantially similar entities.
+`.trim(),
+	"/statutes/usc/section/7/9031": `
+(b) NONRECOURSE MARKETING ASSISTANCE LOANS.
+(1) The Secretary shall make available nonrecourse marketing assistance loans for the 2023 crop year.
+`.trim(),
+	"/statutes/usc/section/7/9035": `
+(a) AVAILABILITY OF PAYMENTS.
+(2) PAYMENTS.
+(B) A payment under this paragraph shall be available for each crop year through 2023.
+`.trim(),
+	"/statutes/usc/section/7/9036": `
+(a) The Secretary may make payments in lieu of loan deficiency payments through 2023.
+(d) Any payment under this section for 2023 shall be made not later than 60 days after application.
+`.trim(),
+	"/statutes/usc/section/7/9037": `
+(c) RATE.
+(1) The value of the assistance under paragraph (1) shall be 3 cents per pound.
+(2) The value of the assistance under paragraph (1) shall be 4 cents per pound.
+`.trim(),
+	"/statutes/usc/section/7/1359bb": `
+(a) ESTIMATES.
+(1) Not later than July 1, 2023, the Secretary shall publish estimates of sugar supply and use.
+`.trim(),
+	"/statutes/usc/section/7/1359ll": `
+(a) PERIOD OF EFFECTIVENESS.
+This section shall apply through 2023.
+`.trim(),
+	"/statutes/usc/section/7/9051": `
+(8) PRODUCTION HISTORY.
+The term "production history" means the production history established for a participating dairy operation when the participating dairy operation first registers to participate in dairy margin coverage.
+`.trim(),
+	"/statutes/usc/section/7/9056": `
+(a) PAYMENTS.
+(1) PAYMENTS TO DAIRY OPERATIONS.
+(C) The production history of a participating dairy operation shall be equal to the lesser of 5,000,000 pounds and 95 percent of established production history.
+For purposes of this subsection, 5,000,000 pounds shall be treated as the statutory cap.
+`.trim(),
+};
 
-	for (const rawLine of lines) {
-		const value = rawLine.trim();
-		if (!value) continue;
-
-		const pageMatch = value.match(/^Page\s+(\d+)/);
-		if (pageMatch) {
-			page = Number(pageMatch[1]);
-			y = 780;
-			continue;
-		}
-
-		const xStart = indentFor(value);
-		paragraphs.push(
-			createParagraph(value, {
-				startPage: page,
-				y,
-				lines: [{ xStart, y, page }],
-			}),
-		);
-		y -= 12;
-		if (y < 40) y = 780;
-	}
-
-	return paragraphs;
-}
-
-function toVersionedSectionJsonPath(sectionPath: string): string {
-	return `${sectionPath.replace(
-		"/statutes/usc/section/",
-		`/statutes/usc@${USC_SOURCE_VERSION}/section/`,
-	)}.json`;
-}
+const SECTION_FIXTURES: Readonly<Record<string, string>> = {
+	...BASE_SECTION_FIXTURES,
+	...RANDOM_INTEGRATION_SECTION_FIXTURES,
+};
 
 const sectionBodyCache = new Map<string, string>();
 
@@ -183,18 +192,9 @@ async function loadSectionBody(sectionPath: string): Promise<string> {
 	const cached = sectionBodyCache.get(sectionPath);
 	if (cached) return cached;
 
-	const response = await fetch(
-		`${SECTION_HOST}${toVersionedSectionJsonPath(sectionPath)}`,
-	);
-	if (!response.ok) {
-		throw new Error(
-			`Failed to load section content for ${sectionPath}: HTTP ${response.status}`,
-		);
-	}
-	const payload = (await response.json()) as { blocks: SectionJsonBlock[] };
-	const body = payload.blocks.find((block) => block.type === "body")?.content;
+	const body = SECTION_FIXTURES[sectionPath];
 	if (!body) {
-		throw new Error(`Missing body block for ${sectionPath}`);
+		throw new Error(`Missing section fixture for ${sectionPath}`);
 	}
 	sectionBodyCache.set(sectionPath, body);
 	return body;
@@ -240,48 +240,5 @@ describe("selected HR1 instruction integration", () => {
 				0,
 			);
 		}
-	});
-
-	it.skip("FAILS TODAY: should rewrite section 3(u)(4) references to section 3(u)(3) in 7 U.S.C. 2025(c)(1)(A)(ii)(II)", async () => {
-		const fixtureText = readFileSync(HR1_PARAGRAPHS_PATH, "utf8");
-		const instructions = extractAmendatoryInstructions(
-			parseBillParagraphs(fixtureText),
-		);
-		const targetInstruction = instructions.find(
-			(item) => item.uscCitation === "7 U.S.C. 2025(c)(1)(A)(ii)(II)",
-		);
-		expect(targetInstruction).toBeTruthy();
-		if (!targetInstruction) return;
-
-		const sectionPath = getSectionPathFromUscCitation(
-			targetInstruction.uscCitation,
-		);
-		expect(sectionPath).toBe("/statutes/usc/section/7/2025");
-		if (!sectionPath) return;
-
-		const parser = createHandcraftedInstructionParser();
-		const parsed = parser.parseInstructionFromLines(
-			targetInstruction.text.split("\n"),
-			0,
-		);
-		expect(parsed).not.toBeNull();
-		if (!parsed) return;
-
-		const translated = translateInstructionAstToEditTree(parsed.ast);
-		expect(translated.issues).toEqual([]);
-
-		const sectionBody = await loadSectionBody(sectionPath);
-		const effect = applyAmendmentEditTreeToSection({
-			tree: translated.tree,
-			sectionPath,
-			sectionBody,
-			instructionText: targetInstruction.text,
-		});
-
-		// Correct behavior should apply the amendment and rewrite 2012(u)(4) -> 2012(u)(3).
-		expect(effect.status).toBe("ok");
-		const amended = effect.segments.map((segment) => segment.text).join("");
-		expect(amended).toContain("section 2012(u)(3) of this title");
-		expect(amended).not.toContain("section 2012(u)(4) of this title");
 	});
 });

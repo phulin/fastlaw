@@ -829,9 +829,10 @@ function parseSubLocationOrPlural(
 		? scopeKindFromPluralText(pluralKindNode.text)
 		: null;
 	if (!kind) return [];
-	const ids = findChildren(plural, GrammarAstNodeType.SubId).map((id) =>
+	const rawIds = findChildren(plural, GrammarAstNodeType.SubId).map((id) =>
 		normalizeSubId(id.text),
 	);
+	const ids = expandPluralIds(rawIds, kind, plural);
 	const refs = ids.map((label) => ({
 		kind,
 		path: [{ kind, label }],
@@ -845,6 +846,142 @@ function parseSubLocationOrPlural(
 		kind: ref.kind,
 		path: mergeScopePaths(container.path, ref.path),
 	}));
+}
+
+function expandPluralIds(
+	ids: string[],
+	kind: ScopeKind,
+	pluralNode: RuleAst<GrammarAstNodeType.SubLocationsPlural>,
+): string[] {
+	if (ids.length !== 2) return ids;
+	if (!/\bthrough\b/i.test(pluralNode.text)) return ids;
+	return expandRange(ids[0] ?? "", ids[1] ?? "", kind) ?? ids;
+}
+
+function expandRange(
+	start: string,
+	end: string,
+	kind: ScopeKind,
+): string[] | null {
+	const numeric = expandNumericRange(start, end);
+	if (numeric) return numeric;
+
+	if (kind === ScopeKind.Clause || kind === ScopeKind.Subclause) {
+		const roman = expandRomanRange(start, end);
+		if (roman) return roman;
+	}
+
+	return expandAlphaRange(start, end);
+}
+
+function expandNumericRange(start: string, end: string): string[] | null {
+	if (!/^\d+$/.test(start) || !/^\d+$/.test(end)) return null;
+	const from = Number(start);
+	const to = Number(end);
+	if (!Number.isInteger(from) || !Number.isInteger(to) || to < from)
+		return null;
+	const out: string[] = [];
+	for (let value = from; value <= to; value += 1) {
+		out.push(String(value));
+	}
+	return out;
+}
+
+function expandAlphaRange(start: string, end: string): string[] | null {
+	if (!/^[A-Za-z]+$/.test(start) || !/^[A-Za-z]+$/.test(end)) return null;
+	const startUpper = start.toUpperCase();
+	const endUpper = end.toUpperCase();
+	const from = alphaToInt(startUpper);
+	const to = alphaToInt(endUpper);
+	if (from === null || to === null || to < from) return null;
+	const out: string[] = [];
+	for (let value = from; value <= to; value += 1) {
+		const next = intToAlpha(value);
+		out.push(start === startUpper ? next : next.toLowerCase());
+	}
+	return out;
+}
+
+function alphaToInt(value: string): number | null {
+	let output = 0;
+	for (const char of value) {
+		const code = char.charCodeAt(0);
+		if (code < 65 || code > 90) return null;
+		output = output * 26 + (code - 64);
+	}
+	return output;
+}
+
+function intToAlpha(value: number): string {
+	let n = value;
+	let output = "";
+	while (n > 0) {
+		const remainder = (n - 1) % 26;
+		output = String.fromCharCode(65 + remainder) + output;
+		n = Math.floor((n - 1) / 26);
+	}
+	return output;
+}
+
+function expandRomanRange(start: string, end: string): string[] | null {
+	const startUpper = start.toUpperCase();
+	const endUpper = end.toUpperCase();
+	const from = romanToInt(startUpper);
+	const to = romanToInt(endUpper);
+	if (from === null || to === null || to < from) return null;
+	const out: string[] = [];
+	for (let value = from; value <= to; value += 1) {
+		const roman = intToRoman(value);
+		out.push(start === startUpper ? roman : roman.toLowerCase());
+	}
+	return out;
+}
+
+function romanToInt(value: string): number | null {
+	if (!/^[IVXLCDM]+$/.test(value)) return null;
+	const map = new Map<string, number>([
+		["I", 1],
+		["V", 5],
+		["X", 10],
+		["L", 50],
+		["C", 100],
+		["D", 500],
+		["M", 1000],
+	]);
+	let total = 0;
+	for (let i = 0; i < value.length; i += 1) {
+		const current = map.get(value[i] ?? "") ?? 0;
+		const next = map.get(value[i + 1] ?? "") ?? 0;
+		total += current < next ? -current : current;
+	}
+	return intToRoman(total) === value ? total : null;
+}
+
+function intToRoman(value: number): string {
+	const numerals: Array<[number, string]> = [
+		[1000, "M"],
+		[900, "CM"],
+		[500, "D"],
+		[400, "CD"],
+		[100, "C"],
+		[90, "XC"],
+		[50, "L"],
+		[40, "XL"],
+		[10, "X"],
+		[9, "IX"],
+		[5, "V"],
+		[4, "IV"],
+		[1, "I"],
+	];
+	let remaining = value;
+	let output = "";
+	for (const [amount, numeral] of numerals) {
+		while (remaining >= amount) {
+			output += numeral;
+			remaining -= amount;
+		}
+	}
+	return output;
 }
 
 function parseStructuralReferenceFromNode(

@@ -470,6 +470,47 @@ describe("translateInstructionAstToEditTree", () => {
 			expect(editNode.edit.before?.path[0]?.label).toBe("c");
 		}
 	});
+
+	it("expands through-ranges in plural in-location references", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended in subsections (a) through (c) by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+		if (locationNode.restriction.kind !== LocationRestrictionKind.In) {
+			throw new Error("Expected in-location restriction.");
+		}
+		expect(
+			locationNode.restriction.refs.map((ref) => ref.path[0]?.label),
+		).toEqual(["a", "b", "c"]);
+	});
+
+	it("keeps hyphen-separated redesignation endpoints as explicit pairs", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended by redesignating clauses (i)-(iii) as clauses (ii)-(iv), respectively.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const editNode = result.tree.children[0];
+		if (!editNode || editNode.type !== SemanticNodeType.Edit) {
+			throw new Error("Expected edit node.");
+		}
+		expect(editNode.edit.kind).toBe(UltimateEditKind.Redesignate);
+		if (editNode.edit.kind === UltimateEditKind.Redesignate) {
+			expect(editNode.edit.mappings).toHaveLength(2);
+			expect(
+				editNode.edit.mappings.map((mapping) => mapping.from.path[0]?.label),
+			).toEqual(["i", "iii"]);
+			expect(
+				editNode.edit.mappings.map((mapping) => mapping.to.path[0]?.label),
+			).toEqual(["ii", "iv"]);
+		}
+	});
 });
 
 describe.skipIf(!hasHr1Fixture)(

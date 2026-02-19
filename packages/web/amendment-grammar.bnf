@@ -128,6 +128,8 @@ sub_location ::= sub_name " " sub_id
 sub_locations_plural ::= sub_name_plural " " sub_id " and " sub_id
   | sub_name_plural " " sub_id ( ", " sub_id )* ", and " sub_id
   | sub_name_plural " " sub_id " through " sub_id
+  | sub_name_plural " " sub_id "-" sub_id
+  | sub_name_plural " " sub_id " - " sub_id
 
 sub_name ::= "subsection" | "paragraph" | "subparagraph" | "clause" | "subclause" | "item" | "subitem"
 sub_name_plural ::= "subsections" | "paragraphs" | "subparagraphs" | "clauses" | "subclauses" | "items" | "subitems"

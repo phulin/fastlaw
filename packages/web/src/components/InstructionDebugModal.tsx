@@ -19,7 +19,7 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 				const effect = item.amendmentEffect;
 				const workflowDebug = item.workflowDebug;
 				const instructionPageRange = `${instruction.startPage}-${instruction.endPage}`;
-				const finalRenderedMarkdown = effect
+				const highlightedSnippet = effect
 					? buildHighlightedSnippetMarkdown(effect)
 					: null;
 
@@ -296,11 +296,16 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 									<section class="pdf-instruction-modal-section">
 										<h3>Final Rendered Markdown</h3>
 										<pre class="pdf-instruction-modal-code">
-											{finalRenderedMarkdown}
+											{highlightedSnippet?.markdown ?? ""}
 										</pre>
 										<div
 											class="pdf-instruction-modal-markdown markdown"
-											innerHTML={renderMarkdown(finalRenderedMarkdown ?? "")}
+											innerHTML={renderMarkdown(
+												highlightedSnippet?.markdown ?? "",
+												{
+													replacements: highlightedSnippet?.replacements ?? [],
+												},
+											)}
 										/>
 									</section>
 								</Show>

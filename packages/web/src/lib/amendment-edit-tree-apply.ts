@@ -659,6 +659,12 @@ function getLineStarts(text: string): number[] {
 	return starts;
 }
 
+function countLeadingQuoteDepth(line: string): number {
+	const match = line.match(/^(>\s*)+/);
+	if (!match) return 0;
+	return (match[0].match(/>/g) ?? []).length;
+}
+
 function resolveScopeRange(
 	text: string,
 	target: HierarchyLevel[] | undefined,
@@ -684,7 +690,10 @@ function resolveScopeRange(
 		endLine >= lineStarts.length
 			? text.length
 			: (lineStarts[endLine] ?? text.length);
-	return { start, end, targetLevel: node.level };
+	const firstLine =
+		parsed.paragraphs[node.startParagraph]?.text.split("\n")[0] ?? "";
+	const targetLevel = countLeadingQuoteDepth(firstLine);
+	return { start, end, targetLevel };
 }
 
 function previewRange(text: string, range: ScopeRange | null): string | null {

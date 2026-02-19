@@ -6,12 +6,8 @@ This document defines the end-state and migration plan for moving PDF amendment 
 
 `paragraphs -> parsed instruction -> instruction AST -> semantic edit tree -> applied amendment effect`
 
-The transition removes behavioral dependency on:
-
-- `packages/web/src/lib/amendatory-instructions.ts`
-- `packages/web/src/lib/amendment-effects.ts`
-
-for instruction targeting/scope derivation in the new path.
+The transition removes behavioral dependency on legacy instruction extraction
+and legacy targeting helpers in the new path.
 
 ## Goals
 
@@ -144,7 +140,7 @@ No dependency on legacy instruction object shape in UI-facing contracts.
 
 ## Remove (after migration)
 
-1. `extractAmendatoryInstructions` usage in `PdfApp` parser-native path.
+1. Legacy instruction extraction usage in `PdfApp` parser-native path.
 2. Legacy-targeting helper usage in parser-native path:
    - citation extraction from raw prose
    - legacy legacy root scope derivation
@@ -270,6 +266,6 @@ Exit criteria:
 ## Acceptance Criteria For Full Transition
 
 1. Active PDF amendment pipeline uses only parser/AST/edit-tree targeting metadata.
-2. No active-path dependency on `amendatory-instructions`/`amendment-effects` targeting helpers.
+2. No active-path dependency on legacy extraction/targeting helpers.
 3. `targetScopePath` invariant holds for all instructions that proceed to apply.
 4. Unsupported states are explicit, observable, and test-covered.

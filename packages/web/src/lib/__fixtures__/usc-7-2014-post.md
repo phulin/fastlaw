@@ -278,8 +278,7 @@
 
 > > > > The State agency may make a household with extremely low shelter costs ineligible for the alternative deduction under clause (i).
 
-> > > **(E)** **RESTRICTIONS ON INTERNET EXPENSES**
-> > > Any service fee associated with internet connection shall not be used in computing the excess shelter expense deduction under this paragraph.
+> > > (E) RESTRICTIONS ON INTERNET EXPENSES.—Any service fee associated with internet connection shall not be used in computing the excess shelter expense deduction under this paragraph.
 
 **(f)** **Calculation of household income; prospective or retrospective accounting basis; consistency**
 
