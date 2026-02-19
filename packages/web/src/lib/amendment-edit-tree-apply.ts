@@ -80,6 +80,18 @@ type InstructionOperation =
 			target?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			content?: string;
+	  }
+	| {
+			type: "redesignate";
+			target: HierarchyLevel[];
+			fromLabel: string;
+			toLabel: string;
+	  }
+	| {
+			type: "move";
+			fromTargets: HierarchyLevel[][];
+			beforeTarget?: HierarchyLevel[];
+			afterTarget?: HierarchyLevel[];
 	  };
 
 interface InstructionNode {
@@ -95,6 +107,20 @@ function getOperationStrikingContent(
 		return operation.strikingContent ?? null;
 	}
 	return null;
+}
+
+function getOperationTargetPath(
+	operation: InstructionOperation,
+): HierarchyLevel[] | undefined {
+	if ("target" in operation) return operation.target;
+	return undefined;
+}
+
+function getOperationSentenceOrdinal(
+	operation: InstructionOperation,
+): number | undefined {
+	if ("sentenceOrdinal" in operation) return operation.sentenceOrdinal;
+	return undefined;
 }
 
 type AmendmentSegmentKind = "unchanged" | "deleted" | "inserted";
@@ -447,9 +473,53 @@ function flattenEdit(
 			};
 		}
 		case UltimateEditKind.Redesignate:
-			return { nodes: [], unsupportedReasons: ["redesignate_not_supported"] };
-		case UltimateEditKind.Move:
-			return { nodes: [], unsupportedReasons: ["move_not_supported"] };
+			return {
+				nodes: edit.mappings.map((mapping) => {
+					const fromPath = targetWithContext(refToHierarchyPath(mapping.from));
+					const toLabel =
+						mapping.to.path[mapping.to.path.length - 1]?.label ?? "";
+					const fromLabel =
+						mapping.from.path[mapping.from.path.length - 1]?.label ?? "";
+					return makeNode(
+						{
+							type: "redesignate",
+							target: fromPath,
+							fromLabel,
+							toLabel,
+						},
+						`redesignating ${fromLabel} as ${toLabel}`,
+					);
+				}),
+				unsupportedReasons: [],
+			};
+		case UltimateEditKind.Move: {
+			const fromTargets = edit.from.map((ref) =>
+				targetWithContext(refToHierarchyPath(ref)),
+			);
+			const beforeTarget = edit.before
+				? targetWithContext(refToHierarchyPath(edit.before))
+				: undefined;
+			const afterTarget = edit.after
+				? targetWithContext(refToHierarchyPath(edit.after))
+				: undefined;
+			if (fromTargets.length === 0 || (!beforeTarget && !afterTarget)) {
+				return { nodes: [], unsupportedReasons: ["move_unsupported_target"] };
+			}
+			return {
+				nodes: [
+					makeNode(
+						{
+							type: "move",
+							fromTargets,
+							beforeTarget,
+							afterTarget,
+						},
+						"moving target block",
+					),
+				],
+				unsupportedReasons: [],
+			};
+		}
 	}
 }
 
@@ -627,6 +697,26 @@ function applyPatch(text: string, patch: TextPatch): string {
 	return `${text.slice(0, patch.start)}${patch.inserted}${text.slice(patch.end)}`;
 }
 
+function insertMovedBlock(text: string, index: number, block: string): string {
+	const beforeChar = text[index - 1] ?? "";
+	const afterChar = text[index] ?? "";
+	const prefix = index === 0 || beforeChar === "\n" ? "" : "\n";
+	const suffix = index >= text.length || afterChar === "\n" ? "" : "\n";
+	return `${text.slice(0, index)}${prefix}${block}${suffix}${text.slice(index)}`;
+}
+
+function adjustIndexForRemovedRanges(
+	index: number,
+	removedRanges: Array<{ start: number; end: number }>,
+): number | null {
+	let adjusted = index;
+	for (const range of removedRanges) {
+		if (range.start < index && index < range.end) return null;
+		if (range.end <= index) adjusted -= range.end - range.start;
+	}
+	return adjusted;
+}
+
 function rankForMarkerLabel(label: string): number {
 	if (/^[a-z]+$/.test(label) && !/^[ivxlcdm]+$/.test(label)) return 1;
 	if (/^\d+$/.test(label)) return 2;
@@ -767,7 +857,7 @@ export function applyAmendmentEditTreeToSection(
 	const operationAttempts: OperationMatchAttempt[] = [];
 
 	for (const node of flattened.nodes) {
-		const targetPath = node.operation.target;
+		const targetPath = getOperationTargetPath(node.operation);
 		const range = resolveScopeRange(workingText, targetPath);
 		const hasExplicitTargetPath = Boolean(targetPath && targetPath.length > 0);
 		const targetPathText =
@@ -775,10 +865,11 @@ export function applyAmendmentEditTreeToSection(
 				? targetPath.map((item) => `${item.type}:${item.val}`).join(" > ")
 				: null;
 
-		if (range && typeof node.operation.sentenceOrdinal === "number") {
+		const sentenceOrdinal = getOperationSentenceOrdinal(node.operation);
+		if (range && typeof sentenceOrdinal === "number") {
 			const sentenceRange = resolveSentenceOrdinalRange(
 				workingText.slice(range.start, range.end),
-				node.operation.sentenceOrdinal,
+				sentenceOrdinal,
 			);
 			if (sentenceRange) {
 				range.start += sentenceRange.start;
@@ -1006,6 +1097,68 @@ export function applyAmendmentEditTreeToSection(
 					end: insertAt,
 					deleted: "",
 					inserted: `${prefix}${formatted}${suffix}`,
+				};
+				break;
+			}
+			case "redesignate": {
+				const marker = `(${node.operation.fromLabel})`;
+				const replacement = `(${node.operation.toLabel})`;
+				const localIndex = scopedText.indexOf(marker);
+				attempt.searchText = marker;
+				attempt.searchTextKind = "striking";
+				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
+				if (localIndex < 0) break;
+				patch = {
+					start: range.start + localIndex,
+					end: range.start + localIndex + marker.length,
+					deleted: marker,
+					inserted: replacement,
+				};
+				break;
+			}
+			case "move": {
+				const fromRanges = node.operation.fromTargets
+					.map((target) => resolveScopeRange(workingText, target))
+					.filter((resolved): resolved is ScopeRange => resolved !== null)
+					.map((resolved) => ({ start: resolved.start, end: resolved.end }));
+				if (fromRanges.length !== node.operation.fromTargets.length) break;
+				fromRanges.sort((left, right) => left.start - right.start);
+				const movedBlock = fromRanges
+					.map((resolved) =>
+						workingText.slice(resolved.start, resolved.end).trim(),
+					)
+					.join("\n");
+				if (movedBlock.length === 0) break;
+
+				const anchorTarget =
+					node.operation.afterTarget ?? node.operation.beforeTarget;
+				if (!anchorTarget) break;
+				const anchorRange = resolveScopeRange(workingText, anchorTarget);
+				if (!anchorRange) break;
+				const originalInsertIndex = node.operation.beforeTarget
+					? anchorRange.start
+					: anchorRange.end;
+				let textWithoutMoved = workingText;
+				for (let index = fromRanges.length - 1; index >= 0; index -= 1) {
+					const segment = fromRanges[index];
+					if (!segment) continue;
+					textWithoutMoved = `${textWithoutMoved.slice(0, segment.start)}${textWithoutMoved.slice(segment.end)}`;
+				}
+				const adjustedInsertIndex = adjustIndexForRemovedRanges(
+					originalInsertIndex,
+					fromRanges,
+				);
+				if (adjustedInsertIndex === null) break;
+				const movedText = insertMovedBlock(
+					textWithoutMoved,
+					adjustedInsertIndex,
+					movedBlock,
+				);
+				patch = {
+					start: 0,
+					end: workingText.length,
+					deleted: workingText,
+					inserted: movedText,
 				};
 				break;
 			}

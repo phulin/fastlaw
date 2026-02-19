@@ -18,30 +18,13 @@ import { PdfUploadDropzone } from "./components/PdfUploadDropzone";
 import { PdfWorkspace } from "./components/PdfWorkspace";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/pdf-base.css";
-import { buildPageItemsFromParagraphs } from "./lib/pdf/page-items";
-import type { Paragraph } from "./lib/text-extract";
-import { extractParagraphs } from "./lib/text-extract";
-import type { NodeContent, SourceVersionRecord } from "./lib/types";
+import type { ProcessingWorkerResponse } from "./lib/pdf/processing-worker-types";
+import type { SourceVersionRecord } from "./lib/types";
 
 const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1078;
-
-interface SectionBodiesResponse {
-	results: Array<
-		| {
-				path: string;
-				status: "ok";
-				content: NodeContent;
-		  }
-		| {
-				path: string;
-				status: "not_found" | "error";
-				error?: string;
-		  }
-	>;
-}
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -98,37 +81,6 @@ const hashFile = async (file: File): Promise<string> => {
 	return normalizeHashKey(
 		hashArray.map((b) => b.toString(16).padStart(2, "0")).join(""),
 	);
-};
-
-const fetchSectionBodies = async (
-	paths: string[],
-	sourceVersionId?: string,
-): Promise<Map<string, NodeContent>> => {
-	const requestBody: {
-		paths: string[];
-		sourceVersionId?: string;
-	} = { paths };
-	if (sourceVersionId && sourceVersionId.length > 0) {
-		requestBody.sourceVersionId = sourceVersionId;
-	}
-
-	const response = await fetch("/api/statutes/section-bodies", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(requestBody),
-	});
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch section bodies: HTTP ${response.status}`);
-	}
-
-	const payload = (await response.json()) as SectionBodiesResponse;
-	const sectionBodies = new Map<string, NodeContent>();
-	for (const result of payload.results) {
-		if (result.status !== "ok") continue;
-		sectionBodies.set(result.path, result.content);
-	}
-	return sectionBodies;
 };
 
 interface SourceVersionsResponse {
@@ -221,6 +173,7 @@ export default function PdfApp() {
 	let initialScrollTargetPage = 1;
 	let hasAppliedInitialScroll = false;
 	let processVersion = 0;
+	let processingWorker: Worker | null = null;
 
 	const rowVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
 		get count() {
@@ -268,6 +221,8 @@ export default function PdfApp() {
 	// observers from the now-removed DOM element.
 	onCleanup(() => {
 		setScrollContainer(null);
+		processingWorker?.terminate();
+		processingWorker = null;
 		if (typeof window !== "undefined") {
 			window.removeEventListener("hashchange", handleHashChange);
 		}
@@ -340,8 +295,13 @@ export default function PdfApp() {
 	};
 
 	const reset = (keepHash = false) => {
+		processingWorker?.terminate();
+		processingWorker = null;
 		setFile(null);
 		setPageRows([]);
+		setPageLayouts([]);
+		setAllItems([]);
+		setRenderContext(null);
 		setStatus("idle");
 		setError(null);
 		setFileName("");
@@ -466,6 +426,68 @@ export default function PdfApp() {
 		setStatus("error");
 	};
 
+	const startProcessingWorker = (
+		activeProcessVersion: number,
+		fileBuffer: ArrayBuffer,
+		targetPage: number,
+		sourceVersionId: string,
+	) => {
+		processingWorker?.terminate();
+		const worker = new Worker(
+			new URL("./lib/pdf/processing.worker.ts", import.meta.url),
+			{ type: "module" },
+		);
+		processingWorker = worker;
+
+		worker.addEventListener(
+			"message",
+			(event: MessageEvent<ProcessingWorkerResponse>) => {
+				const message = event.data;
+				if (message.jobId !== activeProcessVersion) return;
+				if (activeProcessVersion !== processVersion) return;
+				if (message.type === "layouts") {
+					setPageLayouts(message.layouts);
+					requestAnimationFrame(() => rowVirtualizer.measure());
+					return;
+				}
+				if (message.type === "windowItems") {
+					setAllItems(message.payload.items);
+					return;
+				}
+				if (message.type === "allItems") {
+					setAllItems(message.payload.items);
+					return;
+				}
+				if (message.type === "error") {
+					console.error("Error extracting text:", message.error);
+					setError(message.error);
+					setStatus("error");
+				}
+			},
+		);
+
+		worker.addEventListener("error", (event) => {
+			if (activeProcessVersion !== processVersion) return;
+			const errorMessage = event.message || "Worker failed";
+			console.error("Processing worker error:", errorMessage);
+			setError(errorMessage);
+			setStatus("error");
+		});
+
+		worker.postMessage(
+			{
+				type: "start",
+				jobId: activeProcessVersion,
+				fileBuffer,
+				targetPage,
+				sourceVersionId,
+				numAmendColors: NUM_AMEND_COLORS,
+				windowRadius: 4,
+			},
+			[fileBuffer],
+		);
+	};
+
 	const processFile = async (
 		selectedFile: File,
 		shouldPersist = true,
@@ -506,6 +528,7 @@ export default function PdfApp() {
 			}
 
 			const arrayBuffer = await selectedFile.arrayBuffer();
+			const workerBuffer = arrayBuffer.slice(0);
 			const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
 			currentPdf = await loadingTask.promise;
 			if (!currentPdf) {
@@ -525,74 +548,13 @@ export default function PdfApp() {
 				requestAnimationFrame(() => resolve()),
 			);
 
-			// Pre-calculate page layouts
-			const layouts: PageLayout[] = [];
-			let currentOffset = 0;
-			const PAGE_PADDING_TOP = 24;
-			const PAGE_PADDING_BOTTOM = 24;
-
-			// We need to fetch all page viewports to know heights
-			// This might be slow for massive PDFs, but necessary for global layout
-			const currentPdfNonNull: PDFDocumentProxy = currentPdf;
-			void Promise.all(
-				Array.from({ length: currentPdfNonNull.numPages }, (_, i) =>
-					currentPdfNonNull.getPage(i + 1),
-				),
-			).then((pages) => {
-				if (activeProcessVersion !== processVersion) return;
-				const baseScale = 1.3; // Match PageRow scale
-
-				for (const page of pages) {
-					const viewport = page.getViewport({ scale: baseScale });
-
-					layouts.push({
-						pageOffset: currentOffset,
-						pageHeight: viewport.height,
-						pageWidth: viewport.width,
-					});
-					currentOffset +=
-						viewport.height + PAGE_PADDING_TOP + PAGE_PADDING_BOTTOM;
-				}
-				setPageLayouts(layouts);
-			});
-
 			setupPageRows();
-			const pdf = currentPdf;
-			const sectionBodyCache = new Map<string, NodeContent>();
-
-			const applyParagraphs = async (allParagraphs: Paragraph[]) => {
-				const newItems = await buildPageItemsFromParagraphs({
-					paragraphs: allParagraphs,
-					sectionBodyCache,
-					sourceVersionId: selectedUscSourceVersionId(),
-					numAmendColors: NUM_AMEND_COLORS,
-					fetchSectionBodies,
-				});
-				if (activeProcessVersion !== processVersion) return;
-				setAllItems(newItems);
-			};
-
-			const windowStart = Math.max(1, targetPage - 4);
-			const windowEnd = Math.min(pdf.numPages, targetPage + 4);
-
-			void extractParagraphs(pdf, {
-				startPage: windowStart,
-				endPage: windowEnd,
-			})
-				.then((windowParagraphs) => {
-					return applyParagraphs(windowParagraphs);
-				})
-				.then(() => {
-					return extractParagraphs(pdf);
-				})
-				.then((allParagraphs) => {
-					return applyParagraphs(allParagraphs);
-				})
-				.catch((err: unknown) => {
-					console.error("Error extracting text:", err);
-					setError(err instanceof Error ? err.message : String(err));
-					setStatus("error");
-				});
+			startProcessingWorker(
+				activeProcessVersion,
+				workerBuffer,
+				targetPage,
+				selectedUscSourceVersionId(),
+			);
 			applyInitialScroll(targetPage);
 		} catch (err: unknown) {
 			console.error(err);
