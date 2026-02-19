@@ -283,9 +283,6 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 														instructionItem.instruction,
 														locationMarkers,
 													)}
-													instructionMarkdown={renderInstructionMarkdown(
-														instructionItem.instruction,
-													)}
 												/>
 											</div>
 										) : (

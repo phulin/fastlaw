@@ -6,70 +6,116 @@ interface TextReplacementRange {
 	deletedText: string;
 }
 
-function lineStartsForText(text: string): number[] {
-	const starts = [0];
-	for (let index = 0; index < text.length; index += 1) {
-		if (text[index] === "\n") {
-			starts.push(index + 1);
-		}
-	}
-	return starts;
+interface TextParagraphRange {
+	start: number;
+	end: number;
 }
 
-function lineIndexForPosition(lineStarts: number[], position: number): number {
-	let low = 0;
-	let high = lineStarts.length - 1;
-	while (low <= high) {
-		const mid = Math.floor((low + high) / 2);
-		if (lineStarts[mid] <= position) {
-			low = mid + 1;
-		} else {
-			high = mid - 1;
+function buildHtmlParagraphRanges(text: string): TextParagraphRange[] {
+	const matches = [...text.matchAll(/<p\b[^>]*>[\s\S]*?<\/p>/gi)];
+	return matches
+		.map((match) => {
+			if (match.index === undefined) return null;
+			return {
+				start: match.index,
+				end: match.index + match[0].length,
+			};
+		})
+		.filter((range): range is TextParagraphRange => range !== null);
+}
+
+function buildMarkdownParagraphRanges(text: string): TextParagraphRange[] {
+	const ranges: TextParagraphRange[] = [];
+	let paragraphStart = 0;
+	for (const match of text.matchAll(/\n\s*\n+/g)) {
+		const splitStart = match.index;
+		if (splitStart === undefined) continue;
+		if (splitStart > paragraphStart) {
+			ranges.push({ start: paragraphStart, end: splitStart });
+		}
+		paragraphStart = splitStart + match[0].length;
+	}
+	if (paragraphStart < text.length) {
+		ranges.push({ start: paragraphStart, end: text.length });
+	}
+	return ranges;
+}
+
+function buildParagraphRanges(text: string): TextParagraphRange[] {
+	if (text.length === 0) return [];
+	const htmlRanges = buildHtmlParagraphRanges(text);
+	if (htmlRanges.length > 0) return htmlRanges;
+	const markdownRanges = buildMarkdownParagraphRanges(text);
+	if (markdownRanges.length > 0) return markdownRanges;
+	return [{ start: 0, end: text.length }];
+}
+
+function paragraphIndexForPosition(
+	paragraphs: TextParagraphRange[],
+	position: number,
+): number {
+	if (paragraphs.length === 0) return -1;
+	const clampedPosition = Math.max(0, position);
+	for (let index = 0; index < paragraphs.length; index += 1) {
+		const paragraph = paragraphs[index];
+		if (!paragraph) continue;
+		if (clampedPosition >= paragraph.start && clampedPosition < paragraph.end) {
+			return index;
 		}
 	}
-	return Math.max(0, high);
+	for (let index = 0; index < paragraphs.length; index += 1) {
+		const paragraph = paragraphs[index];
+		if (!paragraph) continue;
+		if (clampedPosition < paragraph.start) return index;
+	}
+	return paragraphs.length - 1;
 }
 
 function getContextWindows(
 	text: string,
 	ranges: { start: number; end: number }[],
-	contextLines: number,
+	contextParagraphs: number,
 ): { start: number; end: number }[] {
 	if (text.length === 0) return [];
 	if (ranges.length === 0) return [{ start: 0, end: text.length }];
 
-	const starts = lineStartsForText(text);
-	const lastLineIndex = starts.length - 1;
-	const lineWindows = ranges.map((range) => {
+	const paragraphs = buildParagraphRanges(text);
+	if (paragraphs.length === 0) return [{ start: 0, end: text.length }];
+	const paragraphWindows = ranges.map((range) => {
 		const safeStart = Math.max(0, Math.min(range.start, text.length));
 		const safeEnd = Math.max(safeStart, Math.min(range.end, text.length));
-		const startLine = lineIndexForPosition(starts, safeStart);
-		const endPosition =
-			safeEnd > safeStart ? Math.max(0, safeEnd - 1) : safeStart;
-		const endLine = lineIndexForPosition(starts, endPosition);
+		const startParagraph = paragraphIndexForPosition(paragraphs, safeStart);
+		const endPosition = safeEnd > safeStart ? safeEnd - 1 : safeStart;
+		const endParagraph = paragraphIndexForPosition(paragraphs, endPosition);
 		return {
-			startLine: Math.max(0, startLine - contextLines),
-			endLine: Math.min(lastLineIndex, endLine + contextLines),
+			startParagraph: Math.max(0, startParagraph - contextParagraphs),
+			endParagraph: Math.min(
+				paragraphs.length - 1,
+				endParagraph + contextParagraphs,
+			),
 		};
 	});
-	lineWindows.sort((a, b) => a.startLine - b.startLine);
+	paragraphWindows.sort((a, b) => a.startParagraph - b.startParagraph);
 
-	const mergedLineWindows: { startLine: number; endLine: number }[] = [];
-	for (const window of lineWindows) {
-		const previous = mergedLineWindows[mergedLineWindows.length - 1];
-		if (!previous || window.startLine > previous.endLine + 1) {
-			mergedLineWindows.push(window);
+	const mergedParagraphWindows: {
+		startParagraph: number;
+		endParagraph: number;
+	}[] = [];
+	for (const window of paragraphWindows) {
+		const previous = mergedParagraphWindows[mergedParagraphWindows.length - 1];
+		if (!previous || window.startParagraph > previous.endParagraph + 1) {
+			mergedParagraphWindows.push(window);
 			continue;
 		}
-		previous.endLine = Math.max(previous.endLine, window.endLine);
+		previous.endParagraph = Math.max(
+			previous.endParagraph,
+			window.endParagraph,
+		);
 	}
 
-	return mergedLineWindows.map((window) => ({
-		start: starts[window.startLine],
-		end:
-			window.endLine + 1 < starts.length
-				? starts[window.endLine + 1]
-				: text.length,
+	return mergedParagraphWindows.map((window) => ({
+		start: paragraphs[window.startParagraph]?.start ?? 0,
+		end: paragraphs[window.endParagraph]?.end ?? text.length,
 	}));
 }
 
@@ -80,7 +126,7 @@ export interface HighlightedSnippetMarkdown {
 
 export function buildHighlightedSnippetMarkdown(
 	effect: AmendmentEffect,
-	contextLines = 5,
+	contextParagraphs = 5,
 ): HighlightedSnippetMarkdown {
 	const unchanged = effect.segments.find(
 		(segment) => segment.kind === "unchanged",
@@ -93,7 +139,11 @@ export function buildHighlightedSnippetMarkdown(
 		};
 	}
 	const resolvedChanges = effect.replacements ?? [];
-	const snippetWindows = getContextWindows(text, resolvedChanges, contextLines);
+	const snippetWindows = getContextWindows(
+		text,
+		resolvedChanges,
+		contextParagraphs,
+	);
 
 	const snippets = snippetWindows.map((window) => {
 		const snippet = text.slice(window.start, window.end);

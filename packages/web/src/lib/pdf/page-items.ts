@@ -37,11 +37,21 @@ const buildUnsupportedEffect = (
 		changes: [],
 		deleted: [],
 		inserted: [],
+		applySummary: {
+			partiallyApplied: false,
+			failedItems: [],
+		},
 		debug: {
 			sectionTextLength: sectionBodyText.length,
 			operationCount: 0,
 			operationAttempts: [],
 			failureReason: "instruction_parse_or_translate_failed",
+			pipeline: {
+				resolvedOperationCount: 0,
+				plannedPatchCount: 0,
+				resolutionIssueCount: 0,
+				resolutionIssues: [],
+			},
 		},
 	};
 };

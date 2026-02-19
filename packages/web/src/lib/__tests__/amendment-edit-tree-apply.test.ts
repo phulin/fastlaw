@@ -111,6 +111,12 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.status).toBe("ok");
 		expect(effect.segments[0]?.text).toBe("For 2031 and 2031 only.");
 		expect(effect.segments[0]?.text).not.toContain("2023");
+		expect(effect.replacements).toHaveLength(2);
+		expect(
+			effect.replacements?.every(
+				(replacement) => replacement.deletedText === "2023",
+			),
+		).toBe(true);
 	});
 
 	it("applies Strike edits at each place when requested", () => {
@@ -143,6 +149,90 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.status).toBe("ok");
 		expect(effect.segments[0]?.text).toBe(" alpha  beta ");
 		expect(effect.segments[0]?.text).not.toContain("x");
+	});
+
+	it("records partial apply failed items for no-match operations", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: { kind: SearchTargetKind.Text, text: "old" },
+						insert: "new",
+					},
+				},
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: { kind: SearchTargetKind.Text, text: "missing" },
+						insert: "new",
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "old text",
+			instructionText: "Section 1 is amended by striking and inserting.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.applySummary.partiallyApplied).toBe(true);
+		expect(effect.applySummary.failedItems).toHaveLength(1);
+		expect(effect.applySummary.failedItems[0]?.reasonKind).toBe("no_match");
+		expect(effect.applySummary.failedItems[0]?.operationIndex).toBe(1);
+	});
+
+	it("records partial apply failed items for unresolved targets", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "z" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: { kind: SearchTargetKind.Text, text: "old" },
+								insert: "new",
+							},
+						},
+					],
+				},
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: { kind: SearchTargetKind.Text, text: "old" },
+						insert: "new",
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "old text",
+			instructionText: "Section 1 is amended by striking and inserting.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.applySummary.partiallyApplied).toBe(true);
+		expect(effect.applySummary.failedItems).toHaveLength(1);
+		expect(effect.applySummary.failedItems[0]?.reasonKind).toBe(
+			"target_unresolved",
+		);
+		expect(effect.applySummary.failedItems[0]?.operationIndex).toBe(0);
 	});
 
 	it("applies Insert edits", () => {
@@ -749,6 +839,41 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		);
 	});
 
+	it("applies add-at-end when target path only specifies the section", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Insert,
+						content: "(c) Newly added subsection.",
+						atEndOf: {
+							kind: ScopeKind.Section,
+							path: [{ kind: ScopeKind.Section, label: "1" }],
+						},
+					},
+				},
+			],
+		};
+
+		const sectionBody = "(a) Alpha.\n(b) Beta.";
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody,
+			instructionText:
+				"Section 1 is amended by adding at the end the following:",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain("(c) Newly added subsection.");
+		expect(effect.debug.operationAttempts[0]?.hasExplicitTargetPath).toBe(
+			false,
+		);
+	});
+
 	it("appends add-at-end content after existing child markers within a target paragraph", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
@@ -795,6 +920,121 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(indexOfB).toBeGreaterThanOrEqual(0);
 		expect(addAtEndAttempt?.scopedRange?.preview).toContain("(A) IN GENERAL");
 		expect(indexOfB).toBeGreaterThan(indexOfA);
+	});
+
+	it("does not widen strike-insert replacement to ancestor scope when replacing a single paragraph", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "9037",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "c" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: {
+									ref: {
+										kind: ScopeKind.Paragraph,
+										path: [{ kind: ScopeKind.Paragraph, label: "2" }],
+									},
+								},
+								insert:
+									"(2) VALUE OF ASSISTANCE.—The value of the assistance provided under paragraph (1) shall be—\n(A) for the period beginning on August 1, 2013, and ending on July 31, 2025, 3 cents per pound; and\n(B) beginning on August 1, 2025, 5 cents per pound.",
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"**(c)** **RATE.**",
+			"> **(1)** The value of the assistance under paragraph (1) shall be 3 cents per pound.",
+			"> **(2)** The value of the assistance under paragraph (1) shall be 4 cents per pound.",
+			"> **(3)** No overlap.",
+		].join("\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/7/9037",
+			sectionBody,
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.changes[0]?.deleted).not.toContain("**(c)** **RATE.**");
+		expect(effect.changes[0]?.deleted).not.toContain("> **(1)**");
+		expect(effect.changes[0]?.deleted).toContain("> **(2)**");
+		const result = effect.segments[0]?.text ?? "";
+		expect(result).toContain("**(c)** **RATE.**");
+		expect(result).toContain("> **(1)**");
+		expect(result).toContain("> (2) VALUE OF ASSISTANCE.—");
+		expect(result).toContain("5 cents per pound.\n> **(3)** No overlap.");
+	});
+
+	it("does not widen strike-insert replacement in unquoted hierarchy layouts", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "9037",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "c" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: {
+									ref: {
+										kind: ScopeKind.Paragraph,
+										path: [{ kind: ScopeKind.Paragraph, label: "2" }],
+									},
+								},
+								insert:
+									"(2) VALUE OF ASSISTANCE.—The value of the assistance provided under paragraph (1) shall be—\n(A) for the period beginning on August 1, 2013, and ending on July 31, 2025, 3 cents per pound; and\n(B) beginning on August 1, 2025, 5 cents per pound.",
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"(b) QUOTA ENTRY PERIOD.",
+			"(3) No overlap",
+			"Notwithstanding paragraph (2), a quota period may not be established that overlaps an existing quota period or a special quota period established under subsection (a).",
+			"(c) Economic adjustment assistance for textile mills",
+			"(1) In general",
+			"Subject to paragraph (2), the Secretary shall, on a monthly basis, make economic adjustment assistance available...",
+			"(2) VALUE OF ASSISTANCE.—The value of the assistance provided under paragraph (1) shall be—",
+			"(A) for the period beginning on August 1, 2013, and ending on July 31, 2025, 3 cents per pound; and",
+			"(B) beginning on August 1, 2025, 5 cents per pound.",
+			"(3) Allowable purposes",
+			"Economic adjustment assistance under this subsection shall be made available only...",
+		].join("\n\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/7/9037",
+			sectionBody,
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.changes[0]?.deleted).not.toContain(
+			"(c) Economic adjustment assistance for textile mills",
+		);
+		expect(effect.changes[0]?.deleted).toContain(
+			"(2) VALUE OF ASSISTANCE.—The value of the assistance provided under paragraph (1) shall be—",
+		);
+		const result = effect.segments[0]?.text ?? "";
+		expect(result).toContain(
+			"(c) Economic adjustment assistance for textile mills",
+		);
+		expect(result).toContain("(1) In general");
+		expect(result).toContain("(3) Allowable purposes");
 	});
 });
 
@@ -944,6 +1184,178 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 		};
 		const effect = applyVariant(tree, "old text. second sentence.");
 		expect(effect.status).toBe("ok");
+	});
+
+	it("applies sentence-last location restriction", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.LocationRestriction,
+					restriction: {
+						kind: LocationRestrictionKind.SentenceLast,
+					},
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: { kind: SearchTargetKind.Text, text: "old" },
+								insert: "new",
+							},
+						},
+					],
+				},
+			],
+		};
+		const effect = applyVariant(tree, "First sentence old. Last sentence old.");
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toBe(
+			"First sentence old. Last sentence new.",
+		);
+	});
+
+	it("applies matter-preceding as a true location restriction boundary", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.LocationRestriction,
+					restriction: {
+						kind: LocationRestrictionKind.MatterPreceding,
+						ref: {
+							kind: ScopeKind.Paragraph,
+							path: [{ kind: ScopeKind.Paragraph, label: "2" }],
+						},
+					},
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: { kind: SearchTargetKind.Text, text: "old text" },
+								insert: "new text",
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyVariant(
+			tree,
+			[
+				"Intro old text.",
+				"",
+				"**(1)** Alpha.",
+				"",
+				"**(2)** old text in paragraph two.",
+			].join("\n"),
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain("Intro new text.");
+		expect(effect.segments[0]?.text).toContain(
+			"**(2)** old text in paragraph two.",
+		);
+	});
+
+	it("applies matter-following as a true location restriction boundary", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.LocationRestriction,
+					restriction: {
+						kind: LocationRestrictionKind.MatterFollowing,
+						ref: {
+							kind: ScopeKind.Paragraph,
+							path: [{ kind: ScopeKind.Paragraph, label: "1" }],
+						},
+					},
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: { kind: SearchTargetKind.Text, text: "old text" },
+								insert: "new text",
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyVariant(
+			tree,
+			[
+				"**(1)** old text in paragraph one.",
+				"",
+				"**(2)** old text in paragraph two.",
+			].join("\n"),
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain(
+			"**(1)** old text in paragraph one.",
+		);
+		expect(effect.segments[0]?.text).toContain(
+			"**(2)** new text in paragraph two.",
+		);
+	});
+
+	it("resolves matter-preceding target when path omits intermediate levels", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "9034",
+			children: [
+				{
+					type: SemanticNodeType.LocationRestriction,
+					restriction: {
+						kind: LocationRestrictionKind.MatterPreceding,
+						ref: {
+							kind: ScopeKind.Subparagraph,
+							path: [
+								{ kind: ScopeKind.Subsection, label: "b" },
+								{ kind: ScopeKind.Subparagraph, label: "A" },
+							],
+						},
+					},
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: { kind: SearchTargetKind.Text, text: "old text" },
+								insert: "new text",
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyVariant(
+			tree,
+			[
+				"**(b)** Intro old text for subsection b.",
+				"",
+				"> **(1)** Paragraph one lead-in.",
+				"> > **(A)** old text in subparagraph A.",
+			].join("\n"),
+		);
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain(
+			"**(b)** Intro new text for subsection b.",
+		);
+		expect(effect.segments[0]?.text).toContain(
+			"> > **(A)** old text in subparagraph A.",
+		);
 	});
 
 	it("covers sample #6: sub_head+subscope+text_location variant -> nested wrappers", () => {

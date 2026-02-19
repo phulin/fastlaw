@@ -204,6 +204,58 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 													<code>{String(resolvedEffect().changes.length)}</code>
 												</div>
 											</div>
+											<section class="pdf-instruction-modal-section">
+												<h3>Structured Pipeline</h3>
+												<div class="pdf-instruction-modal-grid">
+													<div class="pdf-instruction-modal-kv">
+														<span>Resolved operations</span>
+														<code>
+															{String(
+																resolvedEffect().debug.pipeline
+																	.resolvedOperationCount,
+															)}
+														</code>
+													</div>
+													<div class="pdf-instruction-modal-kv">
+														<span>Planned patches</span>
+														<code>
+															{String(
+																resolvedEffect().debug.pipeline
+																	.plannedPatchCount,
+															)}
+														</code>
+													</div>
+													<div class="pdf-instruction-modal-kv">
+														<span>Resolution issues</span>
+														<code>
+															{String(
+																resolvedEffect().debug.pipeline
+																	.resolutionIssueCount,
+															)}
+														</code>
+													</div>
+												</div>
+												<Show
+													when={
+														resolvedEffect().debug.pipeline.resolutionIssues
+															.length > 0
+													}
+												>
+													<pre class="pdf-instruction-modal-code">
+														{resolvedEffect()
+															.debug.pipeline.resolutionIssues.map(
+																(issue, index) =>
+																	`${index + 1}. ${issue.kind} [path=${issue.path}]${
+																		issue.candidateNodeIds &&
+																		issue.candidateNodeIds.length > 0
+																			? ` [candidates=${issue.candidateNodeIds.join(", ")}]`
+																			: ""
+																	}`,
+															)
+															.join("\n")}
+													</pre>
+												</Show>
+											</section>
 											<Show
 												when={resolvedEffect().changes.length > 0}
 												fallback={<p>No final edits were produced by apply.</p>}

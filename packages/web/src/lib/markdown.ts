@@ -105,19 +105,9 @@ const paragraphClassAttr = (indentClass?: string): string => {
 	return safeIndentClass ? ` class="${safeIndentClass}"` : "";
 };
 
-const renderParagraphs = (value: string, indentClass?: string): string => {
-	const paragraphs = value
-		.split(/\n+/)
-		.map((item) => item.trim())
-		.filter((item) => item.length > 0);
-	if (paragraphs.length <= 1) {
-		return escapeHtml(value);
-	}
-	const classAttr = paragraphClassAttr(indentClass);
-	return paragraphs
-		.map((item) => `<p${classAttr}>${escapeHtml(item)}</p>`)
-		.join("");
-};
+const MARKER_START_RE = /^\s*\([A-Za-z0-9ivxIVX]+\)/;
+const startsWithMarker = (value: string): boolean =>
+	MARKER_START_RE.test(value);
 
 const expandSingleLineBreaks = (input: string): string => {
 	if (input.length === 0) return input;
@@ -171,17 +161,52 @@ const renderInsertedHtml = (value: string): string => {
 	const hastTree = renderProcessor.runSync(parsed);
 	const rendered = String(renderProcessor.stringify(hastTree));
 	if (!value.includes("\n")) {
-		return rendered.replace(/^<p>/, "").replace(/<\/p>\s*$/, "");
+		return rendered.replace(/^<p[^>]*>/, "").replace(/<\/p>\s*$/, "");
 	}
 	return rendered;
 };
 
-const wrapInsHtml = (value: string, indentClass?: string): string => {
-	const rendered = renderInsertedHtml(value);
+const wrapInsHtml = (
+	value: string,
+	indentClass?: string,
+	options?: { allowMarkerStartWrap?: boolean },
+): string => {
 	if (!value.includes("\n")) {
+		const rendered = renderInsertedHtml(value);
 		return `<ins class="${INSERTED_CLASS}">${rendered}</ins>`;
 	}
 
+	if (startsWithMarker(value) && options?.allowMarkerStartWrap !== false) {
+		const firstLineBreak = value.indexOf("\n");
+		const wrappedPrefix =
+			firstLineBreak >= 0 ? value.slice(0, firstLineBreak) : value;
+		const trailingText = firstLineBreak >= 0 ? value.slice(firstLineBreak) : "";
+		const renderedPrefix = renderInsertedHtml(wrappedPrefix);
+		const classAttr = paragraphClassAttr(indentClass);
+		const wrappedFirstLine = `<p${classAttr}><ins class="${INSERTED_CLASS}">${renderedPrefix}</ins></p>`;
+		if (trailingText.length === 0) {
+			return wrappedFirstLine;
+		}
+		const renderedTrailing = renderInsertedHtml(trailingText);
+		const wrappedTrailing = renderedTrailing.replace(
+			/<p[^>]*>([\s\S]*?)<\/p>/g,
+			`<p${classAttr}><ins class="${INSERTED_CLASS}">$1</ins></p>`,
+		);
+		return `${wrappedFirstLine}${wrappedTrailing}`;
+	}
+	if (startsWithMarker(value) && options?.allowMarkerStartWrap === false) {
+		const rendered = renderInsertedHtml(value);
+		if (!value.includes("\n")) {
+			return `<ins class="${INSERTED_CLASS}">${rendered}</ins>`;
+		}
+		const classAttr = paragraphClassAttr(indentClass);
+		return rendered.replace(
+			/<p[^>]*>([\s\S]*?)<\/p>/g,
+			`<p${classAttr}><ins class="${INSERTED_CLASS}">$1</ins></p>`,
+		);
+	}
+
+	const rendered = renderInsertedHtml(value);
 	const classAttr = paragraphClassAttr(indentClass);
 	return rendered.replace(
 		/<p>([\s\S]*?)<\/p>/g,
@@ -189,8 +214,33 @@ const wrapInsHtml = (value: string, indentClass?: string): string => {
 	);
 };
 
-const wrapDelHtml = (value: string, indentClass?: string): string =>
-	`<del class="${DELETED_CLASS}">${renderParagraphs(value, indentClass)}</del>`;
+const renderDeletedHtml = (value: string): string => {
+	if (!value.includes("\n")) {
+		return escapeHtml(value);
+	}
+	const normalizedValue = value.includes("\n")
+		? expandSingleLineBreaks(value)
+		: value;
+	const parsed = parseProcessor.parse(normalizedValue) as Root;
+	addParagraphIndentClasses(parsed);
+	unwrapBlockquotes(parsed);
+	const hastTree = renderProcessor.runSync(parsed);
+	return String(renderProcessor.stringify(hastTree));
+};
+
+const wrapDelHtml = (value: string, indentClass?: string): string => {
+	if (!value.includes("\n")) {
+		const rendered = renderDeletedHtml(value);
+		return `<del class="${DELETED_CLASS}">${rendered}</del>`;
+	}
+
+	const rendered = renderDeletedHtml(value);
+	const classAttr = paragraphClassAttr(indentClass);
+	return rendered.replace(
+		/<p[^>]*>([\s\S]*?)<\/p>/g,
+		`<p${classAttr}><del class="${DELETED_CLASS}">$1</del></p>`,
+	);
+};
 
 const getIndentClassFromParent = (
 	parent: ParentWithChildren,
@@ -261,6 +311,40 @@ const unwrapBlockquotes = (tree: Root) => {
 	unwrapInParent(tree as ParentWithChildren);
 };
 
+const hoistBlockHtmlOutOfParagraphs = (tree: Root) => {
+	const hoistInParent = (parent: ParentWithChildren) => {
+		const nextChildren: RootContent[] = [];
+		for (const child of parent.children) {
+			const node = child as Node;
+			if (node.type === "paragraph" && hasChildren(node)) {
+				const paragraph = node as ParentWithChildren;
+				const allHtmlChildren = paragraph.children.every(
+					(paragraphChild) => (paragraphChild as Node).type === "html",
+				);
+				if (allHtmlChildren) {
+					const htmlContent = paragraph.children
+						.map((paragraphChild) => {
+							const htmlChild = paragraphChild as Node & { value?: string };
+							return typeof htmlChild.value === "string" ? htmlChild.value : "";
+						})
+						.join("");
+					if (/<p\b/i.test(htmlContent)) {
+						nextChildren.push(htmlNode(htmlContent));
+						continue;
+					}
+				}
+			}
+			if (hasChildren(node)) {
+				hoistInParent(node as ParentWithChildren);
+			}
+			nextChildren.push(child);
+		}
+		parent.children = nextChildren;
+	};
+
+	hoistInParent(tree as ParentWithChildren);
+};
+
 const rewriteTreeLinks = (tree: Root, options: RenderMarkdownOptions) => {
 	visit(tree as Node, "link", (node) => {
 		const link = node as Node & { url?: string };
@@ -291,6 +375,7 @@ const applyMarkdownReplacements = (
 	const segmentRanges = normalized.filter((range) => range.end > range.start);
 	const touchedRangeIds = new Set<number>();
 	const insertedDeletionIds = new Set<number>();
+	const markerStartWrapConsumedIds = new Set<number>();
 	const editsByParent = new Map<
 		ParentWithChildren,
 		Map<number, RootContent[]>
@@ -382,9 +467,19 @@ const applyMarkdownReplacements = (
 				insertedDeletionIds.add(activeRange.id);
 			}
 
+			const allowMarkerStartWrap =
+				segmentStart === activeRange.start &&
+				!markerStartWrapConsumedIds.has(activeRange.id);
 			replacementChildren.push(
-				htmlNode(wrapInsHtml(segmentText, indentClass ?? undefined)),
+				htmlNode(
+					wrapInsHtml(segmentText, indentClass ?? undefined, {
+						allowMarkerStartWrap,
+					}),
+				),
 			);
+			if (allowMarkerStartWrap && startsWithMarker(segmentText)) {
+				markerStartWrapConsumedIds.add(activeRange.id);
+			}
 			touchedRangeIds.add(activeRange.id);
 		}
 
@@ -435,6 +530,7 @@ export const renderMarkdown = (
 	unwrapBlockquotes(tree);
 	if (options.replacements && options.replacements.length > 0) {
 		applyMarkdownReplacements(tree, content, options.replacements);
+		hoistBlockHtmlOutOfParagraphs(tree);
 	}
 	const hastTree = renderProcessor.runSync(tree);
 	return String(renderProcessor.stringify(hastTree));

@@ -1,21 +1,21 @@
+import { buildAmendmentDocumentModel } from "./amendment-document-model";
+import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
+import type { ResolutionIssue } from "./amendment-edit-engine-types";
+import { planEdits } from "./amendment-edit-planner";
 import {
 	type EditNode,
 	type EditTarget,
 	type InstructionSemanticTree,
 	LocationRestrictionKind,
-	PunctuationKind,
+	type PunctuationKind,
 	ScopeKind,
 	SearchTargetKind,
 	SemanticNodeType,
 	type StructuralReference,
 	UltimateEditKind,
 } from "./amendment-edit-tree";
-import { formatInsertedBlockContent } from "./inserted-block-format";
+import { resolveInstructionOperations } from "./amendment-selector-resolver";
 import { type MarkdownReplacementRange, renderMarkdown } from "./markdown";
-import {
-	findHierarchyNodeByMarkerPath,
-	parseMarkdownHierarchy,
-} from "./markdown-hierarchy-parser";
 
 interface ApplyEditTreeArgs {
 	tree: InstructionSemanticTree;
@@ -41,6 +41,8 @@ type InstructionOperation =
 	| {
 			type: "replace";
 			target?: HierarchyLevel[];
+			matterPrecedingTarget?: HierarchyLevel[];
+			matterFollowingTarget?: HierarchyLevel[];
 			throughTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			content?: string;
@@ -52,6 +54,8 @@ type InstructionOperation =
 	| {
 			type: "delete";
 			target?: HierarchyLevel[];
+			matterPrecedingTarget?: HierarchyLevel[];
+			matterFollowingTarget?: HierarchyLevel[];
 			throughTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			strikingContent?: string;
@@ -62,6 +66,8 @@ type InstructionOperation =
 	| {
 			type: "insert_before";
 			target?: HierarchyLevel[];
+			matterPrecedingTarget?: HierarchyLevel[];
+			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			content?: string;
 			anchorContent?: string;
@@ -70,6 +76,8 @@ type InstructionOperation =
 	| {
 			type: "insert_after";
 			target?: HierarchyLevel[];
+			matterPrecedingTarget?: HierarchyLevel[];
+			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			content?: string;
 			anchorContent?: string;
@@ -78,12 +86,16 @@ type InstructionOperation =
 	| {
 			type: "insert";
 			target?: HierarchyLevel[];
+			matterPrecedingTarget?: HierarchyLevel[];
+			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			content?: string;
 	  }
 	| {
 			type: "add_at_end";
 			target?: HierarchyLevel[];
+			matterPrecedingTarget?: HierarchyLevel[];
+			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			content?: string;
 	  }
@@ -104,29 +116,6 @@ interface InstructionNode {
 	operation: InstructionOperation;
 	children: InstructionNode[];
 	text: string;
-}
-
-function getOperationStrikingContent(
-	operation: InstructionOperation,
-): string | null {
-	if ("strikingContent" in operation) {
-		return operation.strikingContent ?? null;
-	}
-	return null;
-}
-
-function getOperationTargetPath(
-	operation: InstructionOperation,
-): HierarchyLevel[] | undefined {
-	if ("target" in operation) return operation.target;
-	return undefined;
-}
-
-function getOperationSentenceOrdinal(
-	operation: InstructionOperation,
-): number | undefined {
-	if ("sentenceOrdinal" in operation) return operation.sentenceOrdinal;
-	return undefined;
 }
 
 type AmendmentSegmentKind = "unchanged" | "deleted" | "inserted";
@@ -160,6 +149,34 @@ interface AmendmentEffectDebug {
 	operationCount: number;
 	operationAttempts: OperationMatchAttempt[];
 	failureReason: string | null;
+	pipeline: {
+		resolvedOperationCount: number;
+		plannedPatchCount: number;
+		resolutionIssueCount: number;
+		resolutionIssues: ResolutionIssue[];
+	};
+}
+
+export type ApplyFailureReasonKind =
+	| "target_unresolved"
+	| "target_ambiguous"
+	| "scope_unresolved"
+	| "no_match";
+
+export interface FailedApplyItem {
+	operationIndex: number;
+	operationType: string;
+	text: string;
+	outcome: Exclude<OperationMatchAttempt["outcome"], "applied">;
+	targetPath: string | null;
+	reasonKind: ApplyFailureReasonKind;
+	reason: string;
+	reasonDetail: string | null;
+}
+
+export interface AmendmentApplySummary {
+	partiallyApplied: boolean;
+	failedItems: FailedApplyItem[];
 }
 
 export interface AmendmentEffect {
@@ -171,12 +188,15 @@ export interface AmendmentEffect {
 	inserted: string[];
 	replacements?: MarkdownReplacementRange[];
 	annotatedHtml?: string;
+	applySummary: AmendmentApplySummary;
 	debug: AmendmentEffectDebug;
 }
 
 interface TraversalContext {
 	target: HierarchyLevel[];
 	matterPreceding: StructuralReference | null;
+	matterPrecedingTarget: HierarchyLevel[] | null;
+	matterFollowingTarget: HierarchyLevel[] | null;
 	unanchoredInsertMode: "insert" | "add_at_end";
 	sentenceOrdinal: number | null;
 }
@@ -186,17 +206,83 @@ interface FlattenResult {
 	unsupportedReasons: string[];
 }
 
-interface ScopeRange {
-	start: number;
-	end: number;
-	targetLevel: number | null;
+function mapIssueToFailureReason(
+	issue: ResolutionIssue | undefined,
+	outcome: Exclude<OperationMatchAttempt["outcome"], "applied">,
+): {
+	reasonKind: ApplyFailureReasonKind;
+	reason: string;
+	reasonDetail: string | null;
+} {
+	if (issue) {
+		const hasCandidates =
+			issue.candidateNodeIds !== undefined && issue.candidateNodeIds.length > 0;
+		if (issue.kind.endsWith("_ambiguous")) {
+			return {
+				reasonKind: "target_ambiguous",
+				reason: "Target path was ambiguous.",
+				reasonDetail: hasCandidates
+					? `${issue.path} [candidates=${issue.candidateNodeIds?.join(", ")}]`
+					: issue.path,
+			};
+		}
+		return {
+			reasonKind: "target_unresolved",
+			reason: "Target path did not resolve.",
+			reasonDetail: issue.path,
+		};
+	}
+	if (outcome === "scope_unresolved") {
+		return {
+			reasonKind: "scope_unresolved",
+			reason: "Scope could not be resolved.",
+			reasonDetail: null,
+		};
+	}
+	return {
+		reasonKind: "no_match",
+		reason: "No matching text or anchor found in resolved scope.",
+		reasonDetail: null,
+	};
 }
 
-interface TextPatch {
-	start: number;
-	end: number;
-	deleted: string;
-	inserted: string;
+function buildApplySummary(
+	operationAttempts: OperationMatchAttempt[],
+	resolutionIssues: ResolutionIssue[],
+): AmendmentApplySummary {
+	const issueByOperationIndex = new Map<number, ResolutionIssue>();
+	for (const issue of resolutionIssues) {
+		if (!issueByOperationIndex.has(issue.operationIndex)) {
+			issueByOperationIndex.set(issue.operationIndex, issue);
+		}
+	}
+	const failedItems: FailedApplyItem[] = [];
+	for (
+		let operationIndex = 0;
+		operationIndex < operationAttempts.length;
+		operationIndex += 1
+	) {
+		const attempt = operationAttempts[operationIndex];
+		if (!attempt || attempt.outcome === "applied") continue;
+		const failure = mapIssueToFailureReason(
+			issueByOperationIndex.get(operationIndex),
+			attempt.outcome,
+		);
+		failedItems.push({
+			operationIndex,
+			operationType: attempt.operationType,
+			text: attempt.nodeText,
+			outcome: attempt.outcome,
+			targetPath: attempt.targetPath,
+			reasonKind: failure.reasonKind,
+			reason: failure.reason,
+			reasonDetail: failure.reasonDetail,
+		});
+	}
+	return {
+		partiallyApplied: failedItems.length > 0,
+		failedItems,
+	};
 }
 
 function toHierarchyType(kind: ScopeKind): HierarchyLevel["type"] {
@@ -279,17 +365,6 @@ function throughTargetPathFromEditTarget(
 	return null;
 }
 
-function punctuationText(kind: PunctuationKind): string {
-	switch (kind) {
-		case PunctuationKind.Period:
-			return ".";
-		case PunctuationKind.Comma:
-			return ",";
-		case PunctuationKind.Semicolon:
-			return ";";
-	}
-}
-
 function makeNode(
 	operation: InstructionNode["operation"],
 	text: string,
@@ -312,6 +387,9 @@ function flattenEdit(
 	const edit = editNode.edit;
 	const targetWithContext = (path: HierarchyLevel[] | null): HierarchyLevel[] =>
 		mergeTargets(context.target, path);
+	const optionalTargetWithContext = (
+		path: HierarchyLevel[] | null,
+	): HierarchyLevel[] => (path ? mergeTargets(context.target, path) : []);
 
 	switch (edit.kind) {
 		case UltimateEditKind.StrikeInsert: {
@@ -320,7 +398,7 @@ function flattenEdit(
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.strike),
 			);
-			const scopedThroughTarget = targetWithContext(
+			const scopedThroughTarget = optionalTargetWithContext(
 				throughTargetPathFromEditTarget(edit.strike),
 			);
 			if (!strikingContent && scopedTarget.length === 0) {
@@ -338,6 +416,8 @@ function flattenEdit(
 						{
 							type: "replace",
 							target: scopedTarget,
+							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
+							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							throughTarget:
 								scopedThroughTarget.length > 0
 									? scopedThroughTarget
@@ -366,7 +446,7 @@ function flattenEdit(
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.target),
 			);
-			const scopedThroughTarget = targetWithContext(
+			const scopedThroughTarget = optionalTargetWithContext(
 				throughTargetPathFromEditTarget(edit.target),
 			);
 			if (!strikingContent && scopedTarget.length === 0) {
@@ -381,6 +461,8 @@ function flattenEdit(
 						{
 							type: "delete",
 							target: scopedTarget,
+							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
+							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							throughTarget:
 								scopedThroughTarget.length > 0
 									? scopedThroughTarget
@@ -416,6 +498,10 @@ function flattenEdit(
 							{
 								type: "insert_before",
 								target: context.target,
+								matterPrecedingTarget:
+									context.matterPrecedingTarget ?? undefined,
+								matterFollowingTarget:
+									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
 								anchorContent: anchor ?? undefined,
@@ -445,6 +531,10 @@ function flattenEdit(
 							{
 								type: "insert_after",
 								target: context.target,
+								matterPrecedingTarget:
+									context.matterPrecedingTarget ?? undefined,
+								matterFollowingTarget:
+									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
 								anchorContent: anchor ?? undefined,
@@ -464,6 +554,10 @@ function flattenEdit(
 							{
 								type: "add_at_end",
 								target: targetWithContext(scopedTarget),
+								matterPrecedingTarget:
+									context.matterPrecedingTarget ?? undefined,
+								matterFollowingTarget:
+									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
 							},
@@ -483,6 +577,10 @@ function flattenEdit(
 							{
 								type: "add_at_end",
 								target: context.target,
+								matterPrecedingTarget:
+									context.matterPrecedingTarget ?? undefined,
+								matterFollowingTarget:
+									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
 							},
@@ -498,6 +596,8 @@ function flattenEdit(
 						{
 							type: "insert",
 							target: context.target,
+							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
+							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							content: edit.content,
 						},
@@ -517,6 +617,8 @@ function flattenEdit(
 						{
 							type: "replace",
 							target: rewriteTarget,
+							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
+							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							content: edit.content,
 						},
@@ -593,6 +695,8 @@ function walkTree(
 			const nested = walkTree(node.children, {
 				target: scopeTarget,
 				matterPreceding: context.matterPreceding,
+				matterPrecedingTarget: context.matterPrecedingTarget,
+				matterFollowingTarget: context.matterFollowingTarget,
 				unanchoredInsertMode: context.unanchoredInsertMode,
 				sentenceOrdinal: context.sentenceOrdinal,
 			});
@@ -612,6 +716,8 @@ function walkTree(
 					const nested = walkTree(node.children, {
 						target,
 						matterPreceding: context.matterPreceding,
+						matterPrecedingTarget: context.matterPrecedingTarget,
+						matterFollowingTarget: context.matterFollowingTarget,
 						unanchoredInsertMode: context.unanchoredInsertMode,
 						sentenceOrdinal: context.sentenceOrdinal,
 					});
@@ -621,10 +727,15 @@ function walkTree(
 				continue;
 			}
 			if (node.restriction.kind === LocationRestrictionKind.MatterPreceding) {
-				const target = refToHierarchyPath(node.restriction.ref);
+				const matterPrecedingTarget = mergeTargets(
+					context.target,
+					refToHierarchyPath(node.restriction.ref),
+				);
 				const nested = walkTree(node.children, {
-					target,
+					target: context.target,
 					matterPreceding: node.restriction.ref,
+					matterPrecedingTarget,
+					matterFollowingTarget: context.matterFollowingTarget,
 					unanchoredInsertMode: context.unanchoredInsertMode,
 					sentenceOrdinal: context.sentenceOrdinal,
 				});
@@ -639,6 +750,8 @@ function walkTree(
 				const nested = walkTree(node.children, {
 					target,
 					matterPreceding: context.matterPreceding,
+					matterPrecedingTarget: context.matterPrecedingTarget,
+					matterFollowingTarget: context.matterFollowingTarget,
 					unanchoredInsertMode: "add_at_end",
 					sentenceOrdinal: context.sentenceOrdinal,
 				});
@@ -650,8 +763,40 @@ function walkTree(
 				const nested = walkTree(node.children, {
 					target: context.target,
 					matterPreceding: context.matterPreceding,
+					matterPrecedingTarget: context.matterPrecedingTarget,
+					matterFollowingTarget: context.matterFollowingTarget,
 					unanchoredInsertMode: context.unanchoredInsertMode,
 					sentenceOrdinal: node.restriction.ordinal,
+				});
+				flattened.push(...nested.nodes);
+				unsupportedReasons.push(...nested.unsupportedReasons);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.SentenceLast) {
+				const nested = walkTree(node.children, {
+					target: context.target,
+					matterPreceding: context.matterPreceding,
+					matterPrecedingTarget: context.matterPrecedingTarget,
+					matterFollowingTarget: context.matterFollowingTarget,
+					unanchoredInsertMode: context.unanchoredInsertMode,
+					sentenceOrdinal: -1,
+				});
+				flattened.push(...nested.nodes);
+				unsupportedReasons.push(...nested.unsupportedReasons);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.MatterFollowing) {
+				const matterFollowingTarget = mergeTargets(
+					context.target,
+					refToHierarchyPath(node.restriction.ref),
+				);
+				const nested = walkTree(node.children, {
+					target: context.target,
+					matterPreceding: context.matterPreceding,
+					matterPrecedingTarget: context.matterPrecedingTarget,
+					matterFollowingTarget,
+					unanchoredInsertMode: context.unanchoredInsertMode,
+					sentenceOrdinal: context.sentenceOrdinal,
 				});
 				flattened.push(...nested.nodes);
 				unsupportedReasons.push(...nested.unsupportedReasons);
@@ -674,175 +819,21 @@ function walkTree(
 	return { nodes: flattened, unsupportedReasons };
 }
 
-function normalizeTargetPath(target: HierarchyLevel[] | undefined): string[] {
-	if (!target) return [];
-	return target
-		.filter(
-			(part): part is Exclude<HierarchyLevel, { type: "section" }> =>
-				part.type !== "section",
-		)
-		.map((part) => part.val);
-}
-
-function getLineStarts(text: string): number[] {
-	const starts = [0];
-	for (let i = 0; i < text.length; i++) {
-		if (text[i] === "\n") starts.push(i + 1);
-	}
-	return starts;
-}
-
-function countLeadingQuoteDepth(line: string): number {
-	const match = line.match(/^(>\s*)+/);
-	if (!match) return 0;
-	return (match[0].match(/>/g) ?? []).length;
-}
-
-function resolveScopeRange(
-	text: string,
-	target: HierarchyLevel[] | undefined,
-): ScopeRange | null {
-	const labels = normalizeTargetPath(target);
-	if (labels.length === 0) {
-		return { start: 0, end: text.length, targetLevel: null };
-	}
-
-	const lineStarts = getLineStarts(text);
-	const parsed = parseMarkdownHierarchy(text);
-	const node = findHierarchyNodeByMarkerPath(parsed.levels, labels);
-	if (!node) return null;
-	const startLine = parsed.paragraphs[node.startParagraph]?.startLine;
-	if (typeof startLine !== "number") return null;
-	const endLine =
-		node.endParagraph >= parsed.paragraphs.length
-			? lineStarts.length
-			: parsed.paragraphs[node.endParagraph]?.startLine;
-	if (typeof endLine !== "number") return null;
-	const start = lineStarts[startLine] ?? 0;
-	const end =
-		endLine >= lineStarts.length
-			? text.length
-			: (lineStarts[endLine] ?? text.length);
-	const firstLine =
-		parsed.paragraphs[node.startParagraph]?.text.split("\n")[0] ?? "";
-	const targetLevel = countLeadingQuoteDepth(firstLine);
-	return { start, end, targetLevel };
-}
-
-function previewRange(text: string, range: ScopeRange | null): string | null {
-	if (!range) return null;
-	return text.slice(range.start, Math.min(range.end, range.start + 180));
-}
-
-function resolveSentenceOrdinalRange(
-	text: string,
-	ordinal: number,
-): { start: number; end: number } | null {
-	const matches = Array.from(text.matchAll(/[^.!?]+[.!?]+|[^.!?]+$/g));
-	if (matches.length === 0) return null;
-	const sentence = matches[ordinal - 1];
-	if (!sentence) return null;
-	const start = sentence.index ?? 0;
-	const end = start + sentence[0].length;
-	return { start, end };
-}
-
-function extractAnchor(
-	nodeText: string,
-	direction: "before" | "after",
-): string | null {
-	const pattern = new RegExp(`${direction}\\s+["“”„‟'‘]([^"”'’]+)["”'’]`, "i");
-	const match = nodeText.match(pattern);
-	return match?.[1] ?? null;
-}
-
-function applyPatch(text: string, patch: TextPatch): string {
-	return `${text.slice(0, patch.start)}${patch.inserted}${text.slice(patch.end)}`;
-}
-
-function updateReplacementRangesForPatch(
-	ranges: MarkdownReplacementRange[],
-	patch: TextPatch,
-): MarkdownReplacementRange[] {
-	const delta = patch.inserted.length - patch.deleted.length;
-	const next: MarkdownReplacementRange[] = [];
-	for (const range of ranges) {
-		if (patch.end <= range.start) {
-			next.push({
-				...range,
-				start: range.start + delta,
-				end: range.end + delta,
-			});
-			continue;
-		}
-		if (patch.start >= range.end) {
-			next.push(range);
-		}
-	}
-	if (patch.inserted.length > 0 || patch.deleted.length > 0) {
-		next.push({
-			start: patch.start,
-			end: patch.start + patch.inserted.length,
-			deletedText: patch.deleted,
-		});
-	}
-	next.sort((left, right) => left.start - right.start || left.end - right.end);
-	return next;
-}
-
-function insertMovedBlock(text: string, index: number, block: string): string {
-	const beforeChar = text[index - 1] ?? "";
-	const afterChar = text[index] ?? "";
-	const prefix = index === 0 || beforeChar === "\n" ? "" : "\n";
-	const suffix = index >= text.length || afterChar === "\n" ? "" : "\n";
-	return `${text.slice(0, index)}${prefix}${block}${suffix}${text.slice(index)}`;
-}
-
-function adjustIndexForRemovedRanges(
-	index: number,
-	removedRanges: Array<{ start: number; end: number }>,
-): number | null {
-	let adjusted = index;
-	for (const range of removedRanges) {
-		if (range.start < index && index < range.end) return null;
-		if (range.end <= index) adjusted -= range.end - range.start;
-	}
-	return adjusted;
-}
-
-function formatInsertionContent(content: string, targetLevel: number): string {
-	return formatInsertedBlockContent(content, {
-		baseDepth: targetLevel + 1,
-		quotePlainMultiline: true,
-	});
-}
-
-function formatReplacementContent(
-	content: string,
-	targetLevel: number,
-): string {
-	return formatInsertedBlockContent(content, {
-		baseDepth: targetLevel,
-		quotePlainMultiline: true,
-	});
-}
-
-function formatBlockInsertionContent(
-	content: string,
-	targetLevel: number,
-): string {
-	return formatInsertedBlockContent(content, {
-		baseDepth: targetLevel + 1,
-		quotePlainMultiline: true,
-	});
-}
-
 function makeUnsupportedResult(
 	args: ApplyEditTreeArgs,
 	operationCount: number,
 	operationAttempts: OperationMatchAttempt[],
 	reason: string,
+	pipeline?: {
+		resolvedOperationCount: number;
+		plannedPatchCount: number;
+		resolutionIssues: ResolutionIssue[];
+	},
 ): AmendmentEffect {
+	const resolvedOperationCount = pipeline?.resolvedOperationCount ?? 0;
+	const plannedPatchCount = pipeline?.plannedPatchCount ?? 0;
+	const resolutionIssues = pipeline?.resolutionIssues ?? [];
+	const applySummary = buildApplySummary(operationAttempts, resolutionIssues);
 	return {
 		status: "unsupported",
 		sectionPath: args.sectionPath,
@@ -852,11 +843,18 @@ function makeUnsupportedResult(
 		inserted: [],
 		replacements: [],
 		annotatedHtml: renderMarkdown(args.sectionBody),
+		applySummary,
 		debug: {
 			sectionTextLength: args.sectionBody.length,
 			operationCount,
 			operationAttempts,
 			failureReason: reason,
+			pipeline: {
+				resolvedOperationCount,
+				plannedPatchCount,
+				resolutionIssueCount: resolutionIssues.length,
+				resolutionIssues,
+			},
 		},
 	};
 }
@@ -867,6 +865,8 @@ export function applyAmendmentEditTreeToSection(
 	const flattened = walkTree(args.tree.children, {
 		target: [],
 		matterPreceding: null,
+		matterPrecedingTarget: null,
+		matterFollowingTarget: null,
 		unanchoredInsertMode: /\badding at the end\b/i.test(
 			args.instructionText ?? "",
 		)
@@ -881,441 +881,51 @@ export function applyAmendmentEditTreeToSection(
 			0,
 			[],
 			flattened.unsupportedReasons[0] ?? "no_edit_tree_operations",
+			{
+				resolvedOperationCount: 0,
+				plannedPatchCount: 0,
+				resolutionIssues: [],
+			},
 		);
 	}
 
 	let workingText = args.sectionBody;
-	const changes: Array<{ deleted: string; inserted: string }> = [];
-	const deleted: string[] = [];
-	const inserted: string[] = [];
-	let replacements: MarkdownReplacementRange[] = [];
-	const operationAttempts: OperationMatchAttempt[] = [];
+	const model = buildAmendmentDocumentModel(args.sectionBody);
+	const { resolved, issues } = resolveInstructionOperations(
+		model,
+		flattened.nodes,
+	);
+	const { patches, attempts } = planEdits(model, args.sectionBody, resolved);
+	const applied = applyPlannedPatchesTransaction(args.sectionBody, patches);
+	workingText = applied.text;
+	const replacements = applied.replacements;
 
-	for (const node of flattened.nodes) {
-		const targetPath = getOperationTargetPath(node.operation);
-		const range = resolveScopeRange(workingText, targetPath);
-		const hasExplicitTargetPath = Boolean(targetPath && targetPath.length > 0);
-		const targetPathText =
-			targetPath && targetPath.length > 0
-				? targetPath.map((item) => `${item.type}:${item.val}`).join(" > ")
-				: null;
-
-		const sentenceOrdinal = getOperationSentenceOrdinal(node.operation);
-		if (range && typeof sentenceOrdinal === "number") {
-			const sentenceRange = resolveSentenceOrdinalRange(
-				workingText.slice(range.start, range.end),
-				sentenceOrdinal,
-			);
-			if (sentenceRange) {
-				range.start += sentenceRange.start;
-				range.end = range.start + (sentenceRange.end - sentenceRange.start);
-			} else {
-				range.start = range.end;
-			}
-		}
-
-		const attempt: OperationMatchAttempt = {
-			operationType: node.operation.type,
-			nodeText: node.text,
-			strikingContent: getOperationStrikingContent(node.operation),
-			targetPath: targetPathText,
-			hasExplicitTargetPath,
-			scopedRange: range
-				? {
-						start: range.start,
-						end: range.end,
-						length: range.end - range.start,
-						preview: previewRange(workingText, range) ?? "",
-					}
-				: null,
-			searchText: null,
-			searchTextKind: "none",
-			searchIndex: null,
-			patchApplied: false,
-			outcome: "no_patch",
-		};
-
-		if (!range) {
-			attempt.outcome = "scope_unresolved";
-			operationAttempts.push(attempt);
-			continue;
-		}
-
-		const scopedText = workingText.slice(range.start, range.end);
-		let patch: TextPatch | null = null;
-
-		switch (node.operation.type) {
-			case "replace": {
-				const strikingContent = node.operation.strikingContent;
-				const replacementContent = node.operation.content;
-				const eachPlaceItAppears = node.operation.eachPlaceItAppears === true;
-				const throughTarget = node.operation.throughTarget;
-				if (!replacementContent) break;
-				if (!strikingContent) {
-					if (throughTarget) {
-						const throughRange = resolveScopeRange(workingText, throughTarget);
-						if (!throughRange) break;
-						const start = Math.min(range.start, throughRange.start);
-						const end = Math.max(range.end, throughRange.end);
-						const rangedText = workingText.slice(start, end);
-						const formattedReplacement = formatReplacementContent(
-							replacementContent,
-							range.targetLevel ?? 0,
-						);
-						const trailingWhitespace = rangedText.match(/\s*$/)?.[0] ?? "";
-						const trailingLineBreaks = trailingWhitespace.includes("\n")
-							? trailingWhitespace
-							: "";
-						const boundedReplacement =
-							trailingLineBreaks.length > 0 &&
-							!formattedReplacement.endsWith(trailingLineBreaks)
-								? `${formattedReplacement}${trailingLineBreaks}`
-								: formattedReplacement;
-						patch = {
-							start,
-							end,
-							deleted: rangedText,
-							inserted: boundedReplacement,
-						};
-						break;
-					}
-					const formattedReplacement = formatReplacementContent(
-						replacementContent,
-						range.targetLevel ?? 0,
-					);
-					const trailingWhitespace = scopedText.match(/\s*$/)?.[0] ?? "";
-					const trailingLineBreaks = trailingWhitespace.includes("\n")
-						? trailingWhitespace
-						: "";
-					const boundedReplacement =
-						trailingLineBreaks.length > 0 &&
-						!formattedReplacement.endsWith(trailingLineBreaks)
-							? `${formattedReplacement}${trailingLineBreaks}`
-							: formattedReplacement;
-					patch = {
-						start: range.start,
-						end: range.end,
-						deleted: scopedText,
-						inserted: boundedReplacement,
-					};
-					break;
-				}
-				const localIndex = scopedText.indexOf(strikingContent);
-				attempt.searchText = strikingContent;
-				attempt.searchTextKind = "striking";
-				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
-				if (localIndex < 0) break;
-				if (eachPlaceItAppears) {
-					const replacedScopedText = scopedText
-						.split(strikingContent)
-						.join(replacementContent);
-					patch = {
-						start: range.start,
-						end: range.end,
-						deleted: scopedText,
-						inserted: replacedScopedText,
-					};
-					break;
-				}
-				patch = {
-					start: range.start + localIndex,
-					end: range.start + localIndex + strikingContent.length,
-					deleted: strikingContent,
-					inserted: replacementContent,
-				};
-				break;
-			}
-			case "delete": {
-				const strikingContent = node.operation.strikingContent;
-				const eachPlaceItAppears = node.operation.eachPlaceItAppears === true;
-				const throughTarget = node.operation.throughTarget;
-				if (!strikingContent) {
-					if (throughTarget) {
-						const throughRange = resolveScopeRange(workingText, throughTarget);
-						if (!throughRange) break;
-						const start = Math.min(range.start, throughRange.start);
-						const end = Math.max(range.end, throughRange.end);
-						patch = {
-							start,
-							end,
-							deleted: workingText.slice(start, end),
-							inserted: "",
-						};
-						break;
-					}
-					patch = {
-						start: range.start,
-						end: range.end,
-						deleted: scopedText,
-						inserted: "",
-					};
-					break;
-				}
-				const localStart = scopedText.indexOf(strikingContent);
-				attempt.searchText = strikingContent;
-				attempt.searchTextKind = "striking";
-				attempt.searchIndex = localStart >= 0 ? range.start + localStart : null;
-				if (localStart < 0) break;
-				if (
-					eachPlaceItAppears &&
-					!node.operation.throughContent &&
-					!node.operation.throughPunctuation
-				) {
-					patch = {
-						start: range.start,
-						end: range.end,
-						deleted: scopedText,
-						inserted: scopedText.split(strikingContent).join(""),
-					};
-					break;
-				}
-				let localEnd = localStart + strikingContent.length;
-				const throughContent = node.operation.throughContent;
-				if (throughContent) {
-					const throughStart = scopedText.indexOf(
-						throughContent,
-						localStart + strikingContent.length,
-					);
-					if (throughStart < 0) break;
-					localEnd = throughStart + throughContent.length;
-				}
-				const throughPunctuation = node.operation.throughPunctuation;
-				if (throughPunctuation) {
-					const punctuation = punctuationText(throughPunctuation);
-					const punctuationIndex = scopedText.indexOf(
-						punctuation,
-						localStart + strikingContent.length,
-					);
-					if (punctuationIndex < 0) break;
-					localEnd = punctuationIndex + punctuation.length;
-				}
-				let patchStart = range.start + localStart;
-				let patchEnd = range.start + localEnd;
-				if (throughContent || throughPunctuation) {
-					const beforeChar = workingText[patchStart - 1] ?? "";
-					const afterChar = workingText[patchEnd] ?? "";
-					if (patchStart === 0 && afterChar === " ") {
-						patchEnd += 1;
-					} else if (
-						patchStart > 0 &&
-						beforeChar === " " &&
-						afterChar === " "
-					) {
-						patchStart -= 1;
-					}
-				}
-				patch = {
-					start: patchStart,
-					end: patchEnd,
-					deleted: workingText.slice(patchStart, patchEnd),
-					inserted: "",
-				};
-				break;
-			}
-			case "insert_before": {
-				const anchor =
-					node.operation.anchorContent ??
-					(node.operation.anchorTarget
-						? null
-						: extractAnchor(node.text, "before"));
-				const content = node.operation.content;
-				if (!content) break;
-				let anchorStart: number | null = null;
-				if (anchor) {
-					const localIndex = scopedText.indexOf(anchor);
-					attempt.searchText = anchor;
-					attempt.searchTextKind = "anchor_before";
-					attempt.searchIndex =
-						localIndex >= 0 ? range.start + localIndex : null;
-					if (localIndex >= 0) anchorStart = range.start + localIndex;
-				} else if (node.operation.anchorTarget) {
-					const anchorRange = resolveScopeRange(
-						workingText,
-						node.operation.anchorTarget,
-					);
-					if (anchorRange) anchorStart = anchorRange.start;
-				}
-				if (anchorStart === null) break;
-				const formatted = formatInsertionContent(
-					content,
-					range.targetLevel ?? 0,
-				);
-				const value = anchor
-					? `${formatted}${/[A-Za-z0-9)]$/.test(formatted) && /^[A-Za-z0-9(]/.test(anchor) ? " " : ""}`
-					: `${formatted}${formatted.endsWith("\n") ? "" : "\n"}`;
-				patch = {
-					start: anchorStart,
-					end: anchorStart,
-					deleted: "",
-					inserted: value,
-				};
-				break;
-			}
-			case "insert_after": {
-				const anchor =
-					node.operation.anchorContent ??
-					(node.operation.anchorTarget
-						? null
-						: extractAnchor(node.text, "after"));
-				const content = node.operation.content;
-				if (!content) break;
-				let anchorEnd: number | null = null;
-				if (anchor) {
-					const localIndex = scopedText.indexOf(anchor);
-					attempt.searchText = anchor;
-					attempt.searchTextKind = "anchor_after";
-					attempt.searchIndex =
-						localIndex >= 0 ? range.start + localIndex : null;
-					if (localIndex >= 0)
-						anchorEnd = range.start + localIndex + anchor.length;
-				} else if (node.operation.anchorTarget) {
-					const anchorRange = resolveScopeRange(
-						workingText,
-						node.operation.anchorTarget,
-					);
-					if (anchorRange) anchorEnd = anchorRange.end;
-				}
-				if (anchorEnd === null) break;
-				const formatted = formatInsertionContent(
-					content,
-					range.targetLevel ?? 0,
-				);
-				const value = anchor
-					? `${/[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(formatted) ? " " : ""}${formatted}`
-					: `${workingText[anchorEnd - 1] === "\n" || anchorEnd === 0 ? "" : "\n"}${formatted}`;
-				patch = {
-					start: anchorEnd,
-					end: anchorEnd,
-					deleted: "",
-					inserted: value,
-				};
-				break;
-			}
-			case "insert": {
-				const content = node.operation.content;
-				if (!content) break;
-				const insertAt = range.end;
-				const beforeChar = workingText[insertAt - 1] ?? "";
-				const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
-				const formatted = formatInsertionContent(
-					content,
-					range.targetLevel ?? 0,
-				);
-				patch = {
-					start: insertAt,
-					end: insertAt,
-					deleted: "",
-					inserted: `${prefix}${formatted}`,
-				};
-				break;
-			}
-			case "add_at_end": {
-				const content = node.operation.content;
-				if (!content) break;
-				const insertAt = range.end;
-				const beforeChar = workingText[insertAt - 1] ?? "";
-				const afterChar = workingText[insertAt] ?? "";
-				const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
-				const formatted = formatBlockInsertionContent(
-					content,
-					range.targetLevel ?? 0,
-				);
-				const suffix = afterChar && afterChar !== "\n" ? "\n\n" : "\n";
-				patch = {
-					start: insertAt,
-					end: insertAt,
-					deleted: "",
-					inserted: `${prefix}${formatted}${suffix}`,
-				};
-				break;
-			}
-			case "redesignate": {
-				const marker = `(${node.operation.fromLabel})`;
-				const replacement = `(${node.operation.toLabel})`;
-				const localIndex = scopedText.indexOf(marker);
-				attempt.searchText = marker;
-				attempt.searchTextKind = "striking";
-				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
-				if (localIndex < 0) break;
-				patch = {
-					start: range.start + localIndex,
-					end: range.start + localIndex + marker.length,
-					deleted: marker,
-					inserted: replacement,
-				};
-				break;
-			}
-			case "move": {
-				const fromRanges = node.operation.fromTargets
-					.map((target) => resolveScopeRange(workingText, target))
-					.filter((resolved): resolved is ScopeRange => resolved !== null)
-					.map((resolved) => ({ start: resolved.start, end: resolved.end }));
-				if (fromRanges.length !== node.operation.fromTargets.length) break;
-				fromRanges.sort((left, right) => left.start - right.start);
-				const movedBlock = fromRanges
-					.map((resolved) =>
-						workingText.slice(resolved.start, resolved.end).trim(),
-					)
-					.join("\n");
-				if (movedBlock.length === 0) break;
-
-				const anchorTarget =
-					node.operation.afterTarget ?? node.operation.beforeTarget;
-				if (!anchorTarget) break;
-				const anchorRange = resolveScopeRange(workingText, anchorTarget);
-				if (!anchorRange) break;
-				const originalInsertIndex = node.operation.beforeTarget
-					? anchorRange.start
-					: anchorRange.end;
-				let textWithoutMoved = workingText;
-				for (let index = fromRanges.length - 1; index >= 0; index -= 1) {
-					const segment = fromRanges[index];
-					if (!segment) continue;
-					textWithoutMoved = `${textWithoutMoved.slice(0, segment.start)}${textWithoutMoved.slice(segment.end)}`;
-				}
-				const adjustedInsertIndex = adjustIndexForRemovedRanges(
-					originalInsertIndex,
-					fromRanges,
-				);
-				if (adjustedInsertIndex === null) break;
-				const movedText = insertMovedBlock(
-					textWithoutMoved,
-					adjustedInsertIndex,
-					movedBlock,
-				);
-				patch = {
-					start: 0,
-					end: workingText.length,
-					deleted: workingText,
-					inserted: movedText,
-				};
-				break;
-			}
-		}
-
-		if (!patch) {
-			attempt.patchApplied = false;
-			attempt.outcome = "no_patch";
-			operationAttempts.push(attempt);
-			continue;
-		}
-
-		attempt.patchApplied = true;
-		attempt.outcome = "applied";
-		operationAttempts.push(attempt);
-		workingText = applyPatch(workingText, patch);
-		replacements = updateReplacementRangesForPatch(replacements, patch);
-		changes.push({ deleted: patch.deleted, inserted: patch.inserted });
-		if (patch.deleted.length > 0) deleted.push(patch.deleted);
-		if (patch.inserted.length > 0) inserted.push(patch.inserted);
-	}
+	const changes = patches.map((patch) => ({
+		deleted: patch.deleted,
+		inserted: patch.inserted,
+	}));
+	const deleted = patches
+		.map((patch) => patch.deleted)
+		.filter((value) => value.length > 0);
+	const inserted = patches
+		.map((patch) => patch.inserted)
+		.filter((value) => value.length > 0);
+	const operationAttempts = attempts;
+	const applySummary = buildApplySummary(operationAttempts, issues);
 
 	if (changes.length === 0) {
 		return makeUnsupportedResult(
 			args,
 			flattened.nodes.length,
 			operationAttempts,
-			flattened.unsupportedReasons[0] ?? "no_patches_applied",
+			flattened.unsupportedReasons[0] ??
+				issues[0]?.kind ??
+				"no_patches_applied",
+			{
+				resolvedOperationCount: resolved.length,
+				plannedPatchCount: patches.length,
+				resolutionIssues: issues,
+			},
 		);
 	}
 
@@ -1328,11 +938,18 @@ export function applyAmendmentEditTreeToSection(
 		inserted,
 		replacements,
 		annotatedHtml: renderMarkdown(workingText, { replacements }),
+		applySummary,
 		debug: {
 			sectionTextLength: args.sectionBody.length,
 			operationCount: flattened.nodes.length,
 			operationAttempts,
 			failureReason: null,
+			pipeline: {
+				resolvedOperationCount: resolved.length,
+				plannedPatchCount: patches.length,
+				resolutionIssueCount: issues.length,
+				resolutionIssues: issues,
+			},
 		},
 	};
 }
