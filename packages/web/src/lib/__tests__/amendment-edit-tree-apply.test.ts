@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createHandcraftedInstructionParser } from "../../scripts/handcrafted-instruction-parser";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import {
 	type InstructionSemanticTree,
@@ -13,6 +12,7 @@ import {
 	UltimateEditKind,
 } from "../amendment-edit-tree";
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
+import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(TEST_DIR, "../../..");

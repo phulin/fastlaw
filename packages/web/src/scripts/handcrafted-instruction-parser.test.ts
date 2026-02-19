@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	createHandcraftedInstructionParser,
 	GrammarAstNodeType,
-} from "./handcrafted-instruction-parser";
+} from "../lib/create-handcrafted-instruction-parser";
 
 describe("HandcraftedInstructionParser", () => {
 	it("greedily consumes the longest instruction span from a start line", () => {

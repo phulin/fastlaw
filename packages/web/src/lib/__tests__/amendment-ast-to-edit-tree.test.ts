@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createHandcraftedInstructionParser } from "../../scripts/handcrafted-instruction-parser";
 import { extractAmendatoryInstructions } from "../amendatory-instructions";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import {
@@ -13,6 +12,7 @@ import {
 	TextLocationAnchorKind,
 	UltimateEditKind,
 } from "../amendment-edit-tree";
+import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
 import { parseFixtureParagraphs } from "./test-utils";
 
 function parseInstructionAst(input: string) {
