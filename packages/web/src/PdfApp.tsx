@@ -16,17 +16,20 @@ import { Header } from "./components/Header";
 import type { InstructionPageItem, PageItem } from "./components/PageRow";
 import { PageRow } from "./components/PageRow";
 import "pdfjs-dist/web/pdf_viewer.css";
+import amendmentGrammarSource from "../amendment-grammar.bnf?raw";
 import {
 	type AmendatoryInstruction,
 	extractAmendatoryInstructions,
 } from "./lib/amendatory-instructions";
+import { translateInstructionAstToEditTree } from "./lib/amendment-ast-to-edit-tree";
+import { applyAmendmentEditTreeToSection } from "./lib/amendment-edit-tree-apply";
 import {
 	type AmendmentEffect,
-	computeAmendmentEffect,
 	getSectionBodyText,
 	getSectionPathFromUscCitation,
 	type SectionBodiesResponse,
 } from "./lib/amendment-effects";
+import { HandcraftedInstructionParser } from "./lib/handcrafted-instruction-parser";
 import { renderMarkdown } from "./lib/markdown";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
@@ -38,6 +41,9 @@ const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1078;
 const AMENDED_SNIPPET_CONTEXT_CHARS = 500;
+const instructionParser = new HandcraftedInstructionParser(
+	amendmentGrammarSource,
+);
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -704,7 +710,40 @@ export default function PdfApp() {
 							const sectionBodyText = getSectionBodyText(sectionContent);
 							const amendmentEffect =
 								sectionPath && sectionBodyText.length > 0
-									? computeAmendmentEffect(instr, sectionPath, sectionBodyText)
+									? (() => {
+											const parsed =
+												instructionParser.parseInstructionFromLines(
+													instr.text.split("\n"),
+													0,
+												);
+											if (!parsed) {
+												return {
+													status: "unsupported",
+													sectionPath,
+													segments: [
+														{ kind: "unchanged", text: sectionBodyText },
+													],
+													changes: [],
+													deleted: [],
+													inserted: [],
+													debug: {
+														sectionTextLength: sectionBodyText.length,
+														operationCount: 0,
+														operationAttempts: [],
+														failureReason: "instruction_parse_failed",
+													},
+												} satisfies AmendmentEffect;
+											}
+											const translated = translateInstructionAstToEditTree(
+												parsed.ast,
+											);
+											return applyAmendmentEditTreeToSection({
+												tree: translated.tree,
+												instruction: instr,
+												sectionPath,
+												sectionBody: sectionBodyText,
+											});
+										})()
 									: null;
 
 							newItems.push({

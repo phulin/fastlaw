@@ -18,11 +18,13 @@ export enum ScopeKind {
 
 export enum LocationRestrictionKind {
 	Heading = "heading",
+	SubLocationHeading = "sub_location_heading",
 	SubsectionHeading = "subsection_heading",
 	SentenceOrdinal = "sentence_ordinal",
 	SentenceLast = "sentence_last",
 	MatterPreceding = "matter_preceding",
 	MatterFollowing = "matter_following",
+	In = "in",
 	AtEnd = "at_end",
 	Before = "before",
 	After = "after",
@@ -59,11 +61,138 @@ export interface StructuralReference {
 	path: ScopeSelector[];
 }
 
-export interface LocationRestriction {
-	kind: LocationRestrictionKind;
-	ordinal?: number;
-	anchor?: EditTarget;
+export enum TextLocationAnchorKind {
+	Thereof = "thereof",
+	Of = "of",
 }
+
+export interface ThereofTextLocationAnchor {
+	kind: TextLocationAnchorKind.Thereof;
+}
+
+export interface OfTextLocationAnchor {
+	kind: TextLocationAnchorKind.Of;
+	ref: StructuralReference;
+}
+
+export type TextLocationAnchor =
+	| ThereofTextLocationAnchor
+	| OfTextLocationAnchor;
+
+export enum InnerLocationTargetKind {
+	Punctuation = "punctuation",
+	Heading = "heading",
+	SubsectionHeading = "subsection_heading",
+	SectionDesignation = "section_designation",
+	SentenceOrdinal = "sentence_ordinal",
+	SentenceLast = "sentence_last",
+}
+
+export interface PunctuationInnerLocationTarget {
+	kind: InnerLocationTargetKind.Punctuation;
+	punctuation: PunctuationKind;
+	atEndOf?: StructuralReference;
+}
+
+export interface HeadingInnerLocationTarget {
+	kind: InnerLocationTargetKind.Heading;
+}
+
+export interface SubsectionHeadingInnerLocationTarget {
+	kind: InnerLocationTargetKind.SubsectionHeading;
+}
+
+export interface SectionDesignationInnerLocationTarget {
+	kind: InnerLocationTargetKind.SectionDesignation;
+}
+
+export interface SentenceOrdinalInnerLocationTarget {
+	kind: InnerLocationTargetKind.SentenceOrdinal;
+	ordinal: number;
+}
+
+export interface SentenceLastInnerLocationTarget {
+	kind: InnerLocationTargetKind.SentenceLast;
+}
+
+export type InnerLocationTarget =
+	| PunctuationInnerLocationTarget
+	| HeadingInnerLocationTarget
+	| SubsectionHeadingInnerLocationTarget
+	| SectionDesignationInnerLocationTarget
+	| SentenceOrdinalInnerLocationTarget
+	| SentenceLastInnerLocationTarget;
+
+export interface HeadingLocationRestriction {
+	kind: LocationRestrictionKind.Heading;
+	anchor?: TextLocationAnchor;
+}
+
+export interface SubLocationHeadingRestriction {
+	kind: LocationRestrictionKind.SubLocationHeading;
+	scopeKind: ScopeKind;
+	anchor?: TextLocationAnchor;
+}
+
+export interface SubsectionHeadingRestriction {
+	kind: LocationRestrictionKind.SubsectionHeading;
+	anchor?: TextLocationAnchor;
+}
+
+export interface SentenceOrdinalLocationRestriction {
+	kind: LocationRestrictionKind.SentenceOrdinal;
+	ordinal: number;
+	anchor?: TextLocationAnchor;
+}
+
+export interface SentenceLastLocationRestriction {
+	kind: LocationRestrictionKind.SentenceLast;
+	anchor?: TextLocationAnchor;
+}
+
+export interface MatterPrecedingLocationRestriction {
+	kind: LocationRestrictionKind.MatterPreceding;
+	ref: StructuralReference;
+}
+
+export interface MatterFollowingLocationRestriction {
+	kind: LocationRestrictionKind.MatterFollowing;
+	ref: StructuralReference;
+}
+
+export interface InLocationRestriction {
+	kind: LocationRestrictionKind.In;
+	refs: StructuralReference[];
+	anchor?: TextLocationAnchor;
+}
+
+export interface AtEndLocationRestriction {
+	kind: LocationRestrictionKind.AtEnd;
+	ref?: StructuralReference;
+}
+
+export interface BeforeLocationRestriction {
+	kind: LocationRestrictionKind.Before;
+	target: InnerLocationTarget;
+}
+
+export interface AfterLocationRestriction {
+	kind: LocationRestrictionKind.After;
+	target: InnerLocationTarget;
+}
+
+export type LocationRestriction =
+	| HeadingLocationRestriction
+	| SubLocationHeadingRestriction
+	| SubsectionHeadingRestriction
+	| SentenceOrdinalLocationRestriction
+	| SentenceLastLocationRestriction
+	| MatterPrecedingLocationRestriction
+	| MatterFollowingLocationRestriction
+	| InLocationRestriction
+	| AtEndLocationRestriction
+	| BeforeLocationRestriction
+	| AfterLocationRestriction;
 
 export interface TextSearchTarget {
 	kind: SearchTargetKind.Text;
@@ -79,6 +208,10 @@ export interface PunctuationEditTarget {
 	punctuation: PunctuationKind;
 }
 
+export interface InnerLocationEditTarget {
+	inner: InnerLocationTarget;
+}
+
 // SearchTarget is strictly textual search.
 export type SearchTarget = TextSearchTarget;
 
@@ -86,7 +219,8 @@ export type SearchTarget = TextSearchTarget;
 export type EditTarget =
 	| SearchTarget
 	| StructuralEditTarget
-	| PunctuationEditTarget;
+	| PunctuationEditTarget
+	| InnerLocationEditTarget;
 
 export interface StrikeEdit {
 	kind: UltimateEditKind.Strike;
@@ -127,7 +261,7 @@ export interface RedesignateEdit {
 
 export interface MoveEdit {
 	kind: UltimateEditKind.Move;
-	from: StructuralReference;
+	from: StructuralReference[];
 	before?: StructuralReference;
 	after?: StructuralReference;
 }

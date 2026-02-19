@@ -28,6 +28,7 @@ venv/
 # Data/artifacts
 *.sqlite3
 data/
+tmp/
 
 # Build outputs (Astro legacy)
 dist/
