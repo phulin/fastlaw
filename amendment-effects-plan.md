@@ -39,7 +39,7 @@ Implement precomputation of amendment effects per amendatory instruction and rep
 
 ### Phase 4: Client-Side Effect Computation and Rendering
 1. Implement effect computation library in client code:
-   - resolve target node from `rootQuery` + tree context,
+   - resolve target node from legacy root scope + tree context,
    - flatten relevant text region,
    - apply operation semantics (`replace`, `delete`, `insert_before`, `insert_after`, `add_at_end`),
    - emit structured inserted/deleted segments.

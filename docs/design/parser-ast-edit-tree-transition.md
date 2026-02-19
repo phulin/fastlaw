@@ -20,7 +20,7 @@ for instruction targeting/scope derivation in the new path.
    - a top-level code/act reference segment
    - a top-level section segment
 3. Prefer USC-derived targeting when USC is present in the parsed instruction.
-4. Apply edits using semantic tree metadata only (no `rootQuery` fallback from legacy extraction).
+4. Apply edits using semantic tree metadata only (no legacy root scope fallback from legacy extraction).
 5. Preserve debuggability with explicit parse/translation/apply failure reasons.
 
 ## Non-Goals
@@ -36,8 +36,8 @@ for instruction targeting/scope derivation in the new path.
    - `act_reference`
    - structural scope kinds (`section`, `subsection`, etc.)
 2. Translator derives `targetScopePath` from AST and prefers USC scope when available.
-3. Apply engine uses `tree.targetScopePath` for root scope, not `rootQuery`.
-4. `PdfApp` no longer passes `instr.rootQuery` into apply.
+3. Apply engine uses `tree.targetScopePath` for root scope, not legacy root scope.
+4. `PdfApp` no longer passes `instruction root scope` into apply.
 
 ## End-State Architecture
 
@@ -109,7 +109,7 @@ Scope resolution:
 
 No legacy scope input:
 
-- Do not accept or use `rootQuery` in the parser-native path.
+- Do not accept or use legacy root scope in the parser-native path.
 
 ## 5) Rendering / Annotation
 
@@ -147,7 +147,7 @@ No dependency on legacy instruction object shape in UI-facing contracts.
 1. `extractAmendatoryInstructions` usage in `PdfApp` parser-native path.
 2. Legacy-targeting helper usage in parser-native path:
    - citation extraction from raw prose
-   - legacy `rootQuery` derivation
+   - legacy legacy root scope derivation
 3. Legacy-only tests that no longer map to parser-first semantics.
 
 ## Section Path Resolution Strategy
@@ -201,7 +201,7 @@ Exit criteria:
 
 1. Render annotations from parser-native envelope by default.
 2. Keep legacy path as shadow mode for telemetry/comparison only.
-3. Remove `rootQuery` plumb-through from app-level callsites.
+3. Remove legacy root scope plumb-through from app-level callsites.
 
 Exit criteria:
 

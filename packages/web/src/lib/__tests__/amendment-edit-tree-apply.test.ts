@@ -24,47 +24,24 @@ const USC_2014_POST_FIXTURE_PATH = resolve(
 	WEB_ROOT,
 	"src/lib/__fixtures__/usc-7-2014-post.md",
 );
-type RootQuery = Parameters<
-	typeof applyAmendmentEditTreeToSection
->[0]["rootQuery"];
-
 interface IntegrationInstruction {
 	citation: string;
-	rootQuery: RootQuery;
 	text: string;
 }
 
 const HR1_10103_10104_INSTRUCTIONS: IntegrationInstruction[] = [
 	{
 		citation: "7 U.S.C. 2014(e)(6)(C)(iv)(I)",
-		rootQuery: [
-			{ type: "section", val: "5" },
-			{ type: "subsection", val: "e" },
-			{ type: "paragraph", val: "6" },
-			{ type: "subparagraph", val: "C" },
-			{ type: "clause", val: "iv" },
-			{ type: "subclause", val: "I" },
-		],
 		text: "(a) STANDARD UTILITY ALLOWANCE.—Section 5(e)(6)(C)(iv)(I) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(e)(6)(C)(iv)(I)) is amended by inserting “with an elderly or disabled member” after “households”.",
 	},
 	{
 		citation: "7 U.S.C. 2014(k)(4)",
-		rootQuery: [
-			{ type: "section", val: "5" },
-			{ type: "subsection", val: "k" },
-			{ type: "paragraph", val: "4" },
-		],
 		text: `(b) THIRD-PARTY ENERGY ASSISTANCE PAYMENTS.—Section 5(k)(4) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(k)(4)) is amended—
 (1) in subparagraph (A), by inserting “without an elderly or disabled member” before “shall be”; and
 (2) in subparagraph (B), by inserting “with an elderly or disabled member” before “under a State law”.`,
 	},
 	{
 		citation: "7 U.S.C. 2014(e)(6)",
-		rootQuery: [
-			{ type: "section", val: "5" },
-			{ type: "subsection", val: "e" },
-			{ type: "paragraph", val: "6" },
-		],
 		text: `Section 5(e)(6) of the Food and Nutrition Act of 2008 (7 U.S.C. 2014(e)(6)) is amended by adding at the end the following:
 “(E) RESTRICTIONS ON INTERNET EXPENSES.—Any service fee associated with internet connection shall not be used in computing the excess shelter expense deduction under this paragraph.”.`,
 	},
@@ -93,7 +70,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "This is old text.",
-			rootQuery: [{ type: "section", val: "1" }],
 			instructionText: 'Section 1 is amended by striking "old".',
 		});
 
@@ -119,7 +95,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "This is old text.",
-			rootQuery: [{ type: "section", val: "1" }],
 			instructionText: 'Section 1 is amended by inserting "new text".',
 		});
 
@@ -149,7 +124,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "This is old text.",
-			rootQuery: [{ type: "section", val: "1" }],
 			instructionText:
 				'Section 1 is amended by striking "old" and inserting "new".',
 		});
@@ -160,7 +134,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.inserted).toEqual(["new"]);
 	});
 
-	it("uses tree targetScopePath as fallback root scope", () => {
+	it("does not use tree targetScopePath as fallback root scope", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
 			targetScopePath: [
@@ -184,7 +158,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.segments[0]?.text).toContain("(2) Two.\nNEW");
+		expect(effect.debug.operationAttempts[0]?.targetPath).toBeNull();
+		expect(effect.debug.operationAttempts[0]?.hasExplicitTargetPath).toBe(
+			false,
+		);
 	});
 
 	it("applies Rewrite edits", () => {
@@ -206,7 +183,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "Original text.",
-			rootQuery: [{ type: "section", val: "1" }],
 			instructionText: "Section 1 is amended to read as follows.",
 		});
 
@@ -244,7 +220,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "(a) Original text.",
-			rootQuery: [{ type: "section", val: "1" }],
 			instructionText: "Section 1 redesignates paragraph (a) as (b).",
 		});
 
@@ -280,7 +255,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "(a) First.\n(b) Second.",
-			rootQuery: [{ type: "section", val: "1" }],
 			instructionText: "Move paragraph (a) to appear after paragraph (b).",
 		});
 
@@ -308,7 +282,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "alpha beta gamma",
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 
 		expect(effect.status).toBe("ok");
@@ -340,7 +313,6 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "(a) old",
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 
 		expect(effect.status).toBe("ok");
@@ -392,13 +364,11 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree: beforeTree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "(a) old",
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 		const afterEffect = applyAmendmentEditTreeToSection({
 			tree: afterTree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "(a) old",
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 
 		expect(beforeEffect.status).toBe("ok");
@@ -441,13 +411,11 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree: beforeTree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "old text",
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 		const afterEffect = applyAmendmentEditTreeToSection({
 			tree: afterTree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody: "old text",
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 
 		expect(beforeEffect.status).toBe("ok");
@@ -499,13 +467,11 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			tree: byRefTree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody,
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 		const byRestrictionEffect = applyAmendmentEditTreeToSection({
 			tree: byRestrictionTree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody,
-			rootQuery: [{ type: "section", val: "1" }],
 			instructionText: "by adding at the end the following:",
 		});
 
@@ -524,7 +490,6 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 			tree,
 			sectionPath: "/statutes/usc/section/1/1",
 			sectionBody,
-			rootQuery: [{ type: "section", val: "1" }],
 		});
 
 	it("covers sample #1: sub_head-only variant -> root edit node", () => {
@@ -803,7 +768,6 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 				tree: translated.tree,
 				sectionPath: "/statutes/usc/section/7/2014",
 				sectionBody,
-				rootQuery: instruction.rootQuery,
 				instructionText: instruction.text,
 			});
 

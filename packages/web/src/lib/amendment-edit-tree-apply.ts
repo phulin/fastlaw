@@ -3,67 +3,82 @@ import {
 	type EditTarget,
 	type InstructionSemanticTree,
 	LocationRestrictionKind,
+	PunctuationKind,
 	ScopeKind,
 	SearchTargetKind,
 	SemanticNodeType,
 	type StructuralReference,
-	type TargetScopeSegment,
 	UltimateEditKind,
 } from "./amendment-edit-tree";
+import {
+	findHierarchyNodeByMarkerPath,
+	parseMarkdownHierarchy,
+} from "./markdown-hierarchy-parser";
 
 interface ApplyEditTreeArgs {
 	tree: InstructionSemanticTree;
 	sectionPath: string;
 	sectionBody: string;
-	rootQuery?: HierarchyLevel[];
 	instructionText?: string;
 }
 
-type HierarchyLevel =
-	| { type: "none" }
-	| {
-			type:
-				| "section"
-				| "subsection"
-				| "paragraph"
-				| "subparagraph"
-				| "clause"
-				| "subclause"
-				| "item"
-				| "subitem";
-			val: string;
-	  };
+type HierarchyLevel = {
+	type:
+		| "section"
+		| "subsection"
+		| "paragraph"
+		| "subparagraph"
+		| "clause"
+		| "subclause"
+		| "item"
+		| "subitem";
+	val: string;
+};
 
 type InstructionOperation =
 	| {
 			type: "replace";
 			target?: HierarchyLevel[];
+			sentenceOrdinal?: number;
 			content?: string;
 			strikingContent?: string;
+			throughContent?: string;
+			throughPunctuation?: PunctuationKind;
 	  }
 	| {
 			type: "delete";
 			target?: HierarchyLevel[];
+			sentenceOrdinal?: number;
 			strikingContent?: string;
+			throughContent?: string;
+			throughPunctuation?: PunctuationKind;
 	  }
 	| {
 			type: "insert_before";
 			target?: HierarchyLevel[];
+			sentenceOrdinal?: number;
 			content?: string;
+			anchorContent?: string;
+			anchorTarget?: HierarchyLevel[];
 	  }
 	| {
 			type: "insert_after";
 			target?: HierarchyLevel[];
+			sentenceOrdinal?: number;
 			content?: string;
+			anchorContent?: string;
+			anchorTarget?: HierarchyLevel[];
 	  }
 	| {
 			type: "insert";
 			target?: HierarchyLevel[];
+			sentenceOrdinal?: number;
 			content?: string;
 	  }
 	| {
 			type: "add_at_end";
 			target?: HierarchyLevel[];
+			sentenceOrdinal?: number;
 			content?: string;
 	  };
 
@@ -129,6 +144,7 @@ interface TraversalContext {
 	target: HierarchyLevel[];
 	matterPreceding: StructuralReference | null;
 	unanchoredInsertMode: "insert" | "add_at_end";
+	sentenceOrdinal: number | null;
 }
 
 interface FlattenResult {
@@ -140,12 +156,6 @@ interface ScopeRange {
 	start: number;
 	end: number;
 	targetLevel: number | null;
-}
-
-interface MarkerOccurrence {
-	label: string;
-	level: number;
-	line: number;
 }
 
 interface TextPatch {
@@ -174,19 +184,6 @@ function toHierarchyType(kind: ScopeKind): HierarchyLevel["type"] {
 		case ScopeKind.Subitem:
 			return "subitem";
 	}
-}
-
-function targetScopePathToHierarchyLevels(
-	path: TargetScopeSegment[],
-): HierarchyLevel[] {
-	return path
-		.filter((item): item is Extract<TargetScopeSegment, { kind: ScopeKind }> =>
-			Object.values(ScopeKind).includes(item.kind as ScopeKind),
-		)
-		.map((item) => ({
-			type: toHierarchyType(item.kind),
-			val: item.label,
-		}));
 }
 
 function refToHierarchyPath(ref: StructuralReference): HierarchyLevel[] {
@@ -220,6 +217,17 @@ function targetPathFromEditTarget(target: EditTarget): HierarchyLevel[] | null {
 	return null;
 }
 
+function punctuationText(kind: PunctuationKind): string {
+	switch (kind) {
+		case PunctuationKind.Period:
+			return ".";
+		case PunctuationKind.Comma:
+			return ",";
+		case PunctuationKind.Semicolon:
+			return ";";
+	}
+}
+
 function makeNode(
 	operation: InstructionNode["operation"],
 	text: string,
@@ -246,15 +254,15 @@ function flattenEdit(
 	switch (edit.kind) {
 		case UltimateEditKind.StrikeInsert: {
 			const strikingContent = textFromEditTarget(edit.strike);
-			if (!strikingContent) {
-				return {
-					nodes: [],
-					unsupportedReasons: ["strike_insert_non_text_target"],
-				};
-			}
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.strike),
 			);
+			if (!strikingContent && scopedTarget.length === 0) {
+				return {
+					nodes: [],
+					unsupportedReasons: ["strike_insert_unsupported_target"],
+				};
+			}
 			const text = context.matterPreceding
 				? `in the matter preceding ${context.matterPreceding.kind} (${context.matterPreceding.path.at(-1)?.label ?? ""}), by striking "${strikingContent}" and inserting "${edit.insert}"`
 				: `by striking "${strikingContent}" and inserting "${edit.insert}"`;
@@ -264,7 +272,8 @@ function flattenEdit(
 						{
 							type: "replace",
 							target: scopedTarget,
-							strikingContent,
+							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
+							strikingContent: strikingContent ?? undefined,
 							content: edit.insert,
 						},
 						text,
@@ -275,22 +284,32 @@ function flattenEdit(
 		}
 		case UltimateEditKind.Strike: {
 			const strikingContent = textFromEditTarget(edit.target);
-			if (!strikingContent || edit.through) {
-				return {
-					nodes: [],
-					unsupportedReasons: ["strike_non_text_or_through"],
-				};
-			}
+			const throughContent = edit.through
+				? textFromEditTarget(edit.through)
+				: undefined;
+			const throughPunctuation =
+				edit.through && "punctuation" in edit.through
+					? edit.through.punctuation
+					: undefined;
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.target),
 			);
+			if (!strikingContent && scopedTarget.length === 0) {
+				return {
+					nodes: [],
+					unsupportedReasons: ["strike_unsupported_target"],
+				};
+			}
 			return {
 				nodes: [
 					makeNode(
 						{
 							type: "delete",
 							target: scopedTarget,
-							strikingContent,
+							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
+							strikingContent: strikingContent ?? undefined,
+							throughContent: throughContent ?? undefined,
+							throughPunctuation,
 						},
 						`by striking "${strikingContent}"`,
 					),
@@ -301,8 +320,15 @@ function flattenEdit(
 		case UltimateEditKind.Insert: {
 			if (edit.before) {
 				const anchor = textFromEditTarget(edit.before);
-				if (!anchor) {
-					return { nodes: [], unsupportedReasons: ["insert_before_non_text"] };
+				const anchorTarget = targetPathFromEditTarget(edit.before);
+				const scopedAnchorTarget = anchorTarget
+					? targetWithContext(anchorTarget)
+					: undefined;
+				if (!anchor && !scopedAnchorTarget) {
+					return {
+						nodes: [],
+						unsupportedReasons: ["insert_before_unsupported_target"],
+					};
 				}
 				return {
 					nodes: [
@@ -310,9 +336,12 @@ function flattenEdit(
 							{
 								type: "insert_before",
 								target: context.target,
+								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
+								anchorContent: anchor ?? undefined,
+								anchorTarget: scopedAnchorTarget,
 							},
-							`by inserting "${edit.content}" before "${anchor}"`,
+							`by inserting "${edit.content}" before "${anchor ?? "target"}"`,
 						),
 					],
 					unsupportedReasons: [],
@@ -320,8 +349,15 @@ function flattenEdit(
 			}
 			if (edit.after) {
 				const anchor = textFromEditTarget(edit.after);
-				if (!anchor) {
-					return { nodes: [], unsupportedReasons: ["insert_after_non_text"] };
+				const anchorTarget = targetPathFromEditTarget(edit.after);
+				const scopedAnchorTarget = anchorTarget
+					? targetWithContext(anchorTarget)
+					: undefined;
+				if (!anchor && !scopedAnchorTarget) {
+					return {
+						nodes: [],
+						unsupportedReasons: ["insert_after_unsupported_target"],
+					};
 				}
 				return {
 					nodes: [
@@ -329,9 +365,12 @@ function flattenEdit(
 							{
 								type: "insert_after",
 								target: context.target,
+								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
+								anchorContent: anchor ?? undefined,
+								anchorTarget: scopedAnchorTarget,
 							},
-							`by inserting "${edit.content}" after "${anchor}"`,
+							`by inserting "${edit.content}" after "${anchor ?? "target"}"`,
 						),
 					],
 					unsupportedReasons: [],
@@ -345,6 +384,7 @@ function flattenEdit(
 							{
 								type: "add_at_end",
 								target: targetWithContext(scopedTarget),
+								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
 							},
 							"by adding at the end the following",
@@ -363,6 +403,7 @@ function flattenEdit(
 							{
 								type: "add_at_end",
 								target: context.target,
+								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 								content: edit.content,
 							},
 							"by adding at the end the following",
@@ -377,6 +418,7 @@ function flattenEdit(
 						{
 							type: "insert",
 							target: context.target,
+							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							content: edit.content,
 						},
 						"by inserting",
@@ -395,6 +437,7 @@ function flattenEdit(
 						{
 							type: "replace",
 							target: rewriteTarget,
+							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							content: edit.content,
 						},
 						"to read as follows:",
@@ -427,6 +470,7 @@ function walkTree(
 				target: scopeTarget,
 				matterPreceding: context.matterPreceding,
 				unanchoredInsertMode: context.unanchoredInsertMode,
+				sentenceOrdinal: context.sentenceOrdinal,
 			});
 			flattened.push(...nested.nodes);
 			unsupportedReasons.push(...nested.unsupportedReasons);
@@ -435,18 +479,21 @@ function walkTree(
 
 		if (node.type === SemanticNodeType.LocationRestriction) {
 			if (node.restriction.kind === LocationRestrictionKind.In) {
-				if (node.restriction.refs.length !== 1) {
-					unsupportedReasons.push("in_location_multi_ref_not_supported");
+				if (node.restriction.refs.length === 0) {
+					unsupportedReasons.push("in_location_empty_refs");
 					continue;
 				}
-				const target = refToHierarchyPath(node.restriction.refs[0]);
-				const nested = walkTree(node.children, {
-					target,
-					matterPreceding: context.matterPreceding,
-					unanchoredInsertMode: context.unanchoredInsertMode,
-				});
-				flattened.push(...nested.nodes);
-				unsupportedReasons.push(...nested.unsupportedReasons);
+				for (const ref of node.restriction.refs) {
+					const target = refToHierarchyPath(ref);
+					const nested = walkTree(node.children, {
+						target,
+						matterPreceding: context.matterPreceding,
+						unanchoredInsertMode: context.unanchoredInsertMode,
+						sentenceOrdinal: context.sentenceOrdinal,
+					});
+					flattened.push(...nested.nodes);
+					unsupportedReasons.push(...nested.unsupportedReasons);
+				}
 				continue;
 			}
 			if (node.restriction.kind === LocationRestrictionKind.MatterPreceding) {
@@ -455,6 +502,7 @@ function walkTree(
 					target,
 					matterPreceding: node.restriction.ref,
 					unanchoredInsertMode: context.unanchoredInsertMode,
+					sentenceOrdinal: context.sentenceOrdinal,
 				});
 				flattened.push(...nested.nodes);
 				unsupportedReasons.push(...nested.unsupportedReasons);
@@ -468,6 +516,18 @@ function walkTree(
 					target,
 					matterPreceding: context.matterPreceding,
 					unanchoredInsertMode: "add_at_end",
+					sentenceOrdinal: context.sentenceOrdinal,
+				});
+				flattened.push(...nested.nodes);
+				unsupportedReasons.push(...nested.unsupportedReasons);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.SentenceOrdinal) {
+				const nested = walkTree(node.children, {
+					target: context.target,
+					matterPreceding: context.matterPreceding,
+					unanchoredInsertMode: context.unanchoredInsertMode,
+					sentenceOrdinal: node.restriction.ordinal,
 				});
 				flattened.push(...nested.nodes);
 				unsupportedReasons.push(...nested.unsupportedReasons);
@@ -494,8 +554,8 @@ function normalizeTargetPath(target: HierarchyLevel[] | undefined): string[] {
 	if (!target) return [];
 	return target
 		.filter(
-			(part): part is Exclude<HierarchyLevel, { type: "none" | "section" }> =>
-				part.type !== "section" && part.type !== "none",
+			(part): part is Exclude<HierarchyLevel, { type: "section" }> =>
+				part.type !== "section",
 		)
 		.map((part) => part.val);
 }
@@ -508,83 +568,6 @@ function getLineStarts(text: string): number[] {
 	return starts;
 }
 
-function splitIntoLines(text: string): string[] {
-	return text.split("\n");
-}
-
-function countLeadingQuoteDepth(line: string): number {
-	const match = line.match(/^(>\s*)+/);
-	if (!match) return 0;
-	return (match[0].match(/>/g) ?? []).length;
-}
-
-function extractLeadingLabels(line: string): string[] {
-	const depth = countLeadingQuoteDepth(line);
-	const withoutQuotes = depth > 0 ? line.replace(/^(>\s*)+/, "") : line;
-	let rest = withoutQuotes.trimStart();
-	const labels: string[] = [];
-
-	while (rest.length > 0) {
-		const boldChain = rest.match(/^\*\*((?:\([^)]+\))+?)\*\*/);
-		if (boldChain) {
-			const markers = boldChain[1]?.match(/\(([^)]+)\)/g) ?? [];
-			for (const marker of markers) {
-				labels.push(marker.slice(1, -1));
-			}
-			rest = rest.slice(boldChain[0].length).trimStart();
-			continue;
-		}
-
-		const plainMarker = rest.match(/^\(([^)]+)\)/);
-		if (plainMarker) {
-			labels.push(plainMarker[1] ?? "");
-			rest = rest.slice(plainMarker[0].length).trimStart();
-			continue;
-		}
-
-		break;
-	}
-
-	return labels;
-}
-
-function buildMarkerOccurrences(lines: string[]): MarkerOccurrence[] {
-	const occurrences: MarkerOccurrence[] = [];
-	for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-		const line = lines[lineIndex] ?? "";
-		const depth = countLeadingQuoteDepth(line);
-		const labels = extractLeadingLabels(line);
-		for (let markerIndex = 0; markerIndex < labels.length; markerIndex++) {
-			const label = labels[markerIndex];
-			if (!label) continue;
-			occurrences.push({
-				label,
-				level: depth + markerIndex,
-				line: lineIndex,
-			});
-		}
-	}
-	return occurrences;
-}
-
-function findBoundaryLine(
-	occurrences: MarkerOccurrence[],
-	index: number,
-	maxEndLine: number,
-): number {
-	const current = occurrences[index];
-	if (!current) return maxEndLine;
-	for (let i = index + 1; i < occurrences.length; i++) {
-		const next = occurrences[i];
-		if (!next) continue;
-		if (next.line >= maxEndLine) break;
-		if (next.line > current.line && next.level <= current.level) {
-			return next.line;
-		}
-	}
-	return maxEndLine;
-}
-
 function resolveScopeRange(
 	text: string,
 	target: HierarchyLevel[] | undefined,
@@ -594,45 +577,41 @@ function resolveScopeRange(
 		return { start: 0, end: text.length, targetLevel: null };
 	}
 
-	const lines = splitIntoLines(text);
 	const lineStarts = getLineStarts(text);
-	const occurrences = buildMarkerOccurrences(lines);
-	if (occurrences.length === 0) return null;
-
-	let rangeStartLine = 0;
-	let rangeEndLine = lines.length;
-	let selectedOccurrence: MarkerOccurrence | null = null;
-
-	for (const rawLabel of labels) {
-		const label = rawLabel.toLowerCase();
-		let selectedIndex = -1;
-		for (let i = 0; i < occurrences.length; i++) {
-			const occurrence = occurrences[i];
-			if (!occurrence) continue;
-			if (occurrence.line < rangeStartLine || occurrence.line >= rangeEndLine)
-				continue;
-			if (occurrence.label.toLowerCase() !== label) continue;
-			selectedIndex = i;
-			break;
-		}
-		if (selectedIndex < 0) return null;
-		selectedOccurrence = occurrences[selectedIndex] ?? null;
-		if (!selectedOccurrence) return null;
-		rangeStartLine = selectedOccurrence.line;
-		rangeEndLine = findBoundaryLine(occurrences, selectedIndex, rangeEndLine);
-	}
-
-	const start = lineStarts[rangeStartLine] ?? 0;
+	const parsed = parseMarkdownHierarchy(text);
+	const node = findHierarchyNodeByMarkerPath(parsed.levels, labels);
+	if (!node) return null;
+	const startLine = parsed.paragraphs[node.startParagraph]?.startLine;
+	if (typeof startLine !== "number") return null;
+	const endLine =
+		node.endParagraph >= parsed.paragraphs.length
+			? lineStarts.length
+			: parsed.paragraphs[node.endParagraph]?.startLine;
+	if (typeof endLine !== "number") return null;
+	const start = lineStarts[startLine] ?? 0;
 	const end =
-		rangeEndLine >= lines.length
+		endLine >= lineStarts.length
 			? text.length
-			: (lineStarts[rangeEndLine] ?? text.length);
-	return { start, end, targetLevel: selectedOccurrence?.level ?? null };
+			: (lineStarts[endLine] ?? text.length);
+	return { start, end, targetLevel: node.level };
 }
 
 function previewRange(text: string, range: ScopeRange | null): string | null {
 	if (!range) return null;
 	return text.slice(range.start, Math.min(range.end, range.start + 180));
+}
+
+function resolveSentenceOrdinalRange(
+	text: string,
+	ordinal: number,
+): { start: number; end: number } | null {
+	const matches = Array.from(text.matchAll(/[^.!?]+[.!?]+|[^.!?]+$/g));
+	if (matches.length === 0) return null;
+	const sentence = matches[ordinal - 1];
+	if (!sentence) return null;
+	const start = sentence.index ?? 0;
+	const end = start + sentence[0].length;
+	return { start, end };
 }
 
 function extractAnchor(
@@ -761,18 +740,15 @@ function makeUnsupportedResult(
 export function applyAmendmentEditTreeToSection(
 	args: ApplyEditTreeArgs,
 ): AmendmentEffect {
-	const fallbackRootQuery: HierarchyLevel[] =
-		args.tree.targetScopePath && args.tree.targetScopePath.length > 0
-			? targetScopePathToHierarchyLevels(args.tree.targetScopePath)
-			: [];
 	const flattened = walkTree(args.tree.children, {
-		target: fallbackRootQuery,
+		target: [],
 		matterPreceding: null,
 		unanchoredInsertMode: /\badding at the end\b/i.test(
 			args.instructionText ?? "",
 		)
 			? "add_at_end"
 			: "insert",
+		sentenceOrdinal: null,
 	});
 
 	if (flattened.nodes.length === 0) {
@@ -796,14 +772,21 @@ export function applyAmendmentEditTreeToSection(
 		const hasExplicitTargetPath = Boolean(targetPath && targetPath.length > 0);
 		const targetPathText =
 			targetPath && targetPath.length > 0
-				? targetPath
-						.filter(
-							(item): item is Exclude<HierarchyLevel, { type: "none" }> =>
-								item.type !== "none",
-						)
-						.map((item) => `${item.type}:${item.val}`)
-						.join(" > ")
+				? targetPath.map((item) => `${item.type}:${item.val}`).join(" > ")
 				: null;
+
+		if (range && typeof node.operation.sentenceOrdinal === "number") {
+			const sentenceRange = resolveSentenceOrdinalRange(
+				workingText.slice(range.start, range.end),
+				node.operation.sentenceOrdinal,
+			);
+			if (sentenceRange) {
+				range.start += sentenceRange.start;
+				range.end = range.start + (sentenceRange.end - sentenceRange.start);
+			} else {
+				range.start = range.end;
+			}
+		}
 
 		const attempt: OperationMatchAttempt = {
 			operationType: node.operation.type,
@@ -839,7 +822,16 @@ export function applyAmendmentEditTreeToSection(
 			case "replace": {
 				const strikingContent = node.operation.strikingContent;
 				const replacementContent = node.operation.content;
-				if (!strikingContent || !replacementContent) break;
+				if (!replacementContent) break;
+				if (!strikingContent) {
+					patch = {
+						start: range.start,
+						end: range.end,
+						deleted: scopedText,
+						inserted: replacementContent,
+					};
+					break;
+				}
 				const localIndex = scopedText.indexOf(strikingContent);
 				attempt.searchText = strikingContent;
 				attempt.searchTextKind = "striking";
@@ -855,33 +847,90 @@ export function applyAmendmentEditTreeToSection(
 			}
 			case "delete": {
 				const strikingContent = node.operation.strikingContent;
-				if (!strikingContent) break;
-				const localIndex = scopedText.indexOf(strikingContent);
+				if (!strikingContent) {
+					patch = {
+						start: range.start,
+						end: range.end,
+						deleted: scopedText,
+						inserted: "",
+					};
+					break;
+				}
+				const localStart = scopedText.indexOf(strikingContent);
 				attempt.searchText = strikingContent;
 				attempt.searchTextKind = "striking";
-				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
-				if (localIndex < 0) break;
+				attempt.searchIndex = localStart >= 0 ? range.start + localStart : null;
+				if (localStart < 0) break;
+				let localEnd = localStart + strikingContent.length;
+				const throughContent = node.operation.throughContent;
+				if (throughContent) {
+					const throughStart = scopedText.indexOf(
+						throughContent,
+						localStart + strikingContent.length,
+					);
+					if (throughStart < 0) break;
+					localEnd = throughStart + throughContent.length;
+				}
+				const throughPunctuation = node.operation.throughPunctuation;
+				if (throughPunctuation) {
+					const punctuation = punctuationText(throughPunctuation);
+					const punctuationIndex = scopedText.indexOf(
+						punctuation,
+						localStart + strikingContent.length,
+					);
+					if (punctuationIndex < 0) break;
+					localEnd = punctuationIndex + punctuation.length;
+				}
+				let patchStart = range.start + localStart;
+				let patchEnd = range.start + localEnd;
+				if (throughContent || throughPunctuation) {
+					const beforeChar = workingText[patchStart - 1] ?? "";
+					const afterChar = workingText[patchEnd] ?? "";
+					if (patchStart === 0 && afterChar === " ") {
+						patchEnd += 1;
+					} else if (
+						patchStart > 0 &&
+						beforeChar === " " &&
+						afterChar === " "
+					) {
+						patchStart -= 1;
+					}
+				}
 				patch = {
-					start: range.start + localIndex,
-					end: range.start + localIndex + strikingContent.length,
-					deleted: strikingContent,
+					start: patchStart,
+					end: patchEnd,
+					deleted: workingText.slice(patchStart, patchEnd),
 					inserted: "",
 				};
 				break;
 			}
 			case "insert_before": {
-				const anchor = extractAnchor(node.text, "before");
+				const anchor =
+					node.operation.anchorContent ??
+					(node.operation.anchorTarget
+						? null
+						: extractAnchor(node.text, "before"));
 				const content = node.operation.content;
-				if (!anchor || !content) break;
-				const localIndex = scopedText.indexOf(anchor);
-				attempt.searchText = anchor;
-				attempt.searchTextKind = "anchor_before";
-				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
-				if (localIndex < 0) break;
-				const anchorStart = range.start + localIndex;
-				const needsSpace =
-					/[A-Za-z0-9)]$/.test(content) && /^[A-Za-z0-9(]/.test(anchor);
-				const value = `${content}${needsSpace ? " " : ""}`;
+				if (!content) break;
+				let anchorStart: number | null = null;
+				if (anchor) {
+					const localIndex = scopedText.indexOf(anchor);
+					attempt.searchText = anchor;
+					attempt.searchTextKind = "anchor_before";
+					attempt.searchIndex =
+						localIndex >= 0 ? range.start + localIndex : null;
+					if (localIndex >= 0) anchorStart = range.start + localIndex;
+				} else if (node.operation.anchorTarget) {
+					const anchorRange = resolveScopeRange(
+						workingText,
+						node.operation.anchorTarget,
+					);
+					if (anchorRange) anchorStart = anchorRange.start;
+				}
+				if (anchorStart === null) break;
+				const value = anchor
+					? `${content}${/[A-Za-z0-9)]$/.test(content) && /^[A-Za-z0-9(]/.test(anchor) ? " " : ""}`
+					: `${content}${content.endsWith("\n") ? "" : "\n"}`;
 				patch = {
 					start: anchorStart,
 					end: anchorStart,
@@ -891,18 +940,33 @@ export function applyAmendmentEditTreeToSection(
 				break;
 			}
 			case "insert_after": {
-				const anchor = extractAnchor(node.text, "after");
+				const anchor =
+					node.operation.anchorContent ??
+					(node.operation.anchorTarget
+						? null
+						: extractAnchor(node.text, "after"));
 				const content = node.operation.content;
-				if (!anchor || !content) break;
-				const localIndex = scopedText.indexOf(anchor);
-				attempt.searchText = anchor;
-				attempt.searchTextKind = "anchor_after";
-				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
-				if (localIndex < 0) break;
-				const anchorEnd = range.start + localIndex + anchor.length;
-				const needsLeadingSpace =
-					/[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(content);
-				const value = `${needsLeadingSpace ? " " : ""}${content}`;
+				if (!content) break;
+				let anchorEnd: number | null = null;
+				if (anchor) {
+					const localIndex = scopedText.indexOf(anchor);
+					attempt.searchText = anchor;
+					attempt.searchTextKind = "anchor_after";
+					attempt.searchIndex =
+						localIndex >= 0 ? range.start + localIndex : null;
+					if (localIndex >= 0)
+						anchorEnd = range.start + localIndex + anchor.length;
+				} else if (node.operation.anchorTarget) {
+					const anchorRange = resolveScopeRange(
+						workingText,
+						node.operation.anchorTarget,
+					);
+					if (anchorRange) anchorEnd = anchorRange.end;
+				}
+				if (anchorEnd === null) break;
+				const value = anchor
+					? `${/[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(content) ? " " : ""}${content}`
+					: `${workingText[anchorEnd - 1] === "\n" || anchorEnd === 0 ? "" : "\n"}${content}`;
 				patch = {
 					start: anchorEnd,
 					end: anchorEnd,

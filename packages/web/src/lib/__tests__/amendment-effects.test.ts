@@ -146,7 +146,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "1" }],
 			tree: [
 				{
 					label: { type: "paragraph", val: "1" },
@@ -187,7 +186,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "1" }],
 			tree: [
 				{
 					label: { type: "paragraph", val: "1" },
@@ -223,7 +221,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					label: { type: "paragraph", val: "1" },
@@ -283,7 +280,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					label: { type: "paragraph", val: "1" },
@@ -329,7 +325,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					operation: {
@@ -374,7 +369,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					operation: {
@@ -423,7 +417,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "1001" }],
 			tree: [
 				{
 					label: { type: "subsection", val: "a" },
@@ -559,7 +552,6 @@ describe("computeAmendmentEffect target scoping", () => {
 				paragraphs: [],
 				startPage: 1,
 				endPage: 1,
-				rootQuery: [],
 				tree: [
 					{
 						label: { type: "subsection", val: "a" },
@@ -598,7 +590,6 @@ describe("computeAmendmentEffect target scoping", () => {
 				paragraphs: [],
 				startPage: 1,
 				endPage: 1,
-				rootQuery: [],
 				tree: [
 					{
 						label: { type: "paragraph", val: "3" },
@@ -634,12 +625,6 @@ describe("computeAmendmentEffect target scoping", () => {
 				paragraphs: [],
 				startPage: 1,
 				endPage: 1,
-				rootQuery: [
-					{ type: "section", val: "28" },
-					{ type: "subsection", val: "d" },
-					{ type: "paragraph", val: "1" },
-					{ type: "subparagraph", val: "F" },
-				],
 				tree: [
 					{
 						operation: {
@@ -676,7 +661,6 @@ describe("computeAmendmentEffect target scoping", () => {
 				paragraphs: [],
 				startPage: 1,
 				endPage: 1,
-				rootQuery: [{ type: "section", val: "1111" }],
 				tree: [
 					{
 						label: { type: "subsection", val: "b" },
@@ -762,7 +746,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					operation: {
@@ -799,7 +782,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					operation: {
@@ -835,7 +817,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					operation: {
@@ -881,7 +862,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					label: { type: "subsection", val: "a" },
@@ -928,7 +908,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [],
 			tree: [
 				{
 					label: { type: "paragraph", val: "2" },
@@ -992,7 +971,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "1501" }],
 					tree: [
 						{
 							operation: {
@@ -1032,7 +1010,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "170" }],
 					tree: [
 						{
 							operation: {
@@ -1068,7 +1045,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "170" }],
 					tree: [
 						{
 							operation: {
@@ -1106,7 +1082,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "1902" }],
 					tree: [
 						{
 							operation: {
@@ -1141,7 +1116,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "428C" }],
 					tree: [
 						{
 							operation: {
@@ -1174,7 +1148,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "170" }],
 					tree: [
 						{
 							operation: {
@@ -1210,7 +1183,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "17" }],
 					tree: [
 						{
 							operation: {
@@ -1244,7 +1216,6 @@ describe("computeAmendmentEffect target scoping", () => {
 					paragraphs: [],
 					startPage: 1,
 					endPage: 1,
-					rootQuery: [{ type: "section", val: "2105" }],
 					tree: [
 						{
 							operation: {
@@ -1481,7 +1452,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "4" }],
 			tree: [
 				{
 					label: { type: "paragraph", val: "1" },
@@ -1540,7 +1510,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "1117" }],
 			tree: [
 				{
 					label: { type: "subparagraph", val: "A" },
@@ -1588,7 +1557,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "301" }],
 			tree: [
 				{
 					operation: {
@@ -1629,7 +1597,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "487" }],
 			tree: [
 				{
 					operation: {
@@ -1669,7 +1636,6 @@ describe("computeAmendmentEffect target scoping", () => {
 			paragraphs: [],
 			startPage: 1,
 			endPage: 1,
-			rootQuery: [{ type: "section", val: "1001" }],
 			tree: [
 				{
 					label: { type: "paragraph", val: "3" },

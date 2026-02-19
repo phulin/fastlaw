@@ -49,8 +49,6 @@ export interface AmendatoryInstruction {
 	paragraphs: Paragraph[];
 	startPage: number;
 	endPage: number;
-	/** Structured parsing of the target */
-	rootQuery: HierarchyLevel[];
 	/** Tree of specific operations */
 	tree: InstructionNode[];
 }
@@ -68,7 +66,6 @@ const DIVISION_HEADER_RE =
 const AMENDATORY_PHRASES = ["is amended", "is repealed", "is further amended"];
 const USC_CITATION_RE =
 	/(\d+)\s+U\.S\.C\.\s+\d+[A-Za-z0-9\u2013-]*(?:\([^)]*\))*/;
-const USC_CITATION_SECTION_RE = /^\d+\s+U\.S\.C\.\s+([0-9A-Za-z\u2013-]+)/i;
 const TITLE_SECTION_CITATION_RE =
 	/section\s+(\d+(?:[A-Za-z0-9-]*)(?:\([^)]*\))*)\s+of\s+title\s+(\d+),?\s+United States Code/i;
 
@@ -171,19 +168,6 @@ function extractUscCitation(text: string): string | null {
 	}
 
 	return null;
-}
-
-function getSectionLevelFromCitation(
-	citation: string | null,
-): HierarchyLevel | null {
-	if (!citation) return null;
-	const match = citation.match(USC_CITATION_SECTION_RE);
-	if (!match) return null;
-	return { type: "section", val: match[1] };
-}
-
-function hasSectionLevel(levels: HierarchyLevel[]): boolean {
-	return levels.some((level) => level.type === "section");
 }
 
 /**
@@ -716,7 +700,6 @@ export function extractAmendatoryInstructions(
 ): AmendatoryInstruction[] {
 	const instructions: AmendatoryInstruction[] = [];
 	let currentBillSection: string | null = null;
-	const lastSectionByBillSection = new Map<string | null, HierarchyLevel>();
 	const lastCitationByBillSection = new Map<string | null, string>();
 
 	const roots = buildTree(paragraphs);
@@ -808,7 +791,6 @@ export function extractAmendatoryInstructions(
 				i = j - 1;
 
 				const targetStr = extractTargetString(text);
-				let rootQuery = parseTarget(targetStr);
 				let uscCitation = extractUscCitation(text);
 				const billSectionKey = currentBillSection;
 				const usesSuchSection = /\bsuch section\b/i.test(targetStr);
@@ -820,22 +802,6 @@ export function extractAmendatoryInstructions(
 					}
 				}
 
-				if (usesSuchSection && !hasSectionLevel(rootQuery)) {
-					const priorSection = lastSectionByBillSection.get(billSectionKey);
-					const citedSection = getSectionLevelFromCitation(uscCitation);
-					const resolvedSection = priorSection ?? citedSection;
-					if (resolvedSection) {
-						rootQuery = [resolvedSection, ...rootQuery];
-					}
-				}
-
-				const sectionLevelMatch = rootQuery.find(
-					(level): level is Extract<HierarchyLevel, { type: "section" }> =>
-						level.type === "section",
-				);
-				if (sectionLevelMatch) {
-					lastSectionByBillSection.set(billSectionKey, sectionLevelMatch);
-				}
 				if (uscCitation) {
 					lastCitationByBillSection.set(billSectionKey, uscCitation);
 				}
@@ -888,7 +854,6 @@ export function extractAmendatoryInstructions(
 					startPage: instructionParagraphs[0].startPage,
 					endPage:
 						instructionParagraphs[instructionParagraphs.length - 1].endPage,
-					rootQuery: rootQuery,
 					tree: opTree,
 				});
 			} else {

@@ -81,23 +81,32 @@ export function translateInstructionAstToEditTree(
 	ast: InstructionAst,
 ): TranslationResult {
 	const issues: TranslationIssue[] = [];
+	const targetScopePath = extractTargetScopePath(ast.parent, issues);
+	const baseStructuralScope =
+		structuralScopeFromTargetScopePath(targetScopePath);
+	const baseWrappers: WrapperSpec[] = baseStructuralScope.map((scope) => ({
+		type: "scope",
+		scope,
+	}));
 	const baseContext: TranslationContext = {
 		issues,
-		scopePath: [],
+		scopePath: baseStructuralScope,
 		moveFromRefs: null,
 	};
 	const children: TreeChild[] = [];
 
 	if (ast.resolution) {
-		children.push(...translateResolution(ast.resolution, baseContext, []));
+		children.push(
+			...translateResolution(ast.resolution, baseContext, baseWrappers),
+		);
 	}
 	if (ast.subinstructions) {
 		for (const item of ast.subinstructions.items) {
-			children.push(...translateSubinstruction(item, baseContext, []));
+			children.push(
+				...translateSubinstruction(item, baseContext, baseWrappers),
+			);
 		}
 	}
-
-	const targetScopePath = extractTargetScopePath(ast.parent, issues);
 
 	return {
 		tree: {
@@ -974,6 +983,16 @@ function extractTargetSection(
 		(scope): scope is ScopeSelector => scope.kind === ScopeKind.Section,
 	);
 	return sectionScope?.label;
+}
+
+function structuralScopeFromTargetScopePath(
+	targetScopePath: TargetScopeSegment[] | undefined,
+): ScopeSelector[] {
+	if (!targetScopePath) return [];
+	return targetScopePath.filter(
+		(scope): scope is ScopeSelector =>
+			scope.kind !== "code_reference" && scope.kind !== "act_reference",
+	);
 }
 
 function extractTargetScopePath(

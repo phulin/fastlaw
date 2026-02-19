@@ -31,9 +31,6 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instructions).toHaveLength(1);
 
 		// Verify structured parsing
-		expect(instructions[0].rootQuery).toEqual([
-			{ type: "section", val: "123" },
-		]);
 
 		const tree = instructions[0].tree;
 		// (a) is the root node in the tree
@@ -88,13 +85,6 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instructions).toHaveLength(2);
 		expect(instructions[0].target).toBe("Section 456");
 		expect(instructions[1].target).toBe("Section 789");
-
-		expect(instructions[0].rootQuery).toEqual([
-			{ type: "section", val: "456" },
-		]);
-		expect(instructions[1].rootQuery).toEqual([
-			{ type: "section", val: "789" },
-		]);
 	});
 
 	it("handles 'is further amended'", () => {
@@ -113,10 +103,6 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instructions[0].target).toBe(
 			"Section 123 of Something (1 U.S.C. 1)",
 		);
-		expect(instructions[0].rootQuery[0]).toEqual({
-			type: "section",
-			val: "123",
-		});
 	});
 
 	it("handles the case with (A) and (i)", () => {
@@ -202,9 +188,6 @@ describe("extractAmendatoryInstructions", () => {
 		const instructions = extractAmendatoryInstructions(paras);
 		expect(instructions).toHaveLength(1);
 		expect(instructions[0].uscCitation).toBe("7 U.S.C. 9032");
-		expect(instructions[0].rootQuery).toEqual([
-			{ type: "section", val: "1202" },
-		]);
 
 		const rootNode = instructions[0].tree[0];
 		expect(rootNode.label).toEqual({ type: "subsection", val: "b" });
@@ -296,10 +279,6 @@ describe("extractAmendatoryInstructions", () => {
 		expect(instructions).toHaveLength(2);
 
 		const instr1 = instructions[0];
-		expect(instr1.rootQuery).toEqual([
-			{ type: "section", val: "4" },
-			{ type: "subsection", val: "a" },
-		]);
 
 		const tree = instr1.tree;
 		expect(tree[0].label?.type).toBe("subsection"); // (a)
@@ -322,7 +301,6 @@ describe("extractAmendatoryInstructions", () => {
 			{ startPage: 13, lines: [{ xStart: 20 }] },
 		);
 		const instrs1 = extractAmendatoryInstructions([para1]);
-		expect(instrs1[0].rootQuery).toEqual([{ type: "section", val: "3" }]);
 		expect(instrs1[0].tree[0].operation.type).toBe("replace");
 
 		// Instruction 2: Section 16(c)(1)(A)(ii)(II) (Page 16)
@@ -331,14 +309,6 @@ describe("extractAmendatoryInstructions", () => {
 			{ startPage: 16, lines: [{ xStart: 40 }] },
 		);
 		const instrs2 = extractAmendatoryInstructions([para2]);
-		expect(instrs2[0].rootQuery).toEqual([
-			{ type: "section", val: "16" },
-			{ type: "subsection", val: "c" },
-			{ type: "paragraph", val: "1" },
-			{ type: "subparagraph", val: "A" },
-			{ type: "clause", val: "ii" },
-			{ type: "subclause", val: "II" },
-		]);
 		expect(instrs2[0].tree[0].operation.type).toBe("replace");
 
 		// Instruction 8: Section 5(e)(6)(C)(iv)(I) (Page 21) - Testing "after"
@@ -398,11 +368,8 @@ describe("extractAmendatoryInstructions", () => {
 			}),
 		];
 		const instructions = extractAmendatoryInstructions(paras);
-		expect(instructions[0].rootQuery).toEqual([
-			{ type: "section", val: "3" },
-			{ type: "subsection", val: "u" },
-			{ type: "paragraph", val: "4" },
-		]);
+		expect(instructions).toHaveLength(1);
+		expect(instructions[0]?.target).toBe("Section 3(u)(4) of the Act");
 	});
 
 	it("extracts quoted strike-and-insert content when the opening quote is a right smart quote", () => {
@@ -564,10 +531,6 @@ describe("extractAmendatoryInstructions", () => {
 
 		const instruction = instructions[0];
 		expect(instruction.uscCitation).toBe("10 U.S.C. 4025");
-		expect(instruction.rootQuery).toEqual([
-			{ type: "section", val: "4025" },
-			{ type: "subsection", val: "a" },
-		]);
 		expect(instruction.tree[0].operation.type).toBe("insert_after");
 		expect(instruction.tree[0].operation.target).toEqual([
 			{ type: "section", val: "4025" },
@@ -611,10 +574,6 @@ describe("extractAmendatoryInstructions", () => {
 
 		const instruction = instructions[1];
 		expect(instruction.uscCitation).toBe("10 U.S.C. 4025");
-		expect(instruction.rootQuery).toEqual([
-			{ type: "section", val: "4025" },
-			{ type: "subsection", val: "c" },
-		]);
 
 		const root = instruction.tree[0];
 		expect(root?.operation.type).toBe("context");
@@ -653,12 +612,6 @@ describe("extractAmendatoryInstructions", () => {
 		const instructions = extractAmendatoryInstructions(paragraphs);
 		expect(instructions).toHaveLength(1);
 		expect(instructions[0].uscCitation).toBe("7 U.S.C. 2036a(d)(1)(F)");
-		expect(instructions[0].rootQuery).toEqual([
-			{ type: "section", val: "28" },
-			{ type: "subsection", val: "d" },
-			{ type: "paragraph", val: "1" },
-			{ type: "subparagraph", val: "F" },
-		]);
 	});
 
 	it("captures structural strike target for strike-and-insert-following instructions", () => {
@@ -756,9 +709,6 @@ describe("extractAmendatoryInstructions", () => {
 			const instructions = extractAmendatoryInstructions(paras);
 
 			expect(instructions).toHaveLength(1);
-			expect(instructions[0].rootQuery).toEqual([
-				{ type: "section", val: "101" },
-			]);
 
 			// The tree should have two operations due to plural target splitting
 			const tree = instructions[0].tree;
@@ -796,10 +746,6 @@ describe("extractAmendatoryInstructions", () => {
 
 			expect(instructions).toHaveLength(1);
 			expect(instructions[0].uscCitation).toBe("7 U.S.C. 1308–1");
-			expect(instructions[0].rootQuery).toContainEqual({
-				type: "section",
-				val: "1001A",
-			});
 		});
 
 		it("handles complex combined instruction with plural labels and en-dashes", () => {
