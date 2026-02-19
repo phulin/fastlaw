@@ -160,6 +160,33 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.inserted).toEqual(["new"]);
 	});
 
+	it("uses tree targetScopePath as fallback root scope", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetScopePath: [
+				{ kind: ScopeKind.Section, label: "1" },
+				{ kind: ScopeKind.Subsection, label: "a" },
+				{ kind: ScopeKind.Paragraph, label: "2" },
+			],
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: { kind: UltimateEditKind.Insert, content: "NEW" },
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(a) Intro.\n(1) One.\n(2) Two.",
+			instructionText: 'Section 1(a)(2) is amended by inserting "NEW".',
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain("(2) Two.\nNEW");
+	});
+
 	it("applies Rewrite edits", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

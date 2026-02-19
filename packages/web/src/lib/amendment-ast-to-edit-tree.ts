@@ -14,6 +14,7 @@ import {
 	SearchTargetKind,
 	SemanticNodeType,
 	type StructuralReference,
+	type TargetScopeSegment,
 	TextLocationAnchorKind,
 	type UltimateEdit,
 	UltimateEditKind,
@@ -92,10 +93,13 @@ export function translateInstructionAstToEditTree(
 		}
 	}
 
+	const targetScopePath = extractTargetScopePath(ast.parent, issues);
+
 	return {
 		tree: {
 			type: SemanticNodeType.InstructionRoot,
-			targetSection: extractTargetSection(ast.parent),
+			targetScopePath,
+			targetSection: extractTargetSection(targetScopePath),
 			children,
 		},
 		issues,
@@ -920,6 +924,31 @@ function parseSubLocationOrSub(
 	};
 }
 
+function parseSubLocationOrSubCaps(
+	node: RuleAst<GrammarAstNodeType.SubLocationOrSubCaps>,
+): StructuralReference | null {
+	const subNameNode = findChild(node, GrammarAstNodeType.SubNameCaps);
+	const subIds = findChildren(
+		findChild(node, GrammarAstNodeType.SubsectionOrSub),
+		GrammarAstNodeType.SubId,
+	).map((id) => normalizeSubId(id.text));
+	const firstKind = subNameNode ? scopeKindFromText(subNameNode.text) : null;
+	if (!firstKind || subIds.length === 0) {
+		return null;
+	}
+
+	let kind = firstKind;
+	const path: ScopeSelector[] = [];
+	for (const label of subIds) {
+		path.push({ kind, label });
+		kind = nextScopeKind(kind);
+	}
+	return {
+		kind: path[path.length - 1]?.kind ?? firstKind,
+		path,
+	};
+}
+
 function parseSubLocation(
 	node: RuleAst<GrammarAstNodeType.SubLocation>,
 ): StructuralReference | null {
@@ -935,16 +964,107 @@ function parseSubLocation(
 }
 
 function extractTargetSection(
-	parentNode: RuleAst<GrammarAstNodeType.Parent>,
+	targetScopePath: TargetScopeSegment[] | undefined,
 ): string | undefined {
-	const sectionOrSub = findChildDeep(
+	const sectionScope = targetScopePath?.find(
+		(scope): scope is ScopeSelector => scope.kind === ScopeKind.Section,
+	);
+	return sectionScope?.label;
+}
+
+function extractTargetScopePath(
+	parentNode: RuleAst<GrammarAstNodeType.Parent>,
+	issues: TranslationIssue[],
+): TargetScopeSegment[] | undefined {
+	const uscScope = extractUscScopePath(parentNode);
+	if (uscScope) return uscScope;
+
+	const structuralScope = extractLocatorStructuralScope(parentNode);
+	const hasSection = structuralScope.some(
+		(scope) => scope.kind === ScopeKind.Section,
+	);
+	const contextReference = extractCodeOrActReference(parentNode);
+
+	if (!contextReference || !hasSection) {
+		issues.push({
+			message:
+				"Unable to derive target scope path with both top-level context reference and section.",
+			nodeType: GrammarAstNodeType.Parent,
+			sourceText: parentNode.text,
+		});
+	}
+
+	if (contextReference && hasSection) {
+		return [contextReference, ...structuralScope];
+	}
+	return undefined;
+}
+
+function extractUscScopePath(
+	parentNode: RuleAst<GrammarAstNodeType.Parent>,
+): TargetScopeSegment[] | null {
+	const uscRef = findChildDeep(parentNode, GrammarAstNodeType.UscRef);
+	if (!uscRef) return null;
+
+	const titleMatch = uscRef.text.match(/^(\d+)\s+U\.S\.C\./i);
+	const title = titleMatch?.[1];
+	if (!title) return null;
+
+	const uscSectionOrSub = findChild(uscRef, GrammarAstNodeType.SectionOrSub);
+	const structuralScope = uscSectionOrSub
+		? parseSectionOrSub(uscSectionOrSub).path
+		: [];
+	if (structuralScope.length === 0) return null;
+
+	return [
+		{ kind: "code_reference", label: `${title} U.S.C.` },
+		...structuralScope,
+	];
+}
+
+function extractLocatorStructuralScope(
+	parentNode: RuleAst<GrammarAstNodeType.Parent>,
+): ScopeSelector[] {
+	const initialLocator = findChild(
 		parentNode,
+		GrammarAstNodeType.InitialLocator,
+	);
+	if (!initialLocator) return [];
+
+	const sectionOrSub = findChildDeep(
+		initialLocator,
 		GrammarAstNodeType.SectionOrSub,
 	);
-	const sectionId = sectionOrSub
-		? findChild(sectionOrSub, GrammarAstNodeType.SectionId)
-		: null;
-	return sectionId?.text.trim() || undefined;
+	const sectionPath = sectionOrSub ? parseSectionOrSub(sectionOrSub).path : [];
+
+	const subLocationCaps = findChildDeep(
+		initialLocator,
+		GrammarAstNodeType.SubLocationOrSubCaps,
+	);
+	const subPath = subLocationCaps
+		? (parseSubLocationOrSubCaps(subLocationCaps)?.path ?? [])
+		: [];
+
+	return mergeScopePaths(sectionPath, subPath);
+}
+
+function extractCodeOrActReference(
+	parentNode: RuleAst<GrammarAstNodeType.Parent>,
+): TargetScopeSegment | null {
+	const underlying = findChild(parentNode, GrammarAstNodeType.Underlying);
+	const titleCodeMatch = underlying?.text.match(
+		/title\s+(\d+),\s+United States Code/i,
+	);
+	if (titleCodeMatch?.[1]) {
+		return { kind: "code_reference", label: `${titleCodeMatch[1]} U.S.C.` };
+	}
+
+	const actNode = findChildDeep(parentNode, GrammarAstNodeType.Act);
+	const actLabel = actNode?.text.trim();
+	if (actLabel && actLabel.length > 0) {
+		return { kind: "act_reference", label: actLabel };
+	}
+	return null;
 }
 
 function extractInlineContent(node: RuleAst): string {

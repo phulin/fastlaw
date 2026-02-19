@@ -7,6 +7,7 @@ import {
 	InnerLocationTargetKind,
 	LocationRestrictionKind,
 	PunctuationKind,
+	ScopeKind,
 	SemanticNodeType,
 	TextLocationAnchorKind,
 	UltimateEditKind,
@@ -30,6 +31,37 @@ const HR1_FIXTURE_PATH = resolve(
 const hasHr1Fixture = existsSync(HR1_FIXTURE_PATH);
 
 describe("translateInstructionAstToEditTree", () => {
+	it("extracts full parent scope path from initial locator", () => {
+		const ast = parseInstructionAst(
+			"Section 101(a)(2)(B) of title 10, United States Code, is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "code_reference", label: "10 U.S.C." },
+			{ kind: ScopeKind.Section, label: "101" },
+			{ kind: ScopeKind.Subsection, label: "a" },
+			{ kind: ScopeKind.Paragraph, label: "2" },
+			{ kind: ScopeKind.Subparagraph, label: "B" },
+		]);
+		expect(result.tree.targetSection).toBe("101");
+	});
+
+	it("prefers USC citation scope when available", () => {
+		const ast = parseInstructionAst(
+			"Section 403(b) of the Immigration Act of 2014 (8 U.S.C. 1182(c)(1)) is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "code_reference", label: "8 U.S.C." },
+			{ kind: ScopeKind.Section, label: "1182" },
+			{ kind: ScopeKind.Subsection, label: "c" },
+			{ kind: ScopeKind.Paragraph, label: "1" },
+		]);
+		expect(result.tree.targetSection).toBe("1182");
+	});
+
 	it("translates sentence ordinal text location with explicit anchor", () => {
 		const ast = parseInstructionAst(
 			"Section 101 of title 10, United States Code, is amended in the first sentence of subsection (a) by striking “A”.",

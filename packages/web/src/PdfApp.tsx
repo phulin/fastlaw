@@ -720,7 +720,6 @@ export default function PdfApp() {
 												tree: translatedEditTree.tree,
 												sectionPath,
 												sectionBody: sectionBodyText,
-												rootQuery: instr.rootQuery,
 												instructionText: instr.text,
 											});
 										})()

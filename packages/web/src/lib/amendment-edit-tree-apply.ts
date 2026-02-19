@@ -7,6 +7,7 @@ import {
 	SearchTargetKind,
 	SemanticNodeType,
 	type StructuralReference,
+	type TargetScopeSegment,
 	UltimateEditKind,
 } from "./amendment-edit-tree";
 
@@ -173,6 +174,19 @@ function toHierarchyType(kind: ScopeKind): HierarchyLevel["type"] {
 		case ScopeKind.Subitem:
 			return "subitem";
 	}
+}
+
+function targetScopePathToHierarchyLevels(
+	path: TargetScopeSegment[],
+): HierarchyLevel[] {
+	return path
+		.filter((item): item is Extract<TargetScopeSegment, { kind: ScopeKind }> =>
+			Object.values(ScopeKind).includes(item.kind as ScopeKind),
+		)
+		.map((item) => ({
+			type: toHierarchyType(item.kind),
+			val: item.label,
+		}));
 }
 
 function refToHierarchyPath(ref: StructuralReference): HierarchyLevel[] {
@@ -748,15 +762,11 @@ export function applyAmendmentEditTreeToSection(
 	args: ApplyEditTreeArgs,
 ): AmendmentEffect {
 	const fallbackRootQuery: HierarchyLevel[] =
-		args.tree.targetSection && args.tree.targetSection.length > 0
-			? [{ type: "section", val: args.tree.targetSection }]
+		args.tree.targetScopePath && args.tree.targetScopePath.length > 0
+			? targetScopePathToHierarchyLevels(args.tree.targetScopePath)
 			: [];
-	const rootQuery =
-		(args.rootQuery ?? []).length > 0
-			? (args.rootQuery ?? [])
-			: fallbackRootQuery;
 	const flattened = walkTree(args.tree.children, {
-		target: rootQuery,
+		target: fallbackRootQuery,
 		matterPreceding: null,
 		unanchoredInsertMode: /\badding at the end\b/i.test(
 			args.instructionText ?? "",

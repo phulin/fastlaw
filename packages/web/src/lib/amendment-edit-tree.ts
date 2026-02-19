@@ -56,6 +56,26 @@ export interface ScopeSelector {
 	label: string;
 }
 
+export interface CodeReferenceTargetScopeSegment {
+	kind: "code_reference";
+	label: string;
+}
+
+export interface ActReferenceTargetScopeSegment {
+	kind: "act_reference";
+	label: string;
+}
+
+export interface StructuralTargetScopeSegment {
+	kind: ScopeKind;
+	label: string;
+}
+
+export type TargetScopeSegment =
+	| CodeReferenceTargetScopeSegment
+	| ActReferenceTargetScopeSegment
+	| StructuralTargetScopeSegment;
+
 export interface StructuralReference {
 	kind: ScopeKind;
 	path: ScopeSelector[];
@@ -294,5 +314,6 @@ export interface ScopeNode {
 export interface InstructionSemanticTree {
 	type: SemanticNodeType.InstructionRoot;
 	targetSection?: string;
+	targetScopePath?: TargetScopeSegment[];
 	children: Array<ScopeNode | LocationRestrictionNode | EditNode>;
 }
