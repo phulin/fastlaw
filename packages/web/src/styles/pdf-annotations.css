@@ -1,0 +1,159 @@
+/* Annotation Styles (migrated from text-pane) */
+.pdf-column-annotations p[class^="pdf-amend-color-"],
+.pdf-column-annotations div[class^="pdf-amend-color-"] {
+	border-left: 3px solid;
+	padding-left: 0.5rem;
+	margin-left: -0.75rem; /* Pull back slightly to hang the border, relative to the 2rem container padding */
+	margin-right: 1.5rem;
+	margin-top: 0;
+	margin-bottom: 0;
+}
+
+/* Default style for non-amendatory paragraphs to match font */
+.pdf-column-annotations p {
+	margin: 0;
+}
+
+.pdf-instruction-button {
+	display: block;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	text-align: left;
+	cursor: pointer;
+	color: var(--ink);
+}
+
+.pdf-instruction-button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.pdf-amended-snippet-replacement {
+	white-space: pre-wrap;
+	display: flex;
+	gap: 0.45rem;
+	flex-wrap: wrap;
+	margin: 0;
+}
+
+.pdf-amended-snippet-status {
+	margin-bottom: 0.45rem;
+}
+
+.pdf-amended-snippet-status-badge {
+	display: inline-block;
+	padding: 0.1rem 0.5rem;
+	border-radius: 999px;
+	border: 1px solid rgba(159, 47, 31, 0.25);
+	background: rgba(159, 47, 31, 0.09);
+	color: #7a271a;
+	font-size: 0.72rem;
+	font-weight: 700;
+	letter-spacing: 0.01em;
+	text-transform: uppercase;
+}
+
+.pdf-amended-snippet-header {
+	margin: 0 0 0.4rem;
+}
+
+.pdf-amended-snippet-header h4 {
+	margin: 0;
+	font-weight: 700;
+	font-size: 1rem;
+}
+
+.pdf-amended-snippet-instruction {
+	margin-bottom: 0.55rem;
+}
+
+.pdf-amended-snippet-main {
+	margin-top: 0.35rem;
+}
+
+.pdf-column-annotations ins,
+.pdf-instruction-modal ins {
+	color: #14532d;
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	background: rgba(22, 163, 74, 0.13);
+}
+
+.pdf-column-annotations del,
+.pdf-instruction-modal del {
+	color: #8f1d1d;
+	text-decoration: line-through;
+	text-decoration-thickness: 2px;
+	background: rgba(220, 38, 38, 0.11);
+}
+
+.pdf-column-annotations .markdown p {
+	margin-top: 0.45rem;
+}
+
+.pdf-column-annotations .markdown p:first-child {
+	margin-top: 0;
+}
+
+.pdf-column-annotations .markdown > ins,
+.pdf-column-annotations .markdown > del {
+	display: block;
+	margin-top: 0.45rem;
+}
+
+.pdf-column-annotations .indent0 {
+	margin-left: 0;
+}
+
+.pdf-column-annotations .indent1 {
+	margin-left: 1rem;
+}
+
+.pdf-column-annotations .indent2 {
+	margin-left: 2rem;
+}
+
+.pdf-column-annotations .indent3 {
+	margin-left: 3rem;
+}
+
+.pdf-column-annotations .indent4 {
+	margin-left: 4rem;
+}
+
+.pdf-column-annotations .indent5 {
+	margin-left: 5rem;
+}
+
+.pdf-amend-color-0 {
+	background: rgba(59, 130, 246, 0.08);
+	border-left-color: rgba(59, 130, 246, 0.5);
+}
+
+.pdf-amend-color-1 {
+	background: rgba(16, 185, 129, 0.08);
+	border-left-color: rgba(16, 185, 129, 0.5);
+}
+
+.pdf-amend-color-2 {
+	background: rgba(245, 158, 11, 0.08);
+	border-left-color: rgba(245, 158, 11, 0.5);
+}
+
+.pdf-amend-color-3 {
+	background: rgba(139, 92, 246, 0.08);
+	border-left-color: rgba(139, 92, 246, 0.5);
+}
+
+.pdf-amend-color-4 {
+	background: rgba(236, 72, 153, 0.08);
+	border-left-color: rgba(236, 72, 153, 0.5);
+}
+
+.pdf-amend-color-5 {
+	background: rgba(20, 184, 166, 0.08);
+	border-left-color: rgba(20, 184, 166, 0.5);
+}

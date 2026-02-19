@@ -1,0 +1,114 @@
+.pdf-scroll-container {
+	width: 100%;
+	height: calc(100vh - var(--pdf-viewer-header-height));
+	overflow-y: auto;
+	overflow-x: hidden;
+	display: block;
+	position: relative;
+}
+
+.pdf-virtualizer-size {
+	position: relative;
+	width: 100%;
+	margin: 0 0 64px;
+}
+
+.pdf-virtualizer-item {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+}
+
+.pdf-virtualizer-debug {
+	position: fixed;
+	top: 100px;
+	right: 10px;
+	display: block;
+	z-index: 20;
+	margin: 0.5rem 0.75rem 0 0;
+	margin-left: auto;
+	width: max-content;
+	max-width: calc(100% - 1rem);
+	padding: 0.5rem 0.75rem;
+	border: 1px solid rgba(15, 23, 42, 0.35);
+	border-radius: 0.5rem;
+	background: rgba(15, 23, 42, 0.88);
+	color: #f8fafc;
+	font-family: "Space Mono", monospace;
+	font-size: 0.75rem;
+	line-height: 1.35;
+}
+
+.pdf-virtualizer-debug span {
+	display: block;
+}
+
+.pdf-virtualizer-item-debug {
+	position: absolute;
+	top: 0.35rem;
+	left: 0.35rem;
+	z-index: 5;
+	padding: 0.2rem 0.35rem;
+	border-radius: 0.35rem;
+	background: rgba(251, 191, 36, 0.95);
+	color: #1f2937;
+	font-family: "Space Mono", monospace;
+	font-size: 0.65rem;
+	line-height: 1;
+	pointer-events: none;
+}
+
+.pdf-page-row {
+	width: 100%;
+	/* No longer a grid itself */
+}
+
+.pdf-page-row-viewer-pane {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 24px 0;
+	/* Border moved to column split potentially, or kept here if we want a line between pages? 
+       Actually, grid gap or border on the column div is better. */
+	background-color: var(--bg);
+	/* min-height removed to fix offset sync */
+}
+
+.pdf-page-row-canvas-shell {
+	position: relative;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+	background-color: white;
+	width: var(--pdf-page-width, auto);
+	height: var(--pdf-page-height, auto);
+}
+
+.pdf-page-row-canvas {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+.pdf-page-row-text-layer {
+	width: 100%;
+	height: 100%;
+	position: absolute;
+	left: 0;
+	top: 0;
+}
+
+/* New Split Columns */
+.pdf-column-viewer {
+	background-color: var(--bg);
+	border-right: 1px solid var(--line);
+}
+
+.pdf-column-annotations {
+	background-color: white;
+	position: relative;
+	padding: 0 2rem;
+	font-family:
+		-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+		sans-serif;
+	font-size: 0.9rem;
+}

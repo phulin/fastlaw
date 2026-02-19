@@ -6,42 +6,19 @@ import {
 	createEffect,
 	createMemo,
 	createSignal,
-	For,
 	onCleanup,
 	onMount,
 	Show,
 } from "solid-js";
-import { AnnotationLayer, type PageLayout } from "./components/AnnotationLayer";
+import type { PageLayout } from "./components/AnnotationLayer";
 import { Header } from "./components/Header";
+import { InstructionDebugModal } from "./components/InstructionDebugModal";
 import type { InstructionPageItem, PageItem } from "./components/PageRow";
-import { PageRow } from "./components/PageRow";
+import { PdfUploadDropzone } from "./components/PdfUploadDropzone";
+import { PdfWorkspace } from "./components/PdfWorkspace";
 import "pdfjs-dist/web/pdf_viewer.css";
-import amendmentGrammarSource from "../amendment-grammar.bnf?raw";
-import {
-	type AmendatoryInstruction,
-	extractAmendatoryInstructions,
-} from "./lib/amendatory-instructions";
-import { translateInstructionAstToEditTree } from "./lib/amendment-ast-to-edit-tree";
-import {
-	type EditNode,
-	type InstructionSemanticTree,
-	type LocationRestrictionNode,
-	type ScopeNode,
-	SemanticNodeType,
-} from "./lib/amendment-edit-tree";
-import { applyAmendmentEditTreeToSection } from "./lib/amendment-edit-tree-apply";
-import {
-	type AmendmentEffect,
-	getSectionBodyText,
-	getSectionPathFromUscCitation,
-	type SectionBodiesResponse,
-} from "./lib/amendment-effects";
-import {
-	HandcraftedInstructionParser,
-	type ParsedInstruction,
-	type RuleAst,
-} from "./lib/handcrafted-instruction-parser";
-import { renderMarkdown } from "./lib/markdown";
+import "./styles/pdf-base.css";
+import { buildPageItemsFromParagraphs } from "./lib/pdf/page-items";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
 import type { NodeContent, SourceVersionRecord } from "./lib/types";
@@ -50,68 +27,23 @@ const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1078;
-const instructionParser = new HandcraftedInstructionParser(
-	amendmentGrammarSource,
-);
+
+interface SectionBodiesResponse {
+	results: Array<
+		| {
+				path: string;
+				status: "ok";
+				content: NodeContent;
+		  }
+		| {
+				path: string;
+				status: "not_found" | "error";
+				error?: string;
+		  }
+	>;
+}
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
-
-const previewDebugText = (value: string) =>
-	value.replace(/\s+/g, " ").trim().slice(0, 120);
-
-const formatAstNodeLines = (
-	node: RuleAst,
-	depth: number,
-	lines: string[],
-): void => {
-	const indent = "  ".repeat(depth);
-	lines.push(`${indent}- ${node.type}: ${previewDebugText(node.text)}`);
-	for (const child of node.children) {
-		formatAstNodeLines(child, depth + 1, lines);
-	}
-};
-
-const formatParseTree = (
-	parsedInstruction: ParsedInstruction | null,
-): string => {
-	if (!parsedInstruction) {
-		return "Parser did not match this instruction.";
-	}
-	const lines: string[] = [];
-	formatAstNodeLines(parsedInstruction.ast, 0, lines);
-	return lines.join("\n");
-};
-
-const describeEditTreeNode = (
-	node: ScopeNode | LocationRestrictionNode | EditNode,
-	depth: number,
-	lines: string[],
-): void => {
-	const indent = "  ".repeat(depth);
-	if (node.type === SemanticNodeType.Scope) {
-		lines.push(`${indent}- scope ${node.scope.kind}(${node.scope.label})`);
-		for (const child of node.children) {
-			describeEditTreeNode(child, depth + 1, lines);
-		}
-		return;
-	}
-	if (node.type === SemanticNodeType.LocationRestriction) {
-		lines.push(`${indent}- restriction ${node.restriction.kind}`);
-		for (const child of node.children) {
-			describeEditTreeNode(child, depth + 1, lines);
-		}
-		return;
-	}
-	lines.push(`${indent}- edit ${node.edit.kind}: ${JSON.stringify(node.edit)}`);
-};
-
-const formatEditTree = (tree: InstructionSemanticTree): string => {
-	const lines: string[] = [];
-	for (const child of tree.children) {
-		describeEditTreeNode(child, 0, lines);
-	}
-	return lines.length > 0 ? lines.join("\n") : "No edit nodes.";
-};
 
 // Persistence Helpers
 const openDB = () => {
@@ -283,13 +215,12 @@ export default function PdfApp() {
 	});
 
 	// Refs and state for PDF rendering
-	let fileInput: HTMLInputElement | undefined;
 	let currentPdf: PDFDocumentProxy | null = null;
 	let pdfjsLib: Awaited<typeof import("pdfjs-dist")> | null = null;
 	let currentFileHash: string | null = null;
 	let initialScrollTargetPage = 1;
 	let hasAppliedInitialScroll = false;
-	let paragraphApplyVersion = 0;
+	let processVersion = 0;
 
 	const rowVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
 		get count() {
@@ -415,12 +346,11 @@ export default function PdfApp() {
 		setError(null);
 		setFileName("");
 		setSelectedInstructionItem(null);
-		if (fileInput) fileInput.value = "";
 		currentPdf = null;
 		currentFileHash = null;
 		initialScrollTargetPage = 1;
 		hasAppliedInitialScroll = false;
-		paragraphApplyVersion += 1;
+		processVersion += 1;
 		// Clear hash when resetting, unless requested to keep it (e.g. during initial load)
 		if (!keepHash && typeof window !== "undefined") {
 			history.pushState(
@@ -542,7 +472,9 @@ export default function PdfApp() {
 		existingHash?: string,
 		initialPage = 1,
 	) => {
+		const activeProcessVersion = processVersion + 1;
 		reset(true); // clear previous state logic, but keep hash initially
+		processVersion = activeProcessVersion;
 
 		setFile(selectedFile);
 		setFileName(selectedFile.name);
@@ -607,6 +539,7 @@ export default function PdfApp() {
 					currentPdfNonNull.getPage(i + 1),
 				),
 			).then((pages) => {
+				if (activeProcessVersion !== processVersion) return;
 				const baseScale = 1.3; // Match PageRow scale
 
 				for (const page of pages) {
@@ -628,142 +561,14 @@ export default function PdfApp() {
 			const sectionBodyCache = new Map<string, NodeContent>();
 
 			const applyParagraphs = async (allParagraphs: Paragraph[]) => {
-				const applyVersion = ++paragraphApplyVersion;
-				const instructions = extractAmendatoryInstructions(allParagraphs);
-				const sectionPathByInstruction = new Map<
-					AmendatoryInstruction,
-					string
-				>();
-				const unresolvedPaths: string[] = [];
-
-				for (const instruction of instructions) {
-					const sectionPath = getSectionPathFromUscCitation(
-						instruction.uscCitation,
-					);
-					if (!sectionPath) continue;
-					sectionPathByInstruction.set(instruction, sectionPath);
-					if (!sectionBodyCache.has(sectionPath)) {
-						unresolvedPaths.push(sectionPath);
-					}
-				}
-
-				if (unresolvedPaths.length > 0) {
-					const dedupedPaths = [...new Set(unresolvedPaths)];
-					const fetched = await fetchSectionBodies(
-						dedupedPaths,
-						selectedUscSourceVersionId(),
-					);
-					if (applyVersion !== paragraphApplyVersion) return;
-					for (const [path, content] of fetched.entries()) {
-						sectionBodyCache.set(path, content);
-					}
-				}
-
-				const instructionParagraphs = new Set<Paragraph>();
-				const instructionMap = new Map<Paragraph, AmendatoryInstruction>();
-
-				for (const instr of instructions) {
-					for (const p of instr.paragraphs) {
-						instructionParagraphs.add(p);
-						if (p === instr.paragraphs[0]) {
-							instructionMap.set(p, instr);
-						}
-					}
-				}
-
-				const newItems: { item: PageItem; pageNumber: number }[] = [];
-
-				for (const p of allParagraphs) {
-					if (instructionParagraphs.has(p)) {
-						// Only add the instruction item if this paragraph is the *start* of the instruction
-						const instr = instructionMap.get(p);
-						if (instr) {
-							const topPercent = instr.paragraphs[0]?.pageHeight
-								? ((instr.paragraphs[0].pageHeight - instr.paragraphs[0].y) /
-										instr.paragraphs[0].pageHeight) *
-									100
-								: 0;
-							const sectionPath = sectionPathByInstruction.get(instr) ?? null;
-							const sectionContent = sectionPath
-								? sectionBodyCache.get(sectionPath)
-								: undefined;
-							const sectionBodyText = getSectionBodyText(sectionContent);
-							const splitLines = instr.text.split("\n");
-							const parsedInstruction =
-								instructionParser.parseInstructionFromLines(splitLines, 0);
-							const translatedEditTree = parsedInstruction
-								? translateInstructionAstToEditTree(parsedInstruction.ast)
-								: null;
-							const amendmentEffect =
-								sectionPath && sectionBodyText.length > 0
-									? (() => {
-											if (!parsedInstruction || !translatedEditTree) {
-												return {
-													status: "unsupported",
-													sectionPath,
-													segments: [
-														{ kind: "unchanged", text: sectionBodyText },
-													],
-													changes: [],
-													deleted: [],
-													inserted: [],
-													debug: {
-														sectionTextLength: sectionBodyText.length,
-														operationCount: 0,
-														operationAttempts: [],
-														failureReason:
-															"instruction_parse_or_translate_failed",
-													},
-												} satisfies AmendmentEffect;
-											}
-											return applyAmendmentEditTreeToSection({
-												tree: translatedEditTree.tree,
-												sectionPath,
-												sectionBody: sectionBodyText,
-												instructionText: instr.text,
-											});
-										})()
-									: null;
-
-							newItems.push({
-								item: {
-									type: "instruction",
-									instruction: instr,
-									amendmentEffect,
-									sectionPath,
-									workflowDebug: {
-										sectionText: instr.text,
-										splitLines,
-										parsedInstruction,
-										translatedEditTree,
-									},
-									colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
-									topPercent,
-								},
-								pageNumber: p.startPage,
-							});
-						}
-					} else {
-						const topPercent =
-							p.pageHeight > 0
-								? ((p.pageHeight - p.yStart) / p.pageHeight) * 100
-								: 0;
-
-						newItems.push({
-							item: {
-								type: "paragraph",
-								text: p.text,
-								isBold: p.isBold,
-								colorIndex: null,
-								level: p.level ?? null,
-								topPercent,
-							},
-							pageNumber: p.startPage,
-						});
-					}
-				}
-
-				if (applyVersion !== paragraphApplyVersion) return;
+				const newItems = await buildPageItemsFromParagraphs({
+					paragraphs: allParagraphs,
+					sectionBodyCache,
+					sourceVersionId: selectedUscSourceVersionId(),
+					numAmendColors: NUM_AMEND_COLORS,
+					fetchSectionBodies,
+				});
+				if (activeProcessVersion !== processVersion) return;
 				setAllItems(newItems);
 			};
 
@@ -811,23 +616,6 @@ export default function PdfApp() {
 		setLastViewportHeight(container.clientHeight);
 	};
 
-	const handleDrop = (e: DragEvent) => {
-		e.preventDefault();
-		if (e.dataTransfer?.files[0]) {
-			processFile(e.dataTransfer.files[0], true);
-		}
-	};
-
-	const handleDragOver = (e: DragEvent) => {
-		e.preventDefault();
-	};
-
-	const handleDropzoneClick = (event: MouseEvent) => {
-		const target = event.target as HTMLElement | null;
-		if (target?.closest(".pdf-upload-options")) return;
-		fileInput?.click();
-	};
-
 	createEffect(() => {
 		const sourceVersionId = selectedUscSourceVersionId();
 		if (!sourceVersionId || !currentFileHash || !hasAppliedInitialScroll)
@@ -860,52 +648,14 @@ export default function PdfApp() {
 					}
 				>
 					<Show when={status() === "idle"}>
-						<section
-							class="pdf-dropzone"
-							onDragOver={handleDragOver}
-							onDrop={handleDrop}
-							onClick={handleDropzoneClick}
-							onKeyPress={(e) => {
-								if (e.key === "Enter" || e.key === " ") fileInput?.click();
+						<PdfUploadDropzone
+							sourceVersions={uscSourceVersions()}
+							selectedSourceVersionId={selectedUscSourceVersionId()}
+							onSourceVersionChange={setSelectedUscSourceVersionId}
+							onFileSelected={(file) => {
+								void processFile(file, true);
 							}}
-							aria-label="PDF drop zone"
-							tabindex="0"
-						>
-							<h1 class="pdf-dropzone-title">Upload PDF</h1>
-							<p>Drag and drop a PDF file here, or click to select</p>
-							<div class="pdf-upload-options">
-								<label class="pdf-upload-field">
-									<span>USC source version</span>
-									<select
-										class="pdf-upload-select"
-										value={selectedUscSourceVersionId()}
-										onChange={(event) =>
-											setSelectedUscSourceVersionId(event.currentTarget.value)
-										}
-									>
-										<For each={uscSourceVersions()}>
-											{(version) => (
-												<option value={version.id}>
-													{version.id} ({version.version_date})
-												</option>
-											)}
-										</For>
-									</select>
-								</label>
-							</div>
-							<input
-								type="file"
-								accept="application/pdf"
-								class="pdf-file-input-hidden"
-								ref={fileInput}
-								onChange={(e) => {
-									if (e.target.files?.[0]) processFile(e.target.files[0], true);
-								}}
-							/>
-							<button type="button" class="pdf-primary-button">
-								Select File
-							</button>
-						</section>
+						/>
 					</Show>
 
 					<Show when={status() === "processing"}>
@@ -916,406 +666,30 @@ export default function PdfApp() {
 						<p class="pdf-error-text">Error processing PDF: {error()}</p>
 					</Show>
 
-					<div
-						ref={scrollContainerRef}
-						class="pdf-scroll-container"
+					<PdfWorkspace
+						status={status()}
+						isVirtualDebugEnabled={isVirtualDebugEnabled()}
+						pageRowCount={pageRows().length}
+						virtualRangeLabel={virtualRangeLabel()}
+						virtualIndexes={virtualIndexes()}
+						virtualStarts={virtualStarts()}
+						virtualSizes={virtualSizes()}
+						defaultItemSize={DEFAULT_ITEM_SIZE}
+						lastScrollTop={lastScrollTop()}
+						lastViewportHeight={lastViewportHeight()}
+						totalSize={rowVirtualizer.getTotalSize()}
+						renderContext={renderContext()}
+						visibleItems={visibleItems()}
+						onInstructionClick={setSelectedInstructionItem}
+						onScrollContainerRef={scrollContainerRef}
 						onScroll={handleScroll}
-						style={{
-							display: status() !== "idle" ? "grid" : "none",
-							"grid-template-columns": "1fr 1fr",
-						}}
-					>
-						<Show when={isVirtualDebugEnabled()}>
-							<output class="pdf-virtualizer-debug">
-								<span>count: {pageRows().length}</span>
-								<span>range: {virtualRangeLabel()}</span>
-								<span>rendered: {virtualIndexes().length}</span>
-								<span>scrollTop: {Math.round(lastScrollTop())}</span>
-								<span>viewport: {Math.round(lastViewportHeight())}</span>
-								<span>
-									totalSize: {Math.round(rowVirtualizer.getTotalSize())}
-								</span>
-							</output>
-						</Show>
-
-						{/* Left Column: PDF Pages */}
-						<div class="pdf-column-viewer">
-							<Show when={status() !== "idle"}>
-								<div
-									class="pdf-virtualizer-size"
-									style={{
-										height: `${rowVirtualizer.getTotalSize()}px`,
-									}}
-								>
-									<For each={virtualIndexes()}>
-										{(index, listIndex) => (
-											<div
-												data-index={index}
-												data-start={Math.round(
-													virtualStarts()[listIndex()] ??
-														index * DEFAULT_ITEM_SIZE,
-												)}
-												data-size={Math.round(
-													virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
-												)}
-												class="pdf-virtualizer-item"
-												style={{
-													transform: `translateY(${
-														virtualStarts()[listIndex()] ??
-														index * DEFAULT_ITEM_SIZE
-													}px)`,
-												}}
-											>
-												<Show when={isVirtualDebugEnabled()}>
-													<div class="pdf-virtualizer-item-debug">
-														#{index + 1} y=
-														{Math.round(
-															virtualStarts()[listIndex()] ??
-																index * DEFAULT_ITEM_SIZE,
-														)}{" "}
-														h=
-														{Math.round(
-															virtualSizes()[listIndex()] ?? DEFAULT_ITEM_SIZE,
-														)}
-													</div>
-												</Show>
-												<PageRow
-													pageNumber={index + 1}
-													pdf={renderContext()?.pdf}
-													pdfjsLib={renderContext()?.pdfjsLib}
-													onRenderSuccess={handlePageRenderSuccess}
-													onRenderError={handlePageRenderError}
-												/>
-											</div>
-										)}
-									</For>
-								</div>
-							</Show>
-						</div>
-
-						{/* Right Column: Annotations */}
-						<div class="pdf-column-annotations">
-							<AnnotationLayer
-								items={visibleItems()}
-								totalHeight={rowVirtualizer.getTotalSize()}
-								width={0} // handled by CSS
-								onInstructionClick={(instructionItem) =>
-									setSelectedInstructionItem(instructionItem)
-								}
-							/>
-						</div>
-					</div>
-					<Show when={selectedInstructionItem()}>
-						<div class="pdf-instruction-modal-backdrop">
-							<div
-								class="pdf-instruction-modal"
-								role="dialog"
-								aria-modal="true"
-								aria-label="Instruction debug workflow"
-							>
-								<header class="pdf-instruction-modal-header">
-									<h2 class="pdf-instruction-modal-title">
-										Instruction Debug Workflow
-									</h2>
-									<button
-										type="button"
-										class="pdf-secondary-button"
-										onClick={() => setSelectedInstructionItem(null)}
-									>
-										Close
-									</button>
-								</header>
-								<Show when={selectedInstructionItem()}>
-									{(selected) => {
-										const item = selected();
-										const instruction = item.instruction;
-										const effect = item.amendmentEffect;
-										const workflowDebug = item.workflowDebug;
-										const instructionPageRange = `${instruction.startPage}-${instruction.endPage}`;
-										const hierarchyPath = instruction.rootQuery
-											.map((level) =>
-												level.type === "none"
-													? null
-													: `${level.type}:${level.val}`,
-											)
-											.filter(
-												(value): value is Exclude<typeof value, null> =>
-													value !== null,
-											)
-											.join(" > ");
-
-										return (
-											<div class="pdf-instruction-modal-content">
-												<div class="pdf-instruction-modal-grid">
-													<div class="pdf-instruction-modal-kv">
-														<span>Bill section</span>
-														<code>{instruction.billSection ?? "n/a"}</code>
-													</div>
-													<div class="pdf-instruction-modal-kv">
-														<span>USC citation</span>
-														<code>{instruction.uscCitation ?? "n/a"}</code>
-													</div>
-													<div class="pdf-instruction-modal-kv">
-														<span>Section path</span>
-														<code>{item.sectionPath ?? "n/a"}</code>
-													</div>
-													<div class="pdf-instruction-modal-kv">
-														<span>Status</span>
-														<code>{effect?.status ?? "uncomputed"}</code>
-													</div>
-													<div class="pdf-instruction-modal-kv">
-														<span>Instruction pages</span>
-														<code>{instructionPageRange}</code>
-													</div>
-													<div class="pdf-instruction-modal-kv">
-														<span>Root target path</span>
-														<code>{hierarchyPath || "n/a"}</code>
-													</div>
-												</div>
-
-												<section class="pdf-instruction-modal-section">
-													<h3>Section Text (Amendatory Instruction)</h3>
-													<div
-														class="pdf-instruction-modal-markdown markdown"
-														innerHTML={renderMarkdown(
-															workflowDebug.sectionText,
-														)}
-													/>
-												</section>
-
-												<section class="pdf-instruction-modal-section">
-													<h3>Paragraph Split</h3>
-													<pre class="pdf-instruction-modal-code">
-														{workflowDebug.splitLines
-															.map(
-																(line, index) =>
-																	`${index + 1}. ${line || "(blank)"}`,
-															)
-															.join("\n")}
-													</pre>
-												</section>
-
-												<section class="pdf-instruction-modal-section">
-													<h3>Parse Tree</h3>
-													<div class="pdf-instruction-modal-grid">
-														<div class="pdf-instruction-modal-kv">
-															<span>Parser status</span>
-															<code>
-																{workflowDebug.parsedInstruction
-																	? "parsed"
-																	: "failed"}
-															</code>
-														</div>
-														<div class="pdf-instruction-modal-kv">
-															<span>Parse offset</span>
-															<code>
-																{workflowDebug.parsedInstruction
-																	? String(
-																			workflowDebug.parsedInstruction
-																				.parseOffset,
-																		)
-																	: "n/a"}
-															</code>
-														</div>
-													</div>
-													<pre class="pdf-instruction-modal-code">
-														{formatParseTree(workflowDebug.parsedInstruction)}
-													</pre>
-												</section>
-
-												<section class="pdf-instruction-modal-section">
-													<h3>Edit Tree</h3>
-													<div class="pdf-instruction-modal-grid">
-														<div class="pdf-instruction-modal-kv">
-															<span>Translation status</span>
-															<code>
-																{workflowDebug.translatedEditTree
-																	? "built"
-																	: "unavailable"}
-															</code>
-														</div>
-														<div class="pdf-instruction-modal-kv">
-															<span>Translation issues</span>
-															<code>
-																{workflowDebug.translatedEditTree
-																	? String(
-																			workflowDebug.translatedEditTree.issues
-																				.length,
-																		)
-																	: "n/a"}
-															</code>
-														</div>
-													</div>
-													<Show when={workflowDebug.translatedEditTree}>
-														{(translation) => (
-															<>
-																<Show when={translation().issues.length > 0}>
-																	<pre class="pdf-instruction-modal-code">
-																		{translation()
-																			.issues.map(
-																				(issue, index) =>
-																					`${index + 1}. ${issue.message}`,
-																			)
-																			.join("\n")}
-																	</pre>
-																</Show>
-																<pre class="pdf-instruction-modal-code">
-																	{formatEditTree(translation().tree)}
-																</pre>
-															</>
-														)}
-													</Show>
-												</section>
-
-												<Show
-													when={effect}
-													fallback={
-														<section class="pdf-instruction-modal-section">
-															<h3>Apply Result</h3>
-															<p>No section body was available for matching.</p>
-														</section>
-													}
-												>
-													{(resolvedEffect) => (
-														<section class="pdf-instruction-modal-section">
-															<h3>Apply Result</h3>
-															<div class="pdf-instruction-modal-grid">
-																<div class="pdf-instruction-modal-kv">
-																	<span>Apply status</span>
-																	<code>{resolvedEffect().status}</code>
-																</div>
-																<div class="pdf-instruction-modal-kv">
-																	<span>Failure reason</span>
-																	<code>
-																		{resolvedEffect().debug.failureReason ??
-																			"none"}
-																	</code>
-																</div>
-																<div class="pdf-instruction-modal-kv">
-																	<span>Section text length</span>
-																	<code>
-																		{String(
-																			resolvedEffect().debug.sectionTextLength,
-																		)}
-																	</code>
-																</div>
-																<div class="pdf-instruction-modal-kv">
-																	<span>Operation count</span>
-																	<code>
-																		{String(
-																			resolvedEffect().debug.operationCount,
-																		)}
-																	</code>
-																</div>
-																<div class="pdf-instruction-modal-kv">
-																	<span>Final edits</span>
-																	<code>
-																		{String(resolvedEffect().changes.length)}
-																	</code>
-																</div>
-															</div>
-															<Show
-																when={resolvedEffect().changes.length > 0}
-																fallback={
-																	<p>No final edits were produced by apply.</p>
-																}
-															>
-																<For each={resolvedEffect().changes}>
-																	{(change, index) => (
-																		<article class="pdf-instruction-attempt">
-																			<h4>Edit {index() + 1}</h4>
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Deleted</span>
-																				<pre class="pdf-instruction-modal-code">
-																					{change.deleted || "(none)"}
-																				</pre>
-																			</div>
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Inserted</span>
-																				<pre class="pdf-instruction-modal-code">
-																					{change.inserted || "(none)"}
-																				</pre>
-																			</div>
-																		</article>
-																	)}
-																</For>
-															</Show>
-															<For
-																each={resolvedEffect().debug.operationAttempts}
-															>
-																{(attempt, index) => (
-																	<article class="pdf-instruction-attempt">
-																		<h4>Attempt {index() + 1}</h4>
-																		<div class="pdf-instruction-modal-grid">
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Operation</span>
-																				<code>{attempt.operationType}</code>
-																			</div>
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Outcome</span>
-																				<code>{attempt.outcome}</code>
-																			</div>
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Target path</span>
-																				<code>
-																					{attempt.targetPath ?? "n/a"}
-																				</code>
-																			</div>
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Scoped range</span>
-																				<code>
-																					{attempt.scopedRange
-																						? `${attempt.scopedRange.start}-${attempt.scopedRange.end} (${attempt.scopedRange.length} chars)`
-																						: "none"}
-																				</code>
-																			</div>
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Search kind</span>
-																				<code>{attempt.searchTextKind}</code>
-																			</div>
-																			<div class="pdf-instruction-modal-kv">
-																				<span>Search index</span>
-																				<code>
-																					{attempt.searchIndex === null
-																						? "none"
-																						: String(attempt.searchIndex)}
-																				</code>
-																			</div>
-																		</div>
-
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Search text</span>
-																			<pre class="pdf-instruction-modal-code">
-																				{attempt.searchText ?? "n/a"}
-																			</pre>
-																		</div>
-
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Scoped text preview</span>
-																			<pre class="pdf-instruction-modal-code">
-																				{attempt.scopedRange?.preview ?? "n/a"}
-																			</pre>
-																		</div>
-
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Operation text</span>
-																			<pre class="pdf-instruction-modal-code">
-																				{attempt.nodeText}
-																			</pre>
-																		</div>
-																	</article>
-																)}
-															</For>
-														</section>
-													)}
-												</Show>
-											</div>
-										);
-									}}
-								</Show>
-							</div>
-						</div>
-					</Show>
+						onPageRenderSuccess={handlePageRenderSuccess}
+						onPageRenderError={handlePageRenderError}
+					/>
+					<InstructionDebugModal
+						item={selectedInstructionItem()}
+						onClose={() => setSelectedInstructionItem(null)}
+					/>
 				</main>
 			</div>
 		</MetaProvider>
