@@ -1,4 +1,4 @@
-import type { Content, Root } from "mdast";
+import type { Root, RootContent } from "mdast";
 import rehypeStringify from "rehype-stringify";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
@@ -32,7 +32,7 @@ type NodeWithPosition = Node & {
 };
 
 type ParentWithChildren = Parent & {
-	children: Content[];
+	children: RootContent[];
 };
 
 const parseProcessor = unified().use(remarkParse).use(remarkGfm);
@@ -82,20 +82,20 @@ const escapeHtml = (input: string): string =>
 		.replaceAll('"', "&quot;")
 		.replaceAll("'", "&#39;");
 
-const htmlNode = (value: string): Content =>
-	({ type: "html", value }) as unknown as Content;
+const htmlNode = (value: string): RootContent =>
+	({ type: "html", value }) as unknown as RootContent;
 
-const textNode = (value: string): Content =>
-	({ type: "text", value }) as unknown as Content;
+const textNode = (value: string): RootContent =>
+	({ type: "text", value }) as unknown as RootContent;
 
-const strongNode = (value: string): Content =>
+const strongNode = (value: string): RootContent =>
 	({
 		type: "strong",
 		children: [{ type: "text", value }],
-	}) as unknown as Content;
+	}) as unknown as RootContent;
 
-const paragraphNode = (children: Content[]): Content =>
-	({ type: "paragraph", children }) as unknown as Content;
+const paragraphNode = (children: RootContent[]): RootContent =>
+	({ type: "paragraph", children }) as unknown as RootContent;
 
 const sanitizeIndentClass = (value?: string): string | null =>
 	value && /^indent\d+$/.test(value) ? value : null;
@@ -242,7 +242,7 @@ const addParagraphIndentClasses = (tree: Root) => {
 
 const unwrapBlockquotes = (tree: Root) => {
 	const unwrapInParent = (parent: ParentWithChildren) => {
-		const nextChildren: Content[] = [];
+		const nextChildren: RootContent[] = [];
 		for (const child of parent.children) {
 			const node = child as Node;
 			if (node.type === "blockquote" && hasChildren(node)) {
@@ -291,7 +291,10 @@ const applyMarkdownReplacements = (
 	const segmentRanges = normalized.filter((range) => range.end > range.start);
 	const touchedRangeIds = new Set<number>();
 	const insertedDeletionIds = new Set<number>();
-	const editsByParent = new Map<ParentWithChildren, Map<number, Content[]>>();
+	const editsByParent = new Map<
+		ParentWithChildren,
+		Map<number, RootContent[]>
+	>();
 
 	visit(tree as Node, "text", (node, index, parent) => {
 		if (typeof index !== "number") return;
@@ -336,7 +339,7 @@ const applyMarkdownReplacements = (
 
 		const nodeValue = (node as Node & { value: string }).value;
 		const indentClass = getIndentClassFromParent(parent as ParentWithChildren);
-		const replacementChildren: Content[] = [];
+		const replacementChildren: RootContent[] = [];
 
 		for (let cursor = 0; cursor < sortedBoundaries.length; cursor += 1) {
 			const segmentStart = sortedBoundaries[cursor];
@@ -407,7 +410,7 @@ const applyMarkdownReplacements = (
 
 	for (const range of normalized) {
 		if (touchedRangeIds.has(range.id)) continue;
-		const fallbackChildren: Content[] = [];
+		const fallbackChildren: RootContent[] = [];
 		if (range.deletedText.length > 0) {
 			fallbackChildren.push(htmlNode(wrapDelHtml(range.deletedText)));
 		}

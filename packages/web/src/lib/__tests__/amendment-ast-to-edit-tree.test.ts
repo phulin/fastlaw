@@ -491,6 +491,47 @@ describe("translateInstructionAstToEditTree", () => {
 		).toEqual(["a", "b", "c"]);
 	});
 
+	it("keeps plural structural strike targets for strike-insert edits", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended by striking subsections (a) and (b) and inserting the following: “(a) New A. (b) New B.”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		const queue = [...result.tree.children];
+		let strikeInsertEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.StrikeInsert
+			) {
+				strikeInsertEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!strikeInsertEdit) {
+			throw new Error("Expected strike-insert edit.");
+		}
+		if (strikeInsertEdit.edit.kind !== UltimateEditKind.StrikeInsert) {
+			throw new Error("Expected strike-insert edit kind.");
+		}
+		const strikeTarget = strikeInsertEdit.edit.strike;
+		if (!("refs" in strikeTarget)) {
+			throw new Error("Expected plural structural strike target.");
+		}
+		expect(strikeTarget.refs.map((ref) => ref.path[0]?.label)).toEqual([
+			"a",
+			"b",
+		]);
+	});
+
 	it("keeps hyphen-separated redesignation endpoints as explicit pairs", () => {
 		const ast = parseInstructionAst(
 			"Section 101 of title 10, United States Code, is amended by redesignating clauses (i)-(iii) as clauses (ii)-(iv), respectively.",

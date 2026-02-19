@@ -1,8 +1,10 @@
 import type { AmendmentEffect } from "./amendment-edit-tree-apply";
-import {
-	resolveInsertionRanges,
-	type TextReplacementRange,
-} from "./text-spans";
+
+interface TextReplacementRange {
+	start: number;
+	end: number;
+	deletedText: string;
+}
 
 function lineStartsForText(text: string): number[] {
 	const starts = [0];
@@ -71,46 +73,6 @@ function getContextWindows(
 	}));
 }
 
-function getAttemptAnchorIndex(
-	attempt: AmendmentEffect["debug"]["operationAttempts"][number],
-): number | null {
-	if (typeof attempt.searchIndex === "number") {
-		return attempt.searchIndex;
-	}
-	return attempt.scopedRange?.start ?? null;
-}
-
-function resolveDeletionAnchorRanges(effect: AmendmentEffect) {
-	const deletionOnlyChanges = effect.changes.filter(
-		(change) => change.deleted.length > 0 && change.inserted.length === 0,
-	);
-	const deletionAttempts = effect.debug.operationAttempts.filter(
-		(attempt) =>
-			attempt.outcome === "applied" && attempt.operationType === "delete",
-	);
-	const anchored = deletionOnlyChanges.map((change, index) => ({
-		change,
-		anchor: deletionAttempts[index]
-			? getAttemptAnchorIndex(deletionAttempts[index])
-			: null,
-	}));
-	const anchors = anchored.filter(
-		(
-			item,
-		): item is {
-			change: { deleted: string; inserted: string };
-			anchor: number;
-		} => item.anchor !== null,
-	);
-	return {
-		resolved: anchors.map((item) => ({
-			start: item.anchor,
-			end: item.anchor,
-			deletedText: item.change.deleted,
-		})),
-	};
-}
-
 export interface HighlightedSnippetMarkdown {
 	markdown: string;
 	replacements: TextReplacementRange[];
@@ -130,50 +92,21 @@ export function buildHighlightedSnippetMarkdown(
 			replacements: [],
 		};
 	}
-
-	const insertionChanges = effect.changes.filter(
-		(change) => change.inserted.length > 0,
-	);
-	const resolvedInsertions = resolveInsertionRanges(
-		text,
-		insertionChanges.map((change) => change.inserted),
-	).map((item, index) => ({
-		...item,
-		deletedText: insertionChanges[index]?.deleted ?? "",
-	}));
-	const resolvedDeletions = resolveDeletionAnchorRanges(effect).resolved.map(
-		(item) => ({
-			start: item.start,
-			end: item.end,
-			deletedText: item.deletedText,
-		}),
-	);
-	const snippetWindows = getContextWindows(
-		text,
-		[...resolvedInsertions, ...resolvedDeletions],
-		contextLines,
-	);
+	const resolvedChanges = effect.replacements ?? [];
+	const snippetWindows = getContextWindows(text, resolvedChanges, contextLines);
 
 	const snippets = snippetWindows.map((window) => {
 		const snippet = text.slice(window.start, window.end);
-		const localInsertions = resolvedInsertions
-			.filter((item) => item.start < window.end && item.end > window.start)
+		const localChanges = resolvedChanges
+			.filter((item) => item.start < window.end && item.end >= window.start)
 			.map((item) => ({
 				start: Math.max(0, item.start - window.start),
-				end: Math.min(window.end - window.start, item.end - window.start),
-				deletedText: item.deletedText,
-			}))
-			.filter((item) => item.end > item.start);
-		const localDeletions = resolvedDeletions
-			.filter((item) => item.start >= window.start && item.start < window.end)
-			.map((item) => ({
-				start: item.start - window.start,
-				end: item.start - window.start,
+				end: Math.max(0, Math.min(window.end, item.end) - window.start),
 				deletedText: item.deletedText,
 			}));
 		return {
 			markdown: snippet,
-			replacements: [...localInsertions, ...localDeletions],
+			replacements: localChanges,
 		};
 	});
 

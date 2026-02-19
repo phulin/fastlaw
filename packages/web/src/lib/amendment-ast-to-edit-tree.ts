@@ -469,15 +469,18 @@ function parseStrikingTarget(
 	const inner = findChild(node, GrammarAstNodeType.InnerLocation);
 	if (inner) return parseInnerLocationEditTarget(inner, context);
 
+	const plural = findChild(node, GrammarAstNodeType.SubLocationOrPlural);
+	if (plural) {
+		const refs = parseSubLocationOrPlural(plural, context);
+		if (refs.length > 1) return { refs };
+		if (refs[0]) return { ref: refs[0] };
+	}
+
 	const ref =
 		parseStructuralReferenceFromNode(
 			findChild(node, GrammarAstNodeType.SubLocationOrSub),
 			context,
-		) ??
-		parseStructuralReferenceFromNode(
-			findChild(node, GrammarAstNodeType.SubLocationOrPlural),
-			context,
-		);
+		) ?? parseStructuralReferenceFromNode(plural, context);
 	if (ref) return { ref };
 
 	const inline = findChild(node, GrammarAstNodeType.Inline);

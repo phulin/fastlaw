@@ -224,6 +224,10 @@ export interface StructuralEditTarget {
 	ref: StructuralReference;
 }
 
+export interface StructuralRangeEditTarget {
+	refs: StructuralReference[];
+}
+
 export interface PunctuationEditTarget {
 	punctuation: PunctuationKind;
 }
@@ -239,6 +243,7 @@ export type SearchTarget = TextSearchTarget;
 export type EditTarget =
 	| SearchTarget
 	| StructuralEditTarget
+	| StructuralRangeEditTarget
 	| PunctuationEditTarget
 	| InnerLocationEditTarget;
 

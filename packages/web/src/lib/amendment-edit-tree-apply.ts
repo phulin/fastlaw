@@ -11,6 +11,7 @@ import {
 	UltimateEditKind,
 } from "./amendment-edit-tree";
 import { formatInsertedBlockContent } from "./inserted-block-format";
+import { type MarkdownReplacementRange, renderMarkdown } from "./markdown";
 import {
 	findHierarchyNodeByMarkerPath,
 	parseMarkdownHierarchy,
@@ -40,6 +41,7 @@ type InstructionOperation =
 	| {
 			type: "replace";
 			target?: HierarchyLevel[];
+			throughTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			content?: string;
 			strikingContent?: string;
@@ -50,6 +52,7 @@ type InstructionOperation =
 	| {
 			type: "delete";
 			target?: HierarchyLevel[];
+			throughTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
 			strikingContent?: string;
 			eachPlaceItAppears?: boolean;
@@ -166,6 +169,8 @@ export interface AmendmentEffect {
 	changes: Array<{ deleted: string; inserted: string }>;
 	deleted: string[];
 	inserted: string[];
+	replacements?: MarkdownReplacementRange[];
+	annotatedHtml?: string;
 	debug: AmendmentEffectDebug;
 }
 
@@ -257,6 +262,20 @@ function targetPathFromEditTarget(target: EditTarget): HierarchyLevel[] | null {
 	if ("ref" in target) {
 		return refToHierarchyPath(target.ref);
 	}
+	if ("refs" in target && target.refs.length > 0) {
+		const first = target.refs[0];
+		return first ? refToHierarchyPath(first) : null;
+	}
+	return null;
+}
+
+function throughTargetPathFromEditTarget(
+	target: EditTarget,
+): HierarchyLevel[] | null {
+	if ("refs" in target && target.refs.length > 1) {
+		const last = target.refs[target.refs.length - 1];
+		return last ? refToHierarchyPath(last) : null;
+	}
 	return null;
 }
 
@@ -301,6 +320,9 @@ function flattenEdit(
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.strike),
 			);
+			const scopedThroughTarget = targetWithContext(
+				throughTargetPathFromEditTarget(edit.strike),
+			);
 			if (!strikingContent && scopedTarget.length === 0) {
 				return {
 					nodes: [],
@@ -316,6 +338,10 @@ function flattenEdit(
 						{
 							type: "replace",
 							target: scopedTarget,
+							throughTarget:
+								scopedThroughTarget.length > 0
+									? scopedThroughTarget
+									: undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							strikingContent: strikingContent ?? undefined,
 							eachPlaceItAppears: strikeTarget?.eachPlaceItAppears || undefined,
@@ -340,6 +366,9 @@ function flattenEdit(
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.target),
 			);
+			const scopedThroughTarget = targetWithContext(
+				throughTargetPathFromEditTarget(edit.target),
+			);
 			if (!strikingContent && scopedTarget.length === 0) {
 				return {
 					nodes: [],
@@ -352,6 +381,10 @@ function flattenEdit(
 						{
 							type: "delete",
 							target: scopedTarget,
+							throughTarget:
+								scopedThroughTarget.length > 0
+									? scopedThroughTarget
+									: undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							strikingContent: strikingContent ?? undefined,
 							eachPlaceItAppears: strikeTarget?.eachPlaceItAppears || undefined,
@@ -727,6 +760,36 @@ function applyPatch(text: string, patch: TextPatch): string {
 	return `${text.slice(0, patch.start)}${patch.inserted}${text.slice(patch.end)}`;
 }
 
+function updateReplacementRangesForPatch(
+	ranges: MarkdownReplacementRange[],
+	patch: TextPatch,
+): MarkdownReplacementRange[] {
+	const delta = patch.inserted.length - patch.deleted.length;
+	const next: MarkdownReplacementRange[] = [];
+	for (const range of ranges) {
+		if (patch.end <= range.start) {
+			next.push({
+				...range,
+				start: range.start + delta,
+				end: range.end + delta,
+			});
+			continue;
+		}
+		if (patch.start >= range.end) {
+			next.push(range);
+		}
+	}
+	if (patch.inserted.length > 0 || patch.deleted.length > 0) {
+		next.push({
+			start: patch.start,
+			end: patch.start + patch.inserted.length,
+			deletedText: patch.deleted,
+		});
+	}
+	next.sort((left, right) => left.start - right.start || left.end - right.end);
+	return next;
+}
+
 function insertMovedBlock(text: string, index: number, block: string): string {
 	const beforeChar = text[index - 1] ?? "";
 	const afterChar = text[index] ?? "";
@@ -787,6 +850,8 @@ function makeUnsupportedResult(
 		changes: [],
 		deleted: [],
 		inserted: [],
+		replacements: [],
+		annotatedHtml: renderMarkdown(args.sectionBody),
 		debug: {
 			sectionTextLength: args.sectionBody.length,
 			operationCount,
@@ -823,6 +888,7 @@ export function applyAmendmentEditTreeToSection(
 	const changes: Array<{ deleted: string; inserted: string }> = [];
 	const deleted: string[] = [];
 	const inserted: string[] = [];
+	let replacements: MarkdownReplacementRange[] = [];
 	const operationAttempts: OperationMatchAttempt[] = [];
 
 	for (const node of flattened.nodes) {
@@ -883,8 +949,36 @@ export function applyAmendmentEditTreeToSection(
 				const strikingContent = node.operation.strikingContent;
 				const replacementContent = node.operation.content;
 				const eachPlaceItAppears = node.operation.eachPlaceItAppears === true;
+				const throughTarget = node.operation.throughTarget;
 				if (!replacementContent) break;
 				if (!strikingContent) {
+					if (throughTarget) {
+						const throughRange = resolveScopeRange(workingText, throughTarget);
+						if (!throughRange) break;
+						const start = Math.min(range.start, throughRange.start);
+						const end = Math.max(range.end, throughRange.end);
+						const rangedText = workingText.slice(start, end);
+						const formattedReplacement = formatReplacementContent(
+							replacementContent,
+							range.targetLevel ?? 0,
+						);
+						const trailingWhitespace = rangedText.match(/\s*$/)?.[0] ?? "";
+						const trailingLineBreaks = trailingWhitespace.includes("\n")
+							? trailingWhitespace
+							: "";
+						const boundedReplacement =
+							trailingLineBreaks.length > 0 &&
+							!formattedReplacement.endsWith(trailingLineBreaks)
+								? `${formattedReplacement}${trailingLineBreaks}`
+								: formattedReplacement;
+						patch = {
+							start,
+							end,
+							deleted: rangedText,
+							inserted: boundedReplacement,
+						};
+						break;
+					}
 					const formattedReplacement = formatReplacementContent(
 						replacementContent,
 						range.targetLevel ?? 0,
@@ -934,7 +1028,21 @@ export function applyAmendmentEditTreeToSection(
 			case "delete": {
 				const strikingContent = node.operation.strikingContent;
 				const eachPlaceItAppears = node.operation.eachPlaceItAppears === true;
+				const throughTarget = node.operation.throughTarget;
 				if (!strikingContent) {
+					if (throughTarget) {
+						const throughRange = resolveScopeRange(workingText, throughTarget);
+						if (!throughRange) break;
+						const start = Math.min(range.start, throughRange.start);
+						const end = Math.max(range.end, throughRange.end);
+						patch = {
+							start,
+							end,
+							deleted: workingText.slice(start, end),
+							inserted: "",
+						};
+						break;
+					}
 					patch = {
 						start: range.start,
 						end: range.end,
@@ -1196,6 +1304,7 @@ export function applyAmendmentEditTreeToSection(
 		attempt.outcome = "applied";
 		operationAttempts.push(attempt);
 		workingText = applyPatch(workingText, patch);
+		replacements = updateReplacementRangesForPatch(replacements, patch);
 		changes.push({ deleted: patch.deleted, inserted: patch.inserted });
 		if (patch.deleted.length > 0) deleted.push(patch.deleted);
 		if (patch.inserted.length > 0) inserted.push(patch.inserted);
@@ -1217,6 +1326,8 @@ export function applyAmendmentEditTreeToSection(
 		changes,
 		deleted,
 		inserted,
+		replacements,
+		annotatedHtml: renderMarkdown(workingText, { replacements }),
 		debug: {
 			sectionTextLength: args.sectionBody.length,
 			operationCount: flattened.nodes.length,

@@ -545,6 +545,47 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.segments[0]?.text).not.toContain("old");
 	});
 
+	it("applies StrikeInsert structural target ranges", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: {
+							refs: [
+								{
+									kind: ScopeKind.Subsection,
+									path: [{ kind: ScopeKind.Subsection, label: "a" }],
+								},
+								{
+									kind: ScopeKind.Subsection,
+									path: [{ kind: ScopeKind.Subsection, label: "b" }],
+								},
+							],
+						},
+						insert: "(a) New first.\n(b) New second.",
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(a) Old first.\n(b) Old second.\n(c) Keep.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.segments[0]?.text).toContain("(a) New first.");
+		expect(effect.segments[0]?.text).toContain("(b) New second.");
+		expect(effect.segments[0]?.text).toContain("(c) Keep.");
+		expect(effect.segments[0]?.text).not.toContain("Old first");
+		expect(effect.segments[0]?.text).not.toContain("Old second");
+	});
+
 	it("applies Insert before/after non-text anchors", () => {
 		const beforeTree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

@@ -42,11 +42,40 @@
 }
 
 .pdf-amended-snippet-replacement {
-	white-space: pre-wrap;
-	display: flex;
-	gap: 0.45rem;
-	flex-wrap: wrap;
 	margin: 0;
+	padding: 0.35rem 0 0.5rem;
+	border-top: 1px solid rgba(15, 23, 42, 0.1);
+}
+
+.pdf-amended-snippet-replacement:first-of-type {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.pdf-amended-snippet-replacements-header {
+	margin: 0 0 0.35rem;
+	font-size: 0.82rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: var(--muted);
+}
+
+.pdf-amended-snippet-replacement-label {
+	margin: 0.2rem 0;
+	font-size: 0.72rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: var(--muted);
+}
+
+.pdf-amended-snippet-replacement .markdown p {
+	margin-top: 0.3rem;
+}
+
+.pdf-amended-snippet-replacement .markdown p:first-child {
+	margin-top: 0;
 }
 
 .pdf-amended-snippet-status-badge {

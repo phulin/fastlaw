@@ -18,6 +18,11 @@ export default defineConfig(({ command }) => {
 		resolve: {
 			alias: {
 				"~": path.resolve(__dirname, "src"),
+				// Avoid DOM-dependent entity decoding in web worker bundles.
+				"decode-named-character-reference": path.resolve(
+					__dirname,
+					"../../node_modules/decode-named-character-reference/index.js",
+				),
 			},
 		},
 		ssr: {

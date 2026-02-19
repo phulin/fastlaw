@@ -1,5 +1,4 @@
 import { For, Show } from "solid-js";
-import { buildHighlightedSnippetMarkdown } from "../lib/amended-snippet-markdown";
 import { renderMarkdown } from "../lib/markdown";
 import { formatEditTree, formatParseTree } from "../lib/pdf/debug-formatters";
 import "../styles/pdf-instruction-modal.css";
@@ -10,6 +9,9 @@ interface InstructionDebugModalProps {
 	onClose: () => void;
 }
 
+const resolvedEffectText = (effect: InstructionPageItem["amendmentEffect"]) =>
+	effect?.segments.map((segment) => segment.text).join("") ?? "";
+
 export function InstructionDebugModal(props: InstructionDebugModalProps) {
 	return (
 		<Show when={props.item}>
@@ -19,9 +21,6 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 				const effect = item.amendmentEffect;
 				const workflowDebug = item.workflowDebug;
 				const instructionPageRange = `${instruction.startPage}-${instruction.endPage}`;
-				const highlightedSnippet = effect
-					? buildHighlightedSnippetMarkdown(effect)
-					: null;
 
 				return (
 					<div class="pdf-instruction-modal-backdrop">
@@ -296,16 +295,14 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 									<section class="pdf-instruction-modal-section">
 										<h3>Final Rendered Markdown</h3>
 										<pre class="pdf-instruction-modal-code">
-											{highlightedSnippet?.markdown ?? ""}
+											{resolvedEffectText(effect)}
 										</pre>
 										<div
 											class="pdf-instruction-modal-markdown markdown"
-											innerHTML={renderMarkdown(
-												highlightedSnippet?.markdown ?? "",
-												{
-													replacements: highlightedSnippet?.replacements ?? [],
-												},
-											)}
+											innerHTML={
+												effect?.annotatedHtml ??
+												renderMarkdown(resolvedEffectText(effect))
+											}
 										/>
 									</section>
 								</Show>
