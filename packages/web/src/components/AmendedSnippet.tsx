@@ -11,28 +11,71 @@ interface AmendedSnippetProps {
 	instructionMarkdown: string;
 }
 
-function getFullSnippetRange(
+function lineStartsForText(text: string): number[] {
+	const starts = [0];
+	for (let index = 0; index < text.length; index += 1) {
+		if (text[index] === "\n") {
+			starts.push(index + 1);
+		}
+	}
+	return starts;
+}
+
+function lineIndexForPosition(lineStarts: number[], position: number): number {
+	let low = 0;
+	let high = lineStarts.length - 1;
+	while (low <= high) {
+		const mid = Math.floor((low + high) / 2);
+		if (lineStarts[mid] <= position) {
+			low = mid + 1;
+		} else {
+			high = mid - 1;
+		}
+	}
+	return Math.max(0, high);
+}
+
+function getContextWindows(
 	text: string,
 	ranges: { start: number; end: number }[],
-): {
-	start: number;
-	end: number;
-} {
-	if (text.length === 0) return { start: 0, end: 0 };
-	if (ranges.length === 0) return { start: 0, end: text.length };
+	contextLines: number,
+): { start: number; end: number }[] {
+	if (text.length === 0) return [];
+	if (ranges.length === 0) return [{ start: 0, end: text.length }];
 
-	let minStart = ranges[0].start;
-	let maxEnd = ranges[0].end;
-	for (const range of ranges.slice(1)) {
-		if (range.start < minStart) minStart = range.start;
-		if (range.end > maxEnd) maxEnd = range.end;
+	const starts = lineStartsForText(text);
+	const lastLineIndex = starts.length - 1;
+	const lineWindows = ranges.map((range) => {
+		const safeStart = Math.max(0, Math.min(range.start, text.length));
+		const safeEnd = Math.max(safeStart, Math.min(range.end, text.length));
+		const startLine = lineIndexForPosition(starts, safeStart);
+		const endPosition =
+			safeEnd > safeStart ? Math.max(0, safeEnd - 1) : safeStart;
+		const endLine = lineIndexForPosition(starts, endPosition);
+		return {
+			startLine: Math.max(0, startLine - contextLines),
+			endLine: Math.min(lastLineIndex, endLine + contextLines),
+		};
+	});
+	lineWindows.sort((a, b) => a.startLine - b.startLine);
+
+	const mergedLineWindows: { startLine: number; endLine: number }[] = [];
+	for (const window of lineWindows) {
+		const previous = mergedLineWindows[mergedLineWindows.length - 1];
+		if (!previous || window.startLine > previous.endLine + 1) {
+			mergedLineWindows.push(window);
+			continue;
+		}
+		previous.endLine = Math.max(previous.endLine, window.endLine);
 	}
-	const startLineBreak = text.lastIndexOf("\n", Math.max(0, minStart - 1));
-	const endLineBreak = text.indexOf("\n", Math.min(text.length, maxEnd));
-	return {
-		start: startLineBreak === -1 ? 0 : startLineBreak + 1,
-		end: endLineBreak === -1 ? text.length : endLineBreak,
-	};
+
+	return mergedLineWindows.map((window) => ({
+		start: starts[window.startLine],
+		end:
+			window.endLine + 1 < starts.length
+				? starts[window.endLine + 1]
+				: text.length,
+	}));
 }
 
 export function AmendedSnippet(props: AmendedSnippetProps) {
@@ -92,6 +135,38 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 			(attempt) => attempt.outcome !== "applied",
 		);
 
+	const resolvedInlineRanges = () => {
+		const unchanged = props.effect.segments.find(
+			(segment) => segment.kind === "unchanged",
+		);
+		const text = unchanged?.text ?? "";
+		if (!text) {
+			return {
+				text,
+				insertions: [] as { start: number; end: number; deletedText: string }[],
+				deletions: [] as { start: number; end: number; deletedText: string }[],
+			};
+		}
+		const resolvedInsertions = resolveInsertionRanges(
+			text,
+			insertionChanges().map((change) => change.inserted),
+		).map((item, index) => ({
+			...item,
+			deletedText: insertionChanges()[index]?.deleted ?? "",
+		}));
+		const deletionAnchors = resolveDeletionAnchorRanges();
+		const resolvedDeletions = deletionAnchors.resolved.map((item) => ({
+			start: item.start,
+			end: item.end,
+			deletedText: item.deletedText,
+		}));
+		return {
+			text,
+			insertions: resolvedInsertions,
+			deletions: resolvedDeletions,
+		};
+	};
+
 	const hasUnresolvedInlineChanges = () => {
 		const unchanged = props.effect.segments.find(
 			(segment) => segment.kind === "unchanged",
@@ -112,70 +187,79 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 	};
 
 	const unresolvedDeletionOnlyChanges = () => {
-		const unchanged = props.effect.segments.find(
-			(segment) => segment.kind === "unchanged",
-		);
-		const text = unchanged?.text ?? "";
+		const { text } = resolvedInlineRanges();
 		if (!text) return deletionOnlyChanges();
-		const insertions = resolveInsertionRanges(text, [
-			...insertionChanges().map((change) => change.inserted),
-			...deletionOnlyChanges().map((change) => change.deleted),
-		]);
-		const range = getFullSnippetRange(text, insertions);
+		const snippetWindows = getContextWindows(
+			text,
+			[
+				...resolveInsertionRanges(
+					text,
+					insertionChanges().map((change) => change.inserted),
+				),
+				...resolveInsertionRanges(
+					text,
+					deletionOnlyChanges().map((change) => change.deleted),
+				),
+			],
+			5,
+		);
 		const deletionAnchors = resolveDeletionAnchorRanges();
 		const outOfRangeResolved = deletionAnchors.resolved
-			.filter((item) => item.start < range.start || item.start > range.end)
+			.filter(
+				(item) =>
+					!snippetWindows.some(
+						(window) => item.start >= window.start && item.start < window.end,
+					),
+			)
 			.map((item) => ({ deleted: item.deletedText, inserted: "" }));
 		return [...deletionAnchors.unresolved, ...outOfRangeResolved];
 	};
 
 	const highlightedSnippet = () => {
-		const unchanged = props.effect.segments.find(
-			(segment) => segment.kind === "unchanged",
-		);
-		const text = unchanged?.text ?? "";
+		const {
+			text,
+			insertions: resolvedInsertions,
+			deletions: resolvedDeletions,
+		} = resolvedInlineRanges();
 		if (!text) return "";
 
-		const insertions = resolveInsertionRanges(text, [
-			...insertionChanges().map((change) => change.inserted),
-			...deletionOnlyChanges().map((change) => change.deleted),
-		]);
-		const range = getFullSnippetRange(text, insertions);
-		const snippet = text.slice(range.start, range.end);
-		const resolvedInsertions = resolveInsertionRanges(
+		const snippetWindows = getContextWindows(
 			text,
-			insertionChanges().map((change) => change.inserted),
-		).map((item, index) => ({
-			...item,
-			deletedText: insertionChanges()[index]?.deleted ?? "",
-		}));
-		const localInsertions = resolvedInsertions
-			.filter((item) => item.start < range.end && item.end > range.start)
-			.map((item) => ({
-				start: Math.max(0, item.start - range.start),
-				end: Math.min(range.end - range.start, item.end - range.start),
-				deletedText: item.deletedText,
-			}))
-			.filter((item) => item.end > item.start);
-		const deletionAnchors = resolveDeletionAnchorRanges();
-		const localDeletions = deletionAnchors.resolved
-			.filter((item) => item.start >= range.start && item.start <= range.end)
-			.map((item) => ({
-				start: item.start - range.start,
-				end: item.start - range.start,
-				deletedText: item.deletedText,
-			}));
-
-		const annotatedSnippet = injectInlineReplacements(
-			snippet,
-			[...localInsertions, ...localDeletions],
-			{
-				insertedClassName: "pdf-amended-snippet-inserted",
-				deletedClassName: "pdf-amended-snippet-deleted",
-				addSpaceBeforeIfNeeded: true,
-			},
+			[...resolvedInsertions, ...resolvedDeletions],
+			5,
 		);
-		return annotatedSnippet;
+
+		return snippetWindows
+			.map((window) => {
+				const snippet = text.slice(window.start, window.end);
+				const localInsertions = resolvedInsertions
+					.filter((item) => item.start < window.end && item.end > window.start)
+					.map((item) => ({
+						start: Math.max(0, item.start - window.start),
+						end: Math.min(window.end - window.start, item.end - window.start),
+						deletedText: item.deletedText,
+					}))
+					.filter((item) => item.end > item.start);
+				const localDeletions = resolvedDeletions
+					.filter(
+						(item) => item.start >= window.start && item.start < window.end,
+					)
+					.map((item) => ({
+						start: item.start - window.start,
+						end: item.start - window.start,
+						deletedText: item.deletedText,
+					}));
+				return injectInlineReplacements(
+					snippet,
+					[...localInsertions, ...localDeletions],
+					{
+						insertedClassName: "pdf-amended-snippet-inserted",
+						deletedClassName: "pdf-amended-snippet-deleted",
+						addSpaceBeforeIfNeeded: true,
+					},
+				);
+			})
+			.join("\n\n...\n\n");
 	};
 
 	return (
@@ -183,10 +267,12 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 			<header class="pdf-amended-snippet-header">
 				<h4>{props.instructionHeader}</h4>
 			</header>
-			<div
-				class="pdf-amended-snippet-instruction markdown"
-				innerHTML={renderMarkdown(props.instructionMarkdown)}
-			/>
+			{hasUnappliedOperations() ? (
+				<div
+					class="pdf-amended-snippet-instruction markdown"
+					innerHTML={renderMarkdown(props.instructionMarkdown)}
+				/>
+			) : null}
 			{hasUnappliedOperations() ? (
 				<div class="pdf-amended-snippet-status">
 					<span class="pdf-amended-snippet-status-badge">
