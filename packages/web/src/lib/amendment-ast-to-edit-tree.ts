@@ -73,6 +73,10 @@ const ORDINAL_TO_NUMBER: Record<string, number> = {
 	tenth: 10,
 };
 
+const USC_TITLE_REFERENCE_RE = /^(\d+)\s+(?:U\.S\.C\.|USC)(?:\s|$)/i;
+const USC_TITLE_UNDERLYING_RE = /title\s+(\d+),\s+United States Code/i;
+const INTERNAL_REVENUE_CODE_RE = /\bInternal Revenue Code of 1986\b/i;
+
 export function translateInstructionAstToEditTree(
 	ast: InstructionAst,
 ): TranslationResult {
@@ -983,7 +987,9 @@ function extractTargetScopePath(
 	const hasSection = structuralScope.some(
 		(scope) => scope.kind === ScopeKind.Section,
 	);
-	const contextReference = extractCodeOrActReference(parentNode);
+	const codificationReference = extractCodificationReference(parentNode);
+	const contextReference =
+		codificationReference ?? extractCodeOrActReference(parentNode);
 
 	if (!contextReference || !hasSection) {
 		issues.push({
@@ -1000,17 +1006,47 @@ function extractTargetScopePath(
 	return undefined;
 }
 
+function extractCodificationReference(
+	parentNode: RuleAst<GrammarAstNodeType.Parent>,
+): TargetScopeSegment | null {
+	const codification = findChild(parentNode, GrammarAstNodeType.Codification);
+	if (!codification) return null;
+
+	const uscRef = findChildDeep(codification, GrammarAstNodeType.UscRef);
+	if (uscRef) {
+		const titleMatch = uscRef.text.match(USC_TITLE_REFERENCE_RE);
+		if (titleMatch?.[1]) {
+			return { kind: "code_reference", label: `${titleMatch[1]} U.S.C.` };
+		}
+	}
+
+	const pubLawRef = findChildDeep(codification, GrammarAstNodeType.PubLawRef);
+	if (pubLawRef?.text.trim()) {
+		return { kind: "act_reference", label: pubLawRef.text.trim() };
+	}
+
+	const statRef = findChildDeep(codification, GrammarAstNodeType.StatRef);
+	if (statRef?.text.trim()) {
+		return { kind: "act_reference", label: statRef.text.trim() };
+	}
+
+	return null;
+}
+
 function extractUscScopePath(
 	parentNode: RuleAst<GrammarAstNodeType.Parent>,
 ): TargetScopeSegment[] | null {
 	const uscRef = findChildDeep(parentNode, GrammarAstNodeType.UscRef);
 	if (!uscRef) return null;
 
-	const titleMatch = uscRef.text.match(/^(\d+)\s+U\.S\.C\./i);
+	const titleMatch = uscRef.text.match(USC_TITLE_REFERENCE_RE);
 	const title = titleMatch?.[1];
 	if (!title) return null;
 
-	const uscSectionOrSub = findChild(uscRef, GrammarAstNodeType.SectionOrSub);
+	const uscSectionOrSub = findChildDeep(
+		uscRef,
+		GrammarAstNodeType.SectionOrSub,
+	);
 	const structuralScope = uscSectionOrSub
 		? parseSectionOrSub(uscSectionOrSub).path
 		: [];
@@ -1052,11 +1088,18 @@ function extractCodeOrActReference(
 	parentNode: RuleAst<GrammarAstNodeType.Parent>,
 ): TargetScopeSegment | null {
 	const underlying = findChild(parentNode, GrammarAstNodeType.Underlying);
-	const titleCodeMatch = underlying?.text.match(
-		/title\s+(\d+),\s+United States Code/i,
-	);
+	const titleCodeMatch = underlying?.text.match(USC_TITLE_UNDERLYING_RE);
 	if (titleCodeMatch?.[1]) {
 		return { kind: "code_reference", label: `${titleCodeMatch[1]} U.S.C.` };
+	}
+	if (underlying && INTERNAL_REVENUE_CODE_RE.test(underlying.text)) {
+		return { kind: "code_reference", label: "26 U.S.C." };
+	}
+
+	const publicLawRef = findChildDeep(parentNode, GrammarAstNodeType.PubLawRef);
+	const publicLawLabel = publicLawRef?.text.trim();
+	if (publicLawLabel) {
+		return { kind: "act_reference", label: publicLawLabel };
 	}
 
 	const actNode = findChildDeep(parentNode, GrammarAstNodeType.Act);

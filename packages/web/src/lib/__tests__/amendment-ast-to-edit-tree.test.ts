@@ -62,6 +62,59 @@ describe("translateInstructionAstToEditTree", () => {
 		expect(result.tree.targetSection).toBe("1182");
 	});
 
+	it("normalizes IRC references to title 26 scope", () => {
+		const ast = parseInstructionAst(
+			"Section 45D(a) of the Internal Revenue Code of 1986 is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "code_reference", label: "26 U.S.C." },
+			{ kind: ScopeKind.Section, label: "45D" },
+			{ kind: ScopeKind.Subsection, label: "a" },
+		]);
+		expect(result.tree.targetSection).toBe("45D");
+	});
+
+	it("accepts codification USC citations without periods", () => {
+		const ast = parseInstructionAst(
+			"Section 3 of the Food and Nutrition Act of 2008 (7 USC 2014) is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "code_reference", label: "7 U.S.C." },
+			{ kind: ScopeKind.Section, label: "2014" },
+		]);
+		expect(result.tree.targetSection).toBe("2014");
+	});
+
+	it("resolves public law context into root scope reference", () => {
+		const ast = parseInstructionAst(
+			"Section 102 of Public Law 117–58 is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "act_reference", label: "Public Law 117–58" },
+			{ kind: ScopeKind.Section, label: "102" },
+		]);
+		expect(result.tree.targetSection).toBe("102");
+	});
+
+	it("prefers codification public law over underlying act reference", () => {
+		const ast = parseInstructionAst(
+			"Section 5 of the Example Act (Public Law 117–58) is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "act_reference", label: "Public Law 117–58" },
+			{ kind: ScopeKind.Section, label: "5" },
+		]);
+		expect(result.tree.targetSection).toBe("5");
+	});
+
 	it("translates sentence ordinal text location with explicit anchor", () => {
 		const ast = parseInstructionAst(
 			"Section 101 of title 10, United States Code, is amended in the first sentence of subsection (a) by striking “A”.",

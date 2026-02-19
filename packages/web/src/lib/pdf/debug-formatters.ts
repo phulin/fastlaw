@@ -10,8 +10,7 @@ import type {
 	RuleAst,
 } from "../handcrafted-instruction-parser";
 
-const previewDebugText = (value: string) =>
-	value.replace(/\s+/g, " ").trim().slice(0, 120);
+const previewDebugText = (value: string) => value.replace(/\s+/g, " ").trim();
 
 const formatAstNodeLines = (
 	node: RuleAst,
@@ -61,8 +60,20 @@ const describeEditTreeNode = (
 
 export const formatEditTree = (tree: InstructionSemanticTree): string => {
 	const lines: string[] = [];
+	lines.push(
+		`targetScopePath: ${
+			tree.targetScopePath
+				?.map((segment) => `${segment.kind}(${segment.label})`)
+				.join(" > ") ?? "n/a"
+		}`,
+	);
+	lines.push(`targetSection: ${tree.targetSection ?? "n/a"}`);
+	lines.push("---");
 	for (const child of tree.children) {
 		describeEditTreeNode(child, 0, lines);
 	}
-	return lines.length > 0 ? lines.join("\n") : "No edit nodes.";
+	if (tree.children.length === 0) {
+		lines.push("No edit nodes.");
+	}
+	return lines.join("\n");
 };

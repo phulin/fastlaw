@@ -47,6 +47,7 @@ act ::= [A-Za-z0-9 ,]+ | pub_law_ref
 codification ::= ref ("; " ref)?
 ref ::= usc_ref | pub_law_ref | stat_ref
 usc_ref ::= [0-9]+ " U.S.C. " section_or_sub ( " note" ( " " [0-9]+ )? )?
+  | [0-9]+ " USC " section_or_sub ( " note" ( " " [0-9]+ )? )?
 pub_law_ref ::= "Public Law " [0-9]+ [-–] [0-9]+
 stat_ref ::= [0-9]+ " Stat. " [0-9]+
 

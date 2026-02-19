@@ -140,7 +140,15 @@ export function InstructionDebugModal(props: InstructionDebugModalProps) {
 														{translation()
 															.issues.map(
 																(issue, index) =>
-																	`${index + 1}. ${issue.message}`,
+																	`${index + 1}. ${issue.message}${
+																		issue.nodeType
+																			? ` [node=${issue.nodeType}]`
+																			: ""
+																	}${
+																		issue.sourceText
+																			? `\n   source: ${issue.sourceText}`
+																			: ""
+																	}`,
 															)
 															.join("\n")}
 													</pre>
