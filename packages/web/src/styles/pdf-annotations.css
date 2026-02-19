@@ -15,7 +15,7 @@
 }
 
 .pdf-column-annotations h4 {
-	margin: 0;
+	margin: 0.5rem 0 0;
 	font-size: 1rem;
 }
 
@@ -34,6 +34,11 @@
 .pdf-instruction-button:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
+}
+
+.pdf-amended-snippet {
+	margin: 0.5rem 0 0;
+	padding: 0.5rem 0;
 }
 
 .pdf-amended-snippet-replacement {
