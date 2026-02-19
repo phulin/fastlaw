@@ -197,6 +197,7 @@ struct OpenLevelRef {
 #[derive(Debug, Clone)]
 struct BodyFrame {
     depth: usize,
+    structural_depth: Option<usize>,
     quote_prefix: String,
     text: String,
 }
@@ -509,9 +510,11 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
             && !in_body_excluded_context(mask)
             && !(current_tag == Some(Tag::Heading) && section.depth + 1 == state.tag_stack.len())
         {
+            let quote_depth = body_blockquote_depth(current_tag.unwrap(), &section.body_frames);
             section.body_frames.push(BodyFrame {
                 depth: state.tag_stack.len(),
-                quote_prefix: blockquote_prefix(current_tag.unwrap(), section.body_frames.len()),
+                structural_depth: structural_tag_depth(current_tag.unwrap()),
+                quote_prefix: blockquote_prefix(quote_depth),
                 text: String::new(),
             });
         }
@@ -1094,18 +1097,38 @@ fn strip_leading_blockquote_prefix(text: &str) -> &str {
     trimmed
 }
 
-fn body_blockquote_depth(tag: Tag, ancestor_count: usize) -> usize {
-    if tag == Tag::Subsection {
-        0
-    } else if tag == Tag::Chapeau || tag == Tag::Continuation || tag == Tag::P {
-        ancestor_count
-    } else {
-        ancestor_count + 1
+fn structural_tag_depth(tag: Tag) -> Option<usize> {
+    match tag {
+        Tag::Subsection => Some(0),
+        Tag::Paragraph => Some(1),
+        Tag::Subparagraph => Some(2),
+        Tag::Clause => Some(3),
+        Tag::Subclause => Some(4),
+        Tag::Item => Some(5),
+        Tag::Subitem => Some(6),
+        _ => None,
     }
 }
 
-fn blockquote_prefix(tag: Tag, ancestor_count: usize) -> String {
-    let depth = body_blockquote_depth(tag, ancestor_count);
+fn body_blockquote_depth(tag: Tag, frames: &[BodyFrame]) -> usize {
+    if let Some(depth) = structural_tag_depth(tag) {
+        return depth;
+    }
+
+    let nearest_structural_depth = frames
+        .iter()
+        .rev()
+        .find_map(|frame| frame.structural_depth)
+        .unwrap_or(0);
+
+    if matches!(tag, Tag::Chapeau | Tag::Continuation | Tag::P) {
+        return nearest_structural_depth;
+    }
+
+    nearest_structural_depth
+}
+
+fn blockquote_prefix(depth: usize) -> String {
     if depth == 0 {
         String::new()
     } else {
