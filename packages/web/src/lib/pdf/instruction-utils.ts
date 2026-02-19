@@ -8,6 +8,7 @@ import type { Paragraph } from "../text-extract";
 import type { NodeContent } from "../types";
 
 const CODE_REFERENCE_TITLE_RE = /^(\d+)\s+U\.S\.C\.$/i;
+const EN_DASH = /\u2013/g;
 const instructionParser = new HandcraftedInstructionParser(
 	amendmentGrammarSource,
 );
@@ -46,7 +47,8 @@ export const getUscSectionPathFromScopePath = (
 	if (!codeReference || !section) return null;
 	const title = codeReference.label.match(CODE_REFERENCE_TITLE_RE)?.[1];
 	if (!title) return null;
-	return `/statutes/usc/section/${title}/${encodeURIComponent(section.label)}`;
+	const normalizedSectionLabel = section.label.replace(EN_DASH, "-");
+	return `/statutes/usc/section/${title}/${encodeURIComponent(normalizedSectionLabel)}`;
 };
 
 export const getUscCitationFromScopePath = (
