@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { extractAmendatoryInstructions } from "../amendatory-instructions";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import {
 	InnerLocationTargetKind,
@@ -394,14 +393,30 @@ describe.skipIf(!hasHr1Fixture)(
 		const parser = createHandcraftedInstructionParser();
 		const fixtureText = readFileSync(HR1_FIXTURE_PATH, "utf8");
 		const fixtureParagraphs = parseFixtureParagraphs(fixtureText);
-		const instructions = extractAmendatoryInstructions(fixtureParagraphs);
 
-		const findByCitation = (citation: string) => {
-			const instruction = instructions.find(
-				(item) => item.uscCitation === citation,
+		const findInstructionTextByCitation = (citation: string) => {
+			const citationNeedle = `(${citation})`;
+			const startIndex = fixtureParagraphs.findIndex((paragraph) =>
+				paragraph.text.includes(citationNeedle),
 			);
-			if (!instruction) throw new Error(`Missing HR1 instruction: ${citation}`);
-			return instruction;
+			if (startIndex < 0) {
+				throw new Error(`Missing HR1 instruction: ${citation}`);
+			}
+
+			const nextInstructionIndex = fixtureParagraphs.findIndex(
+				(paragraph, index) =>
+					index > startIndex &&
+					paragraph.text.includes(" U.S.C. ") &&
+					paragraph.text.includes("is amended"),
+			);
+			const endIndex =
+				nextInstructionIndex < 0
+					? fixtureParagraphs.length
+					: nextInstructionIndex;
+			return fixtureParagraphs
+				.slice(startIndex, endIndex)
+				.map((paragraph) => paragraph.text)
+				.join("\n");
 		};
 
 		const hr1Citations = [
@@ -417,11 +432,11 @@ describe.skipIf(!hasHr1Fixture)(
 			"7 U.S.C. 2013(a)",
 		];
 
-		it("parses and translates 10 HR1 instructions from extracted paragraphs", () => {
+		it("parses and translates 10 HR1 instructions from fixture paragraphs", () => {
 			for (const citation of hr1Citations) {
-				const instruction = findByCitation(citation);
+				const instructionText = findInstructionTextByCitation(citation);
 				const parsed = parser.parseInstructionFromLines(
-					instruction.text.split("\n"),
+					instructionText.split("\n"),
 					0,
 				);
 				expect(parsed, citation).not.toBeNull();
@@ -436,9 +451,11 @@ describe.skipIf(!hasHr1Fixture)(
 		});
 
 		it("keeps concrete move/rewrite/insert semantics in HR1 samples", () => {
-			const section2015o4 = findByCitation("7 U.S.C. 2015(o)(4)");
+			const section2015o4 = findInstructionTextByCitation(
+				"7 U.S.C. 2015(o)(4)",
+			);
 			const parsed2015o4 = parser.parseInstructionFromLines(
-				section2015o4.text.split("\n"),
+				section2015o4.split("\n"),
 				0,
 			);
 			expect(parsed2015o4).not.toBeNull();
@@ -450,9 +467,11 @@ describe.skipIf(!hasHr1Fixture)(
 				JSON.stringify(tree2015o4).includes(UltimateEditKind.StrikeInsert),
 			).toBe(true);
 
-			const section2014e6 = findByCitation("7 U.S.C. 2014(e)(6)");
+			const section2014e6 = findInstructionTextByCitation(
+				"7 U.S.C. 2014(e)(6)",
+			);
 			const parsed2014e6 = parser.parseInstructionFromLines(
-				section2014e6.text.split("\n"),
+				section2014e6.split("\n"),
 				0,
 			);
 			expect(parsed2014e6).not.toBeNull();
