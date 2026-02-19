@@ -1,5 +1,5 @@
 instruction ::= preceding parent amended_by? " " ( resolution | "is" " further"? " amended" ( " " text_location )? "—\n" subinstructions ) "."?
-preceding ::= ( sub_location_ref " " )? ( [A-Z0-9 .-;(),]+ ".—" )?
+preceding ::= ( subsection_or_sub " " )? ( [A-Z0-9 .-;(),]+ ".—" )?
 
 parent ::= initial_locator ( " of " underlying )? ( " (" codification ")" ")"? )?
 initial_locator ::= "Section " section_or_sub
@@ -112,28 +112,14 @@ new_things ::= " new " ( "section" "s"? | sub_name | sub_name_plural | "sentence
 
 section_location_or_sub ::= "section " section_or_sub | sub_location_or_sub
 
-section_or_sub ::= section_id " "? ( subsection_or_sub | paragraph_or_sub )?
+section_or_sub ::= section_id " "? subsection_or_sub?
 section_id ::= [0-9]+ [A-Za-z0-9–-]*
-subsection_or_sub ::= subsection_id paragraph_or_sub?
-paragraph_or_sub ::= paragraph_id subparagraph_or_sub?
-subparagraph_or_sub ::= subparagraph_id clause_or_sub?
-clause_or_sub ::= clause_id subclause_or_sub?
-subclause_or_sub ::= subclause_id item_or_sub?
-item_or_sub ::= item_id subitem_id?
+subsection_or_sub ::= sub_id+
 
-sub_location_or_sub ::= sub_name " " sub_location_ref
-sub_location_or_sub_caps ::= sub_name_caps " " sub_location_ref
+sub_location_or_sub ::= sub_name " " subsection_or_sub
+sub_location_or_sub_caps ::= sub_name_caps " " subsection_or_sub
 
-sub_location_list ::= sub_location_ref " and " sub_location_ref
-  | sub_location_ref ( ", " sub_location_ref )+ ", and " sub_location_ref
-
-sub_location_ref ::= subsection_or_sub
-  | paragraph_or_sub
-  | subparagraph_or_sub
-  | clause_or_sub
-  | subclause_or_sub
-  | item_or_sub
-  | subitem_or_sub
+sub_location_list ::= sub_id " and " sub_id | sub_id ( ", " sub_id )+ ", and " sub_id
 
 sub_location_or_plural ::= ( sub_location | sub_locations_plural ) ( " of " sub_location )?
 sub_location ::= sub_name " " sub_id
@@ -151,12 +137,8 @@ inline ::= "“" text "”"
 block ::= block_line ("\n" block_line)*
 block_line ::= "“" text "”" | text "”" | "“" text
 
-sub_id ::= subsection_id | paragraph_id | subparagraph_id | clause_id | subclause_id | item_id | subitem_id
+sub_id ::= lower_id | upper_id | digit_id
 
-subsection_id ::= "(" [a-z] [a-z]? [a-z]? ")"
-paragraph_id ::= "(" [0-9]+ ")"
-subparagraph_id ::= "(" [A-Z]+ ")"
-clause_id ::= "(" [ivxlc]+ ")"
-subclause_id ::= "(" [IVXLC]+ ")"
-item_id ::= "(" [a-z]+ ")"
-subitem_id ::= "(" [A-Z]+ ")"
+lower_id ::= "(" [a-z]+ ")"
+upper_id ::= "(" [A-Z]+ ")"
+digit_id ::= "(" [0-9]+ ")"
