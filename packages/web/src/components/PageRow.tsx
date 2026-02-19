@@ -1,6 +1,15 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { createEffect, createSignal, onCleanup } from "solid-js";
+import type { TranslationResult } from "../lib/amendment-ast-to-edit-tree";
 import type { AmendmentEffect } from "../lib/amendment-effects";
+import type { ParsedInstruction } from "../lib/handcrafted-instruction-parser";
+
+export interface InstructionWorkflowDebug {
+	sectionText: string;
+	splitLines: string[];
+	parsedInstruction: ParsedInstruction | null;
+	translatedEditTree: TranslationResult | null;
+}
 
 export type PageItem =
 	| {
@@ -16,6 +25,7 @@ export type PageItem =
 			instruction: import("../lib/amendatory-instructions").AmendatoryInstruction;
 			amendmentEffect: AmendmentEffect | null;
 			sectionPath: string | null;
+			workflowDebug: InstructionWorkflowDebug;
 			colorIndex: number;
 			topPercent: number;
 	  };

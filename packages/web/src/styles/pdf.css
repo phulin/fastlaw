@@ -491,21 +491,23 @@ del {
 	inset: 0;
 	z-index: 2000;
 	display: flex;
-	align-items: center;
-	justify-content: center;
-	padding: 1.5rem;
+	align-items: stretch;
+	justify-content: stretch;
+	padding: 0;
 	background: rgba(20, 18, 16, 0.48);
 }
 
 .pdf-instruction-modal {
-	width: min(960px, 100%);
-	max-height: min(85vh, 100%);
-	overflow: auto;
-	padding: 1rem 1rem 1.25rem;
-	border: 1px solid var(--line);
-	border-radius: 12px;
+	width: 100vw;
+	height: 100vh;
+	overflow: hidden;
+	padding: 1rem 1.25rem 1.25rem;
+	border: none;
+	border-radius: 0;
 	background: var(--card);
 	box-shadow: var(--shadow);
+	display: flex;
+	flex-direction: column;
 }
 
 .pdf-instruction-modal-header {
@@ -531,6 +533,8 @@ del {
 .pdf-instruction-modal-content {
 	display: grid;
 	gap: 1rem;
+	overflow: auto;
+	padding-right: 0.25rem;
 }
 
 .pdf-instruction-modal-grid {

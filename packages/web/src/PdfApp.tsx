@@ -22,6 +22,13 @@ import {
 	extractAmendatoryInstructions,
 } from "./lib/amendatory-instructions";
 import { translateInstructionAstToEditTree } from "./lib/amendment-ast-to-edit-tree";
+import {
+	type EditNode,
+	type InstructionSemanticTree,
+	type LocationRestrictionNode,
+	type ScopeNode,
+	SemanticNodeType,
+} from "./lib/amendment-edit-tree";
 import { applyAmendmentEditTreeToSection } from "./lib/amendment-edit-tree-apply";
 import {
 	type AmendmentEffect,
@@ -29,108 +36,81 @@ import {
 	getSectionPathFromUscCitation,
 	type SectionBodiesResponse,
 } from "./lib/amendment-effects";
-import { HandcraftedInstructionParser } from "./lib/handcrafted-instruction-parser";
+import {
+	HandcraftedInstructionParser,
+	type ParsedInstruction,
+	type RuleAst,
+} from "./lib/handcrafted-instruction-parser";
 import { renderMarkdown } from "./lib/markdown";
 import type { Paragraph } from "./lib/text-extract";
 import { extractParagraphs } from "./lib/text-extract";
-import { resolveInsertionRanges } from "./lib/text-spans";
 import type { NodeContent, SourceVersionRecord } from "./lib/types";
 
 const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1078;
-const AMENDED_SNIPPET_CONTEXT_CHARS = 500;
 const instructionParser = new HandcraftedInstructionParser(
 	amendmentGrammarSource,
 );
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
-interface SnippetDisplayDebugInfo {
-	anchorSource:
-		| "insertion"
-		| "search_index"
-		| "scoped_range_start"
-		| "fallback";
-	anchorIndex: number;
-	anchorSearchIndexLocal: number | null;
-	anchorScopeStart: number | null;
-	anchorAttemptIndex: number | null;
-	insertionCount: number;
-	changeCount: number;
-	deletionCount: number;
-	snippetStart: number;
-	snippetEnd: number;
-	snippetLength: number;
-}
+const previewDebugText = (value: string) =>
+	value.replace(/\s+/g, " ").trim().slice(0, 120);
 
-const getSnippetDisplayDebugInfo = (
-	effect: AmendmentEffect,
-): SnippetDisplayDebugInfo => {
-	const unchanged = effect.segments.find(
-		(segment) => segment.kind === "unchanged",
-	);
-	const text = unchanged?.text ?? "";
+const formatAstNodeLines = (
+	node: RuleAst,
+	depth: number,
+	lines: string[],
+): void => {
+	const indent = "  ".repeat(depth);
+	lines.push(`${indent}- ${node.type}: ${previewDebugText(node.text)}`);
+	for (const child of node.children) {
+		formatAstNodeLines(child, depth + 1, lines);
+	}
+};
 
-	const insertions = resolveInsertionRanges(
-		text,
-		effect.changes
-			.filter((change) => change.inserted.length > 0)
-			.map((change) => change.inserted),
-	);
-	const operationAnchor = effect.debug.operationAttempts.find(
-		(attempt) =>
-			attempt.outcome === "applied" &&
-			(attempt.searchIndex !== null || attempt.scopedRange !== null),
-	);
-	const anchorAttemptIndex =
-		operationAnchor === undefined
-			? null
-			: effect.debug.operationAttempts.indexOf(operationAnchor);
-	const insertionAnchor = insertions[0]?.start;
-	const searchIndexAnchor = operationAnchor?.searchIndex;
-	const scopedRangeStartAnchor = operationAnchor?.scopedRange?.start;
-	const absoluteSearchIndexAnchor =
-		searchIndexAnchor === null || searchIndexAnchor === undefined
-			? undefined
-			: scopedRangeStartAnchor === undefined
-				? searchIndexAnchor
-				: scopedRangeStartAnchor + searchIndexAnchor;
-	const anchorSource =
-		insertionAnchor !== undefined
-			? "insertion"
-			: searchIndexAnchor !== null && searchIndexAnchor !== undefined
-				? "search_index"
-				: scopedRangeStartAnchor !== undefined
-					? "scoped_range_start"
-					: "fallback";
-	const anchorIndex =
-		insertionAnchor ?? absoluteSearchIndexAnchor ?? scopedRangeStartAnchor ?? 0;
+const formatParseTree = (
+	parsedInstruction: ParsedInstruction | null,
+): string => {
+	if (!parsedInstruction) {
+		return "Parser did not match this instruction.";
+	}
+	const lines: string[] = [];
+	formatAstNodeLines(parsedInstruction.ast, 0, lines);
+	return lines.join("\n");
+};
 
-	const roughStart = Math.max(0, anchorIndex - AMENDED_SNIPPET_CONTEXT_CHARS);
-	const roughEnd = Math.min(
-		text.length,
-		anchorIndex + AMENDED_SNIPPET_CONTEXT_CHARS,
-	);
-	const start = text.lastIndexOf("\n", roughStart);
-	const end = text.indexOf("\n", roughEnd);
-	const snippetStart = start === -1 ? 0 : start + 1;
-	const snippetEnd = end === -1 ? text.length : end;
+const describeEditTreeNode = (
+	node: ScopeNode | LocationRestrictionNode | EditNode,
+	depth: number,
+	lines: string[],
+): void => {
+	const indent = "  ".repeat(depth);
+	if (node.type === SemanticNodeType.Scope) {
+		lines.push(`${indent}- scope ${node.scope.kind}(${node.scope.label})`);
+		for (const child of node.children) {
+			describeEditTreeNode(child, depth + 1, lines);
+		}
+		return;
+	}
+	if (node.type === SemanticNodeType.LocationRestriction) {
+		lines.push(`${indent}- restriction ${node.restriction.kind}`);
+		for (const child of node.children) {
+			describeEditTreeNode(child, depth + 1, lines);
+		}
+		return;
+	}
+	lines.push(`${indent}- edit ${node.edit.kind}: ${JSON.stringify(node.edit)}`);
+};
 
-	return {
-		anchorSource,
-		anchorIndex,
-		anchorSearchIndexLocal: searchIndexAnchor ?? null,
-		anchorScopeStart: scopedRangeStartAnchor ?? null,
-		anchorAttemptIndex,
-		insertionCount: insertions.length,
-		changeCount: effect.changes.length,
-		deletionCount: effect.deleted.length,
-		snippetStart,
-		snippetEnd,
-		snippetLength: Math.max(0, snippetEnd - snippetStart),
-	};
+const formatEditTree = (tree: InstructionSemanticTree): string => {
+	const lines: string[] = [];
+	for (const child of tree.children) {
+		describeEditTreeNode(child, 0, lines);
+	}
+	return lines.length > 0 ? lines.join("\n") : "No edit nodes.";
 };
 
 // Persistence Helpers
@@ -708,15 +688,16 @@ export default function PdfApp() {
 								? sectionBodyCache.get(sectionPath)
 								: undefined;
 							const sectionBodyText = getSectionBodyText(sectionContent);
+							const splitLines = instr.text.split("\n");
+							const parsedInstruction =
+								instructionParser.parseInstructionFromLines(splitLines, 0);
+							const translatedEditTree = parsedInstruction
+								? translateInstructionAstToEditTree(parsedInstruction.ast)
+								: null;
 							const amendmentEffect =
 								sectionPath && sectionBodyText.length > 0
 									? (() => {
-											const parsed =
-												instructionParser.parseInstructionFromLines(
-													instr.text.split("\n"),
-													0,
-												);
-											if (!parsed) {
+											if (!parsedInstruction || !translatedEditTree) {
 												return {
 													status: "unsupported",
 													sectionPath,
@@ -730,18 +711,17 @@ export default function PdfApp() {
 														sectionTextLength: sectionBodyText.length,
 														operationCount: 0,
 														operationAttempts: [],
-														failureReason: "instruction_parse_failed",
+														failureReason:
+															"instruction_parse_or_translate_failed",
 													},
 												} satisfies AmendmentEffect;
 											}
-											const translated = translateInstructionAstToEditTree(
-												parsed.ast,
-											);
 											return applyAmendmentEditTreeToSection({
-												tree: translated.tree,
-												instruction: instr,
+												tree: translatedEditTree.tree,
 												sectionPath,
 												sectionBody: sectionBodyText,
+												rootQuery: instr.rootQuery,
+												instructionText: instr.text,
 											});
 										})()
 									: null;
@@ -752,6 +732,12 @@ export default function PdfApp() {
 									instruction: instr,
 									amendmentEffect,
 									sectionPath,
+									workflowDebug: {
+										sectionText: instr.text,
+										splitLines,
+										parsedInstruction,
+										translatedEditTree,
+									},
 									colorIndex: instructions.indexOf(instr) % NUM_AMEND_COLORS,
 									topPercent,
 								},
@@ -1026,11 +1012,11 @@ export default function PdfApp() {
 								class="pdf-instruction-modal"
 								role="dialog"
 								aria-modal="true"
-								aria-label="Instruction match details"
+								aria-label="Instruction debug workflow"
 							>
 								<header class="pdf-instruction-modal-header">
 									<h2 class="pdf-instruction-modal-title">
-										Instruction Match Details
+										Instruction Debug Workflow
 									</h2>
 									<button
 										type="button"
@@ -1045,6 +1031,7 @@ export default function PdfApp() {
 										const item = selected();
 										const instruction = item.instruction;
 										const effect = item.amendmentEffect;
+										const workflowDebug = item.workflowDebug;
 										const instructionPageRange = `${instruction.startPage}-${instruction.endPage}`;
 										const hierarchyPath = instruction.rootQuery
 											.map((level) =>
@@ -1088,96 +1075,116 @@ export default function PdfApp() {
 												</div>
 
 												<section class="pdf-instruction-modal-section">
-													<h3>Instruction Text</h3>
+													<h3>Section Text (Amendatory Instruction)</h3>
 													<div
 														class="pdf-instruction-modal-markdown markdown"
-														innerHTML={renderMarkdown(instruction.text)}
+														innerHTML={renderMarkdown(
+															workflowDebug.sectionText,
+														)}
 													/>
+												</section>
+
+												<section class="pdf-instruction-modal-section">
+													<h3>Paragraph Split</h3>
+													<pre class="pdf-instruction-modal-code">
+														{workflowDebug.splitLines
+															.map(
+																(line, index) =>
+																	`${index + 1}. ${line || "(blank)"}`,
+															)
+															.join("\n")}
+													</pre>
+												</section>
+
+												<section class="pdf-instruction-modal-section">
+													<h3>Parse Tree</h3>
+													<div class="pdf-instruction-modal-grid">
+														<div class="pdf-instruction-modal-kv">
+															<span>Parser status</span>
+															<code>
+																{workflowDebug.parsedInstruction
+																	? "parsed"
+																	: "failed"}
+															</code>
+														</div>
+														<div class="pdf-instruction-modal-kv">
+															<span>Parse offset</span>
+															<code>
+																{workflowDebug.parsedInstruction
+																	? String(
+																			workflowDebug.parsedInstruction
+																				.parseOffset,
+																		)
+																	: "n/a"}
+															</code>
+														</div>
+													</div>
+													<pre class="pdf-instruction-modal-code">
+														{formatParseTree(workflowDebug.parsedInstruction)}
+													</pre>
+												</section>
+
+												<section class="pdf-instruction-modal-section">
+													<h3>Edit Tree</h3>
+													<div class="pdf-instruction-modal-grid">
+														<div class="pdf-instruction-modal-kv">
+															<span>Translation status</span>
+															<code>
+																{workflowDebug.translatedEditTree
+																	? "built"
+																	: "unavailable"}
+															</code>
+														</div>
+														<div class="pdf-instruction-modal-kv">
+															<span>Translation issues</span>
+															<code>
+																{workflowDebug.translatedEditTree
+																	? String(
+																			workflowDebug.translatedEditTree.issues
+																				.length,
+																		)
+																	: "n/a"}
+															</code>
+														</div>
+													</div>
+													<Show when={workflowDebug.translatedEditTree}>
+														{(translation) => (
+															<>
+																<Show when={translation().issues.length > 0}>
+																	<pre class="pdf-instruction-modal-code">
+																		{translation()
+																			.issues.map(
+																				(issue, index) =>
+																					`${index + 1}. ${issue.message}`,
+																			)
+																			.join("\n")}
+																	</pre>
+																</Show>
+																<pre class="pdf-instruction-modal-code">
+																	{formatEditTree(translation().tree)}
+																</pre>
+															</>
+														)}
+													</Show>
 												</section>
 
 												<Show
 													when={effect}
 													fallback={
 														<section class="pdf-instruction-modal-section">
-															<h3>Match Attempts</h3>
+															<h3>Apply Result</h3>
 															<p>No section body was available for matching.</p>
 														</section>
 													}
 												>
 													{(resolvedEffect) => (
 														<section class="pdf-instruction-modal-section">
-															<h3>Match Attempts</h3>
-															{(() => {
-																const snippetDebug = getSnippetDisplayDebugInfo(
-																	resolvedEffect(),
-																);
-																return (
-																	<div class="pdf-instruction-modal-grid">
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Snippet anchor source</span>
-																			<code>{snippetDebug.anchorSource}</code>
-																		</div>
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Anchor search index (local)</span>
-																			<code>
-																				{snippetDebug.anchorSearchIndexLocal ===
-																				null
-																					? "none"
-																					: String(
-																							snippetDebug.anchorSearchIndexLocal,
-																						)}
-																			</code>
-																		</div>
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Anchor scope start</span>
-																			<code>
-																				{snippetDebug.anchorScopeStart === null
-																					? "none"
-																					: String(
-																							snippetDebug.anchorScopeStart,
-																						)}
-																			</code>
-																		</div>
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Snippet anchor index</span>
-																			<code>
-																				{String(snippetDebug.anchorIndex)}
-																			</code>
-																		</div>
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Anchor attempt index</span>
-																			<code>
-																				{snippetDebug.anchorAttemptIndex ===
-																				null
-																					? "none"
-																					: String(
-																							snippetDebug.anchorAttemptIndex +
-																								1,
-																						)}
-																			</code>
-																		</div>
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Snippet range</span>
-																			<code>
-																				{`${snippetDebug.snippetStart}-${snippetDebug.snippetEnd} (${snippetDebug.snippetLength} chars)`}
-																			</code>
-																		</div>
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Resolved insertions</span>
-																			<code>
-																				{String(snippetDebug.insertionCount)}
-																			</code>
-																		</div>
-																		<div class="pdf-instruction-modal-kv">
-																			<span>Effect changes / deletions</span>
-																			<code>
-																				{`${snippetDebug.changeCount} / ${snippetDebug.deletionCount}`}
-																			</code>
-																		</div>
-																	</div>
-																);
-															})()}
+															<h3>Apply Result</h3>
 															<div class="pdf-instruction-modal-grid">
+																<div class="pdf-instruction-modal-kv">
+																	<span>Apply status</span>
+																	<code>{resolvedEffect().status}</code>
+																</div>
 																<div class="pdf-instruction-modal-kv">
 																	<span>Failure reason</span>
 																	<code>
@@ -1201,7 +1208,39 @@ export default function PdfApp() {
 																		)}
 																	</code>
 																</div>
+																<div class="pdf-instruction-modal-kv">
+																	<span>Final edits</span>
+																	<code>
+																		{String(resolvedEffect().changes.length)}
+																	</code>
+																</div>
 															</div>
+															<Show
+																when={resolvedEffect().changes.length > 0}
+																fallback={
+																	<p>No final edits were produced by apply.</p>
+																}
+															>
+																<For each={resolvedEffect().changes}>
+																	{(change, index) => (
+																		<article class="pdf-instruction-attempt">
+																			<h4>Edit {index() + 1}</h4>
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Deleted</span>
+																				<pre class="pdf-instruction-modal-code">
+																					{change.deleted || "(none)"}
+																				</pre>
+																			</div>
+																			<div class="pdf-instruction-modal-kv">
+																				<span>Inserted</span>
+																				<pre class="pdf-instruction-modal-code">
+																					{change.inserted || "(none)"}
+																				</pre>
+																			</div>
+																		</article>
+																	)}
+																</For>
+															</Show>
 															<For
 																each={resolvedEffect().debug.operationAttempts}
 															>
