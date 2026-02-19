@@ -217,19 +217,17 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 		<div class="pdf-amended-snippet">
 			<header class="pdf-amended-snippet-header">
 				<h4>{props.instructionHeader}</h4>
+				{hasUnappliedOperations() ? (
+					<span class="pdf-amended-snippet-status-badge">
+						Partially applied
+					</span>
+				) : null}
 			</header>
 			{hasUnappliedOperations() ? (
 				<div
 					class="pdf-amended-snippet-instruction markdown"
 					innerHTML={renderMarkdown(props.instructionMarkdown)}
 				/>
-			) : null}
-			{hasUnappliedOperations() ? (
-				<div class="pdf-amended-snippet-status">
-					<span class="pdf-amended-snippet-status-badge">
-						Partially applied
-					</span>
-				</div>
 			) : null}
 			<div
 				class="pdf-amended-snippet-main markdown"

@@ -1,4 +1,4 @@
-import { createEffect, For, Show } from "solid-js";
+import { createEffect, createMemo, For, Show } from "solid-js";
 import { renderMarkdown } from "../lib/markdown";
 import { AmendedSnippet } from "./AmendedSnippet";
 import type { InstructionPageItem, PageItem } from "./PageRow";
@@ -17,8 +17,9 @@ interface AnnotationLayerProps {
 }
 
 const ITEM_GAP = 0;
+const DEFAULT_MEASURED_HEIGHT = 28;
 const LEADING_MARKER_RE = /^\(([^)]+)\)/;
-const SECTION_HEADING_RE = /^SEC\.\s+\d+/i;
+const SECTION_HEADING_RE = /^SEC\.\s+\d+/;
 const BILL_SECTION_NUMBER_RE = /^SEC\.\s+([0-9A-Za-z-]+)/i;
 
 const extractLeadingMarkers = (text: string): string[] => {
@@ -120,6 +121,42 @@ const getInstructionLocationMarkers = (
 
 export function AnnotationLayer(props: AnnotationLayerProps) {
 	let containerRef!: HTMLDivElement;
+	const measuredHeights = new Map<string, number>();
+
+	const toHeightCacheKey = (entry: AnnotationLayerProps["items"][number]) => {
+		const top = entry.item.topPercent.toFixed(4);
+		if (entry.item.type === "paragraph") {
+			return `p:${entry.pageNumber}:${top}:${entry.item.text}`;
+		}
+		return `i:${entry.pageNumber}:${top}:${entry.item.instruction.targetScopePath}:${entry.item.instruction.text}`;
+	};
+
+	const computeTopPositions = (
+		items: AnnotationLayerProps["items"],
+		getHeight: (entry: AnnotationLayerProps["items"][number]) => number,
+	) => {
+		const tops: number[] = [];
+		let currentY = -Infinity;
+
+		for (const entry of items) {
+			let top = entry.globalTop;
+			if (top < currentY + ITEM_GAP) {
+				top = currentY + ITEM_GAP;
+			}
+			tops.push(top);
+			currentY = top + getHeight(entry);
+		}
+
+		return tops;
+	};
+
+	const cachedTopPositions = createMemo(() =>
+		computeTopPositions(
+			props.items,
+			(entry) =>
+				measuredHeights.get(toHeightCacheKey(entry)) ?? DEFAULT_MEASURED_HEIGHT,
+		),
+	);
 
 	// The layout engine
 	createEffect(() => {
@@ -141,28 +178,27 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 			// or we can attach data attributes).
 			// Actually, let's rely on the fact that we render <For> in order.
 
-			let currentY = -Infinity;
-
 			itemElements.forEach((el, index) => {
 				const itemData = items[index];
 				if (!itemData) return;
+				measuredHeights.set(
+					toHeightCacheKey(itemData),
+					el.getBoundingClientRect().height,
+				);
+			});
 
-				const idealTop = itemData.globalTop;
-				const height = el.getBoundingClientRect().height;
+			const measuredTops = computeTopPositions(
+				items,
+				(entry) =>
+					measuredHeights.get(toHeightCacheKey(entry)) ??
+					DEFAULT_MEASURED_HEIGHT,
+			);
 
-				// If this is a new "section" (far away from previous), reset currentY?
-				// Actually, the requirement is "max(ideal, previous + gap)".
-				// So if ideal > currentY, we jump to ideal.
-
-				let top = idealTop;
-				if (top < currentY + ITEM_GAP) {
-					top = currentY + ITEM_GAP;
+			itemElements.forEach((el, index) => {
+				const top = measuredTops[index];
+				if (top !== undefined) {
+					el.style.top = `${top}px`;
 				}
-
-				el.style.top = `${top}px`;
-
-				// Update currentY for next item
-				currentY = top + height;
 			});
 		});
 	});
@@ -180,10 +216,11 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 			<For each={props.items}>
 				{(entry, index) => (
 					<div
+						data-key={toHeightCacheKey(entry)}
 						style={{
 							position: "absolute",
 							left: "0",
-							top: `${entry.globalTop}px`, // Initial position before layout effect
+							top: `${cachedTopPositions()[index()] ?? entry.globalTop}px`,
 							width: "100%",
 							"pointer-events": "auto",
 							transition: "top 0.1s ease-out", // Smooth snapping, optional
@@ -255,22 +292,27 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 											<div
 												class={`pdf-amend-color-${instructionItem.colorIndex}`}
 											>
-												<header class="pdf-amended-snippet-header">
-													<h4>
-														{getInstructionLocationHeader(
-															instructionItem.instruction,
-															locationMarkers,
+												<div class="pdf-amended-snippet">
+													<header class="pdf-amended-snippet-header">
+														<h4>
+															{getInstructionLocationHeader(
+																instructionItem.instruction,
+																locationMarkers,
+															)}
+														</h4>
+														<span class="pdf-amended-snippet-status-badge">
+															Application failed
+														</span>
+													</header>
+													<div
+														class="pdf-amended-snippet-instruction markdown"
+														innerHTML={renderMarkdown(
+															renderInstructionMarkdown(
+																instructionItem.instruction,
+															),
 														)}
-													</h4>
-												</header>
-												<div
-													class="pdf-amended-snippet-instruction markdown"
-													innerHTML={renderMarkdown(
-														renderInstructionMarkdown(
-															instructionItem.instruction,
-														),
-													)}
-												/>
+													/>
+												</div>
 											</div>
 										)}
 									</button>

@@ -49,10 +49,6 @@
 	margin: 0;
 }
 
-.pdf-amended-snippet-status {
-	margin-bottom: 0.45rem;
-}
-
 .pdf-amended-snippet-status-badge {
 	display: inline-block;
 	padding: 0.1rem 0.5rem;
@@ -68,12 +64,18 @@
 
 .pdf-amended-snippet-header {
 	margin: 0 0 0.4rem;
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 0.5rem;
 }
 
 .pdf-amended-snippet-header h4 {
 	margin: 0;
 	font-weight: 700;
 	font-size: 1rem;
+	flex: 1;
+	min-width: 0;
 }
 
 .pdf-amended-snippet-instruction {

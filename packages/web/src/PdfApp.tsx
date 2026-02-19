@@ -25,6 +25,7 @@ const HASH_PREFIX_LENGTH = 8;
 const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1078;
+const PAGE_WINDOW_RADIUS = 12;
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -192,7 +193,7 @@ export default function PdfApp() {
 			}
 			return DEFAULT_ITEM_SIZE;
 		},
-		overscan: 3,
+		overscan: PAGE_WINDOW_RADIUS,
 		onChange(instance) {
 			const items = instance.getVirtualItems();
 
@@ -482,7 +483,7 @@ export default function PdfApp() {
 				targetPage,
 				sourceVersionId,
 				numAmendColors: NUM_AMEND_COLORS,
-				windowRadius: 4,
+				windowRadius: PAGE_WINDOW_RADIUS,
 			},
 			[fileBuffer],
 		);
