@@ -6,7 +6,9 @@ import { createHandcraftedInstructionParser } from "../../scripts/handcrafted-in
 import { extractAmendatoryInstructions } from "../amendatory-instructions";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import {
+	InnerLocationTargetKind,
 	LocationRestrictionKind,
+	PunctuationKind,
 	SemanticNodeType,
 	TextLocationAnchorKind,
 	UltimateEditKind,
@@ -15,7 +17,7 @@ import { parseFixtureParagraphs } from "./test-utils";
 
 function parseInstructionAst(input: string) {
 	const parser = createHandcraftedInstructionParser();
-	const parsed = parser.parseInstructionFromLines([input], 0);
+	const parsed = parser.parseInstructionFromLines(input.split("\n"), 0);
 	if (!parsed) throw new Error("Expected instruction to parse.");
 	return parsed.ast;
 }
@@ -97,6 +99,264 @@ describe("translateInstructionAstToEditTree", () => {
 		expect(locationNode.restriction.kind).toBe(
 			LocationRestrictionKind.MatterPreceding,
 		);
+	});
+
+	it("translates sentence-last text location", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended in the last sentence by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(
+			LocationRestrictionKind.SentenceLast,
+		);
+	});
+
+	it("translates heading text location with structural anchor", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended in the heading of subsection (a) by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.Heading);
+		if (locationNode.restriction.kind === LocationRestrictionKind.Heading) {
+			expect(locationNode.restriction.anchor?.kind).toBe(
+				TextLocationAnchorKind.Of,
+			);
+		}
+	});
+
+	it("translates matter-following text location", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended in the matter following paragraph (2) by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(
+			LocationRestrictionKind.MatterFollowing,
+		);
+	});
+
+	it("translates before inner-location for punctuation period at end of a structural reference", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended before the period at the end of subsection (a) by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.Before);
+		if (locationNode.restriction.kind === LocationRestrictionKind.Before) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.Punctuation,
+			);
+			if (
+				locationNode.restriction.target.kind ===
+				InnerLocationTargetKind.Punctuation
+			) {
+				expect(locationNode.restriction.target.punctuation).toBe(
+					PunctuationKind.Period,
+				);
+				expect(locationNode.restriction.target.atEndOf?.path[0]?.label).toBe(
+					"a",
+				);
+			}
+		}
+	});
+
+	it("translates after inner-location for punctuation semicolon", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended—\n(A) after the semicolon, by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.After);
+		if (locationNode.restriction.kind === LocationRestrictionKind.After) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.Punctuation,
+			);
+			if (
+				locationNode.restriction.target.kind ===
+				InnerLocationTargetKind.Punctuation
+			) {
+				expect(locationNode.restriction.target.punctuation).toBe(
+					PunctuationKind.Semicolon,
+				);
+			}
+		}
+	});
+
+	it("translates after inner-location for punctuation comma", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended—\n(A) after the comma, by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.After);
+		if (locationNode.restriction.kind === LocationRestrictionKind.After) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.Punctuation,
+			);
+			if (
+				locationNode.restriction.target.kind ===
+				InnerLocationTargetKind.Punctuation
+			) {
+				expect(locationNode.restriction.target.punctuation).toBe(
+					PunctuationKind.Comma,
+				);
+			}
+		}
+	});
+
+	it("translates before inner-location for heading", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended—\n(A) before the heading, by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.Before);
+		if (locationNode.restriction.kind === LocationRestrictionKind.Before) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.Heading,
+			);
+		}
+	});
+
+	it("translates before inner-location for subsection heading", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended—\n(A) before the subsection heading, by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.Before);
+		if (locationNode.restriction.kind === LocationRestrictionKind.Before) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.SubsectionHeading,
+			);
+		}
+	});
+
+	it("translates before inner-location for section designation", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended—\n(A) before the section designation, by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.Before);
+		if (locationNode.restriction.kind === LocationRestrictionKind.Before) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.SectionDesignation,
+			);
+		}
+	});
+
+	it("translates after inner-location for ordinal sentence", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended—\n(A) after the second sentence, by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.After);
+		if (locationNode.restriction.kind === LocationRestrictionKind.After) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.SentenceOrdinal,
+			);
+			if (
+				locationNode.restriction.target.kind ===
+				InnerLocationTargetKind.SentenceOrdinal
+			) {
+				expect(locationNode.restriction.target.ordinal).toBe(2);
+			}
+		}
+	});
+
+	it("translates after inner-location for last sentence", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended—\n(A) after the last sentence, by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const locationNode = result.tree.children[0];
+		if (
+			!locationNode ||
+			locationNode.type !== SemanticNodeType.LocationRestriction
+		) {
+			throw new Error("Expected top-level location restriction.");
+		}
+
+		expect(locationNode.restriction.kind).toBe(LocationRestrictionKind.After);
+		if (locationNode.restriction.kind === LocationRestrictionKind.After) {
+			expect(locationNode.restriction.target.kind).toBe(
+				InnerLocationTargetKind.SentenceLast,
+			);
+		}
 	});
 
 	it("translates plural in-location and uses it for moving such sections", () => {
