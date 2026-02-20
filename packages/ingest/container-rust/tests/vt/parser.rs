@@ -1,7 +1,8 @@
 use crate::common::load_fixture;
 use ingest::sources::vt::parser::{
     compare_designators, inline_section_cross_references, normalize_designator, normalize_text,
-    parse_fullchapter_detail, parse_title_index, parse_title_links, resolve_and_normalize_url,
+    normalize_text_for_comparison, parse_fullchapter_detail, parse_title_index, parse_title_links,
+    resolve_and_normalize_url,
 };
 use std::cmp::Ordering;
 
@@ -57,6 +58,23 @@ fn parses_fullchapter_sections_and_routes_history() {
 }
 
 #[test]
+fn preserves_bold_markers_from_source_content() {
+    let html = r#"
+<html>
+  <body>
+    <h2>Title 2 : Legislature.</h2>
+    <h3>Chapter 1 : General Assembly.</h3>
+    <p><b>§ 1. Sample section.</b></p>
+    <p><b>(a)</b> The legislature shall meet.</p>
+  </body>
+</html>
+"#;
+    let parsed = parse_fullchapter_detail(html, "2", "1").expect("fullchapter should parse");
+    assert_eq!(parsed.sections.len(), 1);
+    assert!(parsed.sections[0].body.contains("**(a)**"));
+}
+
+#[test]
 fn compares_designators_deterministically() {
     assert_eq!(compare_designators("02", "2"), Ordering::Equal);
     assert_eq!(compare_designators("9", "9A"), Ordering::Less);
@@ -91,32 +109,59 @@ fn inlines_simple_section_cross_references() {
 fn baseline_text_comparison_for_medium_fullchapter_fixture() {
     let html = load_fixture("vt/fullchapter_09_063_medium.html");
     let parsed = parse_fullchapter_detail(&html, "9", "63").expect("fullchapter should parse");
-    let target = parsed
+    for target in &parsed.sections {
+        let parser_concatenated = normalize_text_for_comparison(&format!(
+            "{} {} {}",
+            target.section_name,
+            target.body,
+            target.history.clone().unwrap_or_default()
+        ));
+        let baseline_concatenated = normalize_text_for_comparison(&baseline_extract_section_text(
+            &html,
+            &target.section_num,
+        ));
+        let expected = normalize_text_for_comparison(&strip_heading_noise(&baseline_concatenated));
+        let actual = normalize_text_for_comparison(&strip_heading_noise(&parser_concatenated));
+
+        if expected != actual {
+            let mismatch = first_mismatch_index(&expected, &actual);
+            panic!(
+                "section={} mismatch_at={} expected='{}' actual='{}'",
+                target.section_num,
+                mismatch,
+                excerpt_at(&expected, mismatch),
+                excerpt_at(&actual, mismatch)
+            );
+        }
+    }
+}
+
+#[test]
+fn parses_ucc_and_interstate_compact_style_content() {
+    let html_ucc = load_fixture("vt/fullchapter_09_063_medium.html");
+    let parsed_ucc =
+        parse_fullchapter_detail(&html_ucc, "9A", "63").expect("UCC chapter should parse");
+    assert!(parsed_ucc
         .sections
         .iter()
-        .find(|section| section.section_num == "2451a")
-        .expect("fixture should include section 2451a");
+        .any(|section| section.section_num == "2451a"));
 
-    let parser_concatenated = normalize_text(&format!(
-        "{} {} {}",
-        target.section_name,
-        target.body,
-        target.history.clone().unwrap_or_default()
-    ));
-    let baseline_concatenated = normalize_text(&baseline_extract_section_text(&html, "2451a"));
-    let expected = normalize_text(&strip_heading_noise(&baseline_concatenated));
-    let actual = normalize_text(&strip_heading_noise(&parser_concatenated));
-
-    if expected != actual {
-        let mismatch = first_mismatch_index(&expected, &actual);
-        panic!(
-            "section={} mismatch_at={} expected='{}' actual='{}'",
-            target.section_num,
-            mismatch,
-            excerpt_at(&expected, mismatch),
-            excerpt_at(&actual, mismatch)
-        );
-    }
+    let html_compact = r#"
+<html>
+  <body>
+    <h2>Title 3 : Executive.</h2>
+    <h3>Chapter 151 : Interstate Compact on Adult Offender Supervision.</h3>
+    <p><b>§ 9911. Purpose.</b></p>
+    <p><b>(a)</b> Vermont participates in the interstate compact.</p>
+    <p>Added 2014, No. 99, § 2.</p>
+  </body>
+</html>
+"#;
+    let parsed_compact =
+        parse_fullchapter_detail(html_compact, "3", "151").expect("compact chapter should parse");
+    assert_eq!(parsed_compact.sections.len(), 1);
+    assert_eq!(parsed_compact.sections[0].section_num, "9911");
+    assert!(parsed_compact.sections[0].body.contains("**(a)**"));
 }
 
 fn baseline_extract_section_text(html: &str, section_num: &str) -> String {
@@ -124,7 +169,8 @@ fn baseline_extract_section_text(html: &str, section_num: &str) -> String {
     let parser = dom.parser();
     let mut in_target = false;
     let mut parts: Vec<String> = Vec::new();
-    let section_heading_prefix = format!("§ {section_num}");
+    let section_heading_re = regex::Regex::new(r"^§\s*([A-Za-z0-9.\-]+)\.")
+        .expect("section heading regex should compile");
 
     for node in dom.nodes().iter() {
         let Some(tag) = node.as_tag() else {
@@ -135,20 +181,22 @@ fn baseline_extract_section_text(html: &str, section_num: &str) -> String {
             continue;
         }
         let text = normalize_text(&tag.inner_text(parser));
-        if text.starts_with("§ ") && !text.starts_with(&section_heading_prefix) {
-            if in_target {
-                break;
-            }
-        }
-        if text.starts_with(&section_heading_prefix) {
-            if in_target {
+        if let Some(captures) = section_heading_re.captures(&text) {
+            let current_section = captures[1].to_ascii_lowercase();
+            let target = section_num.to_ascii_lowercase();
+            if current_section != target {
+                if in_target {
+                    break;
+                }
                 continue;
             }
-            in_target = true;
-            parts.push(text);
+            if !in_target {
+                in_target = true;
+                parts.push(text);
+            }
             continue;
         }
-        if in_target && !text.is_empty() && !text.starts_with(&section_heading_prefix) {
+        if in_target && !text.is_empty() {
             parts.push(text);
         }
     }

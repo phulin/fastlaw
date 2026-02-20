@@ -1,10 +1,13 @@
 use crate::common::{
     create_test_context, load_fixture, AdapterTestContext, MockCache, MockNodeStore, MockUrlQueue,
 };
+use async_trait::async_trait;
 use ingest::runtime::types::QueueItem;
+use ingest::runtime::types::{BuildContext, IngestContext, NodeStore, UrlQueue};
 use ingest::sources::rigl::adapter::RiglAdapter;
 use ingest::sources::SourceAdapter;
-use ingest::types::SectionContent;
+use ingest::types::{NodePayload, SectionContent};
+use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn adapter_emits_title_chapter_and_section_nodes() {
@@ -57,7 +60,7 @@ async fn adapter_emits_title_chapter_and_section_nodes() {
         .readable_id("1-2-1")
         .heading_citation("R.I. Gen. Laws § 1-2-1")
         .content_contains("P.L. 1935, ch. 2250")
-        .content_contains("(a) The president and CEO has supervision");
+        .content_contains("**(a)** The president and CEO has supervision");
 }
 
 #[tokio::test]
@@ -143,7 +146,7 @@ async fn adapter_inlines_cross_references_and_history_note() {
         .blocks
         .iter()
         .filter_map(|block| block.content.as_deref())
-        .any(|text| text.contains("[36-3-3](/statutes/section/36-3-3)")));
+        .any(|text| text.contains("[36-3-3](/title/36/chapter/36-3/section/36-3-3)")));
 }
 
 #[tokio::test]
@@ -215,4 +218,124 @@ async fn adapter_propagates_unit_id_when_enqueuing_nested_rigl_items() {
         section_item.metadata["unit_id"].as_str(),
         Some("rigl-title-1")
     );
+}
+
+#[derive(Clone)]
+struct CountingBatchNodeStore {
+    state: Arc<Mutex<CountingBatchState>>,
+    batch_size: usize,
+}
+
+struct CountingBatchState {
+    inserted_nodes: usize,
+    pending_nodes: usize,
+    callbacks: usize,
+}
+
+impl CountingBatchNodeStore {
+    fn new(batch_size: usize) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(CountingBatchState {
+                inserted_nodes: 0,
+                pending_nodes: 0,
+                callbacks: 0,
+            })),
+            batch_size,
+        }
+    }
+
+    fn counts(&self) -> (usize, usize) {
+        let state = self.state.lock().unwrap();
+        (state.inserted_nodes, state.callbacks)
+    }
+}
+
+#[async_trait]
+impl NodeStore for CountingBatchNodeStore {
+    async fn insert_node(&self, _node: NodePayload) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        state.inserted_nodes += 1;
+        state.pending_nodes += 1;
+        if state.pending_nodes >= self.batch_size {
+            state.callbacks += 1;
+            state.pending_nodes = 0;
+        }
+        Ok(())
+    }
+
+    async fn flush(&self) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        if state.pending_nodes > 0 {
+            state.callbacks += 1;
+            state.pending_nodes = 0;
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn adapter_supports_aggregated_batch_callbacks() {
+    let adapter = RiglAdapter;
+    let node_store = CountingBatchNodeStore::new(2);
+    let cache = MockCache::new();
+    let queue = MockUrlQueue::new();
+
+    let title_url = "https://webserver.rilegislature.gov/Statutes/TITLE1/INDEX.HTM";
+    let chapter_url = "https://webserver.rilegislature.gov/Statutes/TITLE1/1-2/INDEX.htm";
+    cache.add_fixture(title_url, &load_fixture("rigl/title_1_index_minimal.htm"));
+    cache.add_fixture(
+        chapter_url,
+        &load_fixture("rigl/chapter_1-2_index_minimal.htm"),
+    );
+    cache.add_fixture(
+        "https://webserver.rilegislature.gov/Statutes/TITLE1/1-2/1-2-1.htm",
+        &load_fixture("rigl/section_1-2-1.htm"),
+    );
+    cache.add_fixture(
+        "https://webserver.rilegislature.gov/Statutes/TITLE1/1-2/1-2-5.htm",
+        &load_fixture("rigl/section_1-2-5.htm"),
+    );
+
+    let mut context = IngestContext {
+        build: BuildContext {
+            source_version_id: "v1",
+            root_node_id: "rigl/v1/root",
+            accessed_at: "2024-01-01",
+            unit_sort_order: 0,
+        },
+        nodes: Box::new(node_store.clone()),
+        blobs: Arc::new(crate::common::MockBlobStore),
+        cache: Arc::new(MockCache {
+            fixtures: cache.fixtures.clone(),
+        }),
+        queue: Arc::new(MockUrlQueue {
+            enqueued: queue.enqueued.clone(),
+        }),
+        logger: Arc::new(crate::common::MockLogger),
+    };
+
+    queue.enqueue(QueueItem {
+        url: title_url.to_string(),
+        parent_id: "rigl/v1/root".to_string(),
+        level_name: "title".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({
+            "unit_id": "rigl-title-1",
+            "title_num": "1",
+            "sort_order": 0
+        }),
+    });
+
+    while let Some(item) = queue.enqueued.lock().unwrap().pop_front() {
+        adapter
+            .process_url(&mut context, &item)
+            .await
+            .expect("processing should succeed");
+        context.nodes.flush().await.expect("flush should succeed");
+    }
+
+    let (inserted_nodes, callbacks) = node_store.counts();
+    assert!(inserted_nodes >= 4);
+    assert!(callbacks > 1);
+    assert!(callbacks < inserted_nodes);
 }

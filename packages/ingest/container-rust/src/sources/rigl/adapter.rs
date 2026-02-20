@@ -1,6 +1,6 @@
 use crate::runtime::fetcher::Fetcher;
 use crate::runtime::types::{IngestContext, QueueItem};
-use crate::sources::cgs::cross_references::inline_section_cross_references;
+use crate::sources::cgs::cross_references::extract_section_cross_references;
 use crate::sources::common::{body_block, push_block};
 use crate::sources::rigl::parser::{
     normalize_designator, parse_chapter_index, parse_section_detail, parse_title_index,
@@ -182,14 +182,14 @@ impl SourceAdapter for RiglAdapter {
                     parsed.section_name
                 };
 
-                let mut blocks = vec![body_block(&inline_section_cross_references(&parsed.body))];
+                let mut blocks = vec![body_block(&inline_rigl_cross_references(&parsed.body))];
                 push_block(
                     &mut blocks,
                     "note",
                     "History",
                     parsed
                         .history
-                        .map(|value| inline_section_cross_references(&value)),
+                        .map(|value| inline_rigl_cross_references(&value)),
                     None,
                 );
                 let content = SectionContent {
@@ -247,4 +247,42 @@ impl SourceAdapter for RiglAdapter {
     fn needs_zip_extraction(&self) -> bool {
         false
     }
+}
+
+fn inline_rigl_cross_references(text: &str) -> String {
+    let mut references = extract_section_cross_references(text);
+    references.sort_by(|a, b| b.offset.cmp(&a.offset));
+
+    let mut output = text.to_string();
+    for reference in references {
+        let Some(link) = rigl_link_from_section_designator(&reference.section) else {
+            continue;
+        };
+        let start = reference.offset;
+        let end = start.saturating_add(reference.length);
+        if end > output.len()
+            || start >= end
+            || !output.is_char_boundary(start)
+            || !output.is_char_boundary(end)
+        {
+            continue;
+        }
+        let label = &output[start..end];
+        output.replace_range(start..end, &format!("[{label}]({link})"));
+    }
+    output
+}
+
+fn rigl_link_from_section_designator(section: &str) -> Option<String> {
+    let chapter = section.rsplit_once('-')?.0;
+    let title = chapter.split('-').next()?;
+    let title_slug = normalize_designator(title);
+    let chapter_slug = normalize_designator(chapter);
+    let section_slug = normalize_designator(section);
+    if title_slug.is_empty() || chapter_slug.is_empty() || section_slug.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "/title/{title_slug}/chapter/{chapter_slug}/section/{section_slug}"
+    ))
 }

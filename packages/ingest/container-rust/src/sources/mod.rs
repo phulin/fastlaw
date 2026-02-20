@@ -29,10 +29,10 @@ pub trait SourceAdapter: Send + Sync {
     fn unit_label(&self, item: &QueueItem) -> String;
 
     /// Whether this source requires ZIP extraction when caching.
-    /// USC and CGA download ZIP files from gov websites.
+    /// USC downloads ZIP files from gov websites.
     /// MGL uses a JSON API and doesn't need ZIP extraction.
     fn needs_zip_extraction(&self) -> bool {
-        true
+        false
     }
 }
 

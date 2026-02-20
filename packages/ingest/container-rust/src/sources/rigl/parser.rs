@@ -5,6 +5,9 @@ use tl::VDom;
 
 static WHITESPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<[^>]+>").unwrap());
+static BOLD_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<\s*(?:b|strong)\b[^>]*>(.*?)</\s*(?:b|strong)\s*>").unwrap()
+});
 static TITLE_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)href\s*=\s*["']([^"']*/statutes/title([a-z0-9.]+)[^"']*/index\.htm)["']"#)
         .unwrap()
@@ -23,6 +26,8 @@ static CHAPTER_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
 static SECTION_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^§+\s*([A-Za-z0-9.\-]+(?:\s*[—-]\s*[A-Za-z0-9.\-]+)?)\.?\s*(.*)$").unwrap()
 });
+static HISTORY_PREFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^History\s+of\s+Section\.?\s*:?\s*(.*)$").unwrap());
 static TEXT_ONLY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9.\-]+").unwrap());
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +82,10 @@ pub fn normalize_text(input: &str) -> String {
         .replace_all(decoded.trim(), " ")
         .trim()
         .to_string()
+}
+
+pub fn normalize_text_for_comparison(input: &str) -> String {
+    normalize_text(input).replace("**", "")
 }
 
 pub fn normalize_designator(raw: &str) -> String {
@@ -275,6 +284,7 @@ pub fn parse_section_detail(html: &str) -> Result<RiglSectionDetail, String> {
     let mut section_name = String::new();
     let mut body_parts: Vec<String> = Vec::new();
     let mut history_parts: Vec<String> = Vec::new();
+    let mut collecting_history = false;
 
     for node in dom.nodes().iter() {
         let Some(tag) = node.as_tag() else {
@@ -283,15 +293,16 @@ pub fn parse_section_detail(html: &str) -> Result<RiglSectionDetail, String> {
         if tag.name().as_utf8_str().as_ref() != "p" {
             continue;
         }
-        let text = normalize_text(&tag.inner_text(parser));
+        let text = extract_text_preserving_bold(tag, parser);
         if text.is_empty() {
             continue;
         }
-        if text.starts_with("R.I. Gen. Laws §") {
+        let plain_text = text.replace("**", "");
+        if plain_text.starts_with("R.I. Gen. Laws §") {
             continue;
         }
 
-        if let Some(caps) = SECTION_HEADING_RE.captures(&text) {
+        if let Some(caps) = SECTION_HEADING_RE.captures(&plain_text) {
             if section_num.is_empty() {
                 section_num = normalize_dash(caps[1].trim());
                 section_num = section_num.trim_end_matches('.').to_string();
@@ -300,14 +311,17 @@ pub fn parse_section_detail(html: &str) -> Result<RiglSectionDetail, String> {
             }
         }
 
-        if text.starts_with("History of Section.") {
-            let history = text
-                .trim_start_matches("History of Section.")
-                .trim()
-                .to_string();
+        if let Some(caps) = HISTORY_PREFIX_RE.captures(&plain_text) {
+            collecting_history = true;
+            let history = caps[1].trim().to_string();
             if !history.is_empty() {
                 history_parts.push(history);
             }
+            continue;
+        }
+
+        if collecting_history {
+            history_parts.push(text);
             continue;
         }
 
@@ -432,6 +446,29 @@ fn first_tag_text(dom: &VDom, parser: &tl::Parser, tag_name: &str) -> Option<Str
         }
     }
     None
+}
+
+fn extract_text_preserving_bold(tag: &tl::HTMLTag, parser: &tl::Parser) -> String {
+    let mut html = tag.inner_html(parser).as_str().replace("&nbsp;", " ");
+    html = html.replace('\u{00A0}', " ");
+    html = html
+        .replace("<br>", " ")
+        .replace("<br/>", " ")
+        .replace("<br />", " ");
+
+    let with_bold = BOLD_TAG_RE
+        .replace_all(&html, |captures: &regex::Captures| {
+            let inner = normalize_text_for_comparison(&TAG_RE.replace_all(&captures[1], " "));
+            if inner.is_empty() {
+                String::new()
+            } else {
+                format!(" **{inner}** ")
+            }
+        })
+        .to_string();
+
+    let flattened = TAG_RE.replace_all(&with_bold, " ");
+    normalize_text(flattened.as_ref())
 }
 
 pub fn normalize_url(url: &reqwest::Url) -> Result<reqwest::Url, String> {

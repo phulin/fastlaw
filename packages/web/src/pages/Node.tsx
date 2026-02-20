@@ -219,7 +219,6 @@ export function NodePage(props: NodePageProps) {
 						</div>
 						<Show when={metaBlocks().length > 0}>
 							<div class="statute-meta">
-								<h2>Additional context</h2>
 								<For each={metaBlocks()}>
 									{(block, index) =>
 										block.type === "heading" ? (

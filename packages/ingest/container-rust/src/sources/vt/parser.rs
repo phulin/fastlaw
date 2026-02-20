@@ -4,6 +4,10 @@ use std::sync::LazyLock;
 use tl::VDom;
 
 static WHITESPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
+static TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<[^>]+>").unwrap());
+static BOLD_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<\s*(?:b|strong)\b[^>]*>(.*?)</\s*(?:b|strong)\s*>").unwrap()
+});
 static TITLE_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^Title\s+([A-Za-z0-9]+(?:\s+Appendix)?)\s*:\s*(.+)$").unwrap()
 });
@@ -73,6 +77,10 @@ pub fn normalize_text(input: &str) -> String {
         .replace_all(input.trim(), " ")
         .trim()
         .to_string()
+}
+
+pub fn normalize_text_for_comparison(input: &str) -> String {
+    normalize_text(input).replace("**", "")
 }
 
 pub fn normalize_designator(value: &str) -> String {
@@ -255,13 +263,14 @@ pub fn parse_fullchapter_detail(
             continue;
         };
         let tag_name = tag.name().as_utf8_str().to_string();
-        let text = normalize_text(&tag.inner_text(parser));
+        let text = extract_text_preserving_bold(tag, parser);
         if text.is_empty() {
             continue;
         }
+        let plain_text = text.replace("**", "");
 
         if tag_name == "h2" {
-            if let Some(captures) = TITLE_HEADER_RE.captures(&text) {
+            if let Some(captures) = TITLE_HEADER_RE.captures(&plain_text) {
                 title_display_num = normalize_text(&captures[1]);
                 title_name = normalize_text(&captures[2])
                     .trim_end_matches('.')
@@ -271,7 +280,7 @@ pub fn parse_fullchapter_detail(
         }
 
         if tag_name == "h3" {
-            if let Some(captures) = CHAPTER_HEADER_RE.captures(&text) {
+            if let Some(captures) = CHAPTER_HEADER_RE.captures(&plain_text) {
                 chapter_display_num = normalize_text(&captures[1]);
                 chapter_name = normalize_text(&captures[2])
                     .trim_end_matches('.')
@@ -284,7 +293,7 @@ pub fn parse_fullchapter_detail(
             continue;
         }
 
-        if let Some(captures) = SECTION_HEADING_RE.captures(&text) {
+        if let Some(captures) = SECTION_HEADING_RE.captures(&plain_text) {
             let candidate_num = normalize_text(&captures[1]);
             let candidate_name = normalize_text(&captures[2]);
             if tag_name == "b"
@@ -303,7 +312,7 @@ pub fn parse_fullchapter_detail(
             }
             current_section_num = candidate_num;
             current_section_name = candidate_name;
-            current_section_heading = text.clone();
+            current_section_heading = plain_text.clone();
             current_body.clear();
             current_history.clear();
             continue;
@@ -313,12 +322,12 @@ pub fn parse_fullchapter_detail(
             continue;
         }
 
-        if text == current_section_heading {
+        if plain_text == current_section_heading {
             continue;
         }
 
-        if HISTORY_PREFIX_RE.is_match(&text) {
-            current_history.push(text);
+        if HISTORY_PREFIX_RE.is_match(&plain_text) {
+            current_history.push(plain_text);
         } else {
             current_body.push(text);
         }
@@ -459,6 +468,29 @@ fn finalize_section(
 
 fn parse_dom(html: &str) -> Result<VDom<'_>, String> {
     tl::parse(html, tl::ParserOptions::default()).map_err(|e| format!("Failed to parse HTML: {e}"))
+}
+
+fn extract_text_preserving_bold(tag: &tl::HTMLTag, parser: &tl::Parser) -> String {
+    let mut html = tag.inner_html(parser).as_str().replace("&nbsp;", " ");
+    html = html.replace('\u{00A0}', " ");
+    html = html
+        .replace("<br>", " ")
+        .replace("<br/>", " ")
+        .replace("<br />", " ");
+
+    let with_bold = BOLD_TAG_RE
+        .replace_all(&html, |captures: &regex::Captures| {
+            let inner = normalize_text_for_comparison(&TAG_RE.replace_all(&captures[1], " "));
+            if inner.is_empty() {
+                String::new()
+            } else {
+                format!(" **{inner}** ")
+            }
+        })
+        .to_string();
+
+    let flattened = TAG_RE.replace_all(&with_bold, " ");
+    normalize_text(flattened.as_ref())
 }
 
 fn first_heading_text<'a>(dom: &'a VDom<'a>, parser: &'a tl::Parser<'a>) -> Option<String> {

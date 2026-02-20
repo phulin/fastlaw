@@ -34,3 +34,28 @@ fn extracts_rigl_version_year_from_landing_text() {
     let version = extract_version_id_from_landing_html(&landing_html);
     assert_eq!(version, Some("2026".to_string()));
 }
+
+#[tokio::test]
+async fn uses_deterministic_fallback_version_when_year_marker_missing() {
+    let mut fetcher = MockFetcher::new();
+    fetcher.add_fixture(
+        "https://webserver.rilegislature.gov/statutes/Statutes.html",
+        r#"<html><body><a href="/statutes/title1/index.htm">Title 1</a></body></html>"#,
+    );
+
+    let first = discover_rigl_root(
+        &fetcher,
+        Some("https://webserver.rilegislature.gov/statutes/Statutes.html"),
+    )
+    .await
+    .expect("discovery should succeed");
+    let second = discover_rigl_root(
+        &fetcher,
+        Some("https://webserver.rilegislature.gov/statutes/Statutes.html"),
+    )
+    .await
+    .expect("discovery should succeed");
+
+    assert_eq!(first.version_id, second.version_id);
+    assert!(first.version_id.starts_with("undated-"));
+}

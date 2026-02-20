@@ -11,8 +11,8 @@ pub async fn discover_rigl_root(
 ) -> Result<DiscoveryResult, String> {
     let start_url = start_url.unwrap_or(DEFAULT_START_URL);
     let html = fetcher.fetch(start_url).await?;
-    let version_id = extract_version_id_from_landing_html(&html)
-        .unwrap_or_else(|| chrono::Utc::now().format("%Y").to_string());
+    let version_id =
+        extract_version_id_from_landing_html(&html).unwrap_or_else(|| fallback_version_id(&html));
     let title_links = parse_title_links(&html, start_url)?;
 
     if title_links.is_empty() {
@@ -50,4 +50,17 @@ pub async fn discover_rigl_root(
         root_node,
         unit_roots,
     })
+}
+
+fn fallback_version_id(html: &str) -> String {
+    format!("undated-{:016x}", fnv1a64(html.as_bytes()))
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }

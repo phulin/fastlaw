@@ -28,3 +28,22 @@ fn extracts_vt_version_year_from_landing_text() {
     let version = extract_version_id_from_landing_html(&landing_html);
     assert_eq!(version, Some("2025".to_string()));
 }
+
+#[tokio::test]
+async fn uses_deterministic_fallback_version_when_year_marker_missing() {
+    let mut fetcher = MockFetcher::new();
+    fetcher.add_fixture(
+        "https://legislature.vermont.gov/statutes/",
+        r#"<html><body><a href="/statutes/title/02">Title 02 : Legislature</a></body></html>"#,
+    );
+
+    let first = discover_vt_root(&fetcher, Some("https://legislature.vermont.gov/statutes/"))
+        .await
+        .expect("discovery should succeed");
+    let second = discover_vt_root(&fetcher, Some("https://legislature.vermont.gov/statutes/"))
+        .await
+        .expect("discovery should succeed");
+
+    assert_eq!(first.version_id, second.version_id);
+    assert!(first.version_id.starts_with("undated-"));
+}

@@ -1,8 +1,11 @@
 use crate::common::{load_fixture, AdapterTestContext};
+use async_trait::async_trait;
 use ingest::runtime::types::QueueItem;
+use ingest::runtime::types::{BuildContext, IngestContext, NodeStore, UrlQueue};
 use ingest::sources::vt::adapter::VtAdapter;
 use ingest::sources::SourceAdapter;
-use ingest::types::SectionContent;
+use ingest::types::{NodePayload, SectionContent};
+use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn adapter_emits_title_chapter_and_section_nodes_from_fullchapter() {
@@ -161,4 +164,119 @@ async fn adapter_fetches_fullchapter_without_section_page_fixtures() {
         .filter(|node| node.meta.level_name == "section")
         .count();
     assert!(section_count >= 4);
+}
+
+#[derive(Clone)]
+struct CountingBatchNodeStore {
+    state: Arc<Mutex<CountingBatchState>>,
+    batch_size: usize,
+}
+
+struct CountingBatchState {
+    inserted_nodes: usize,
+    pending_nodes: usize,
+    callbacks: usize,
+}
+
+impl CountingBatchNodeStore {
+    fn new(batch_size: usize) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(CountingBatchState {
+                inserted_nodes: 0,
+                pending_nodes: 0,
+                callbacks: 0,
+            })),
+            batch_size,
+        }
+    }
+
+    fn counts(&self) -> (usize, usize) {
+        let state = self.state.lock().unwrap();
+        (state.inserted_nodes, state.callbacks)
+    }
+}
+
+#[async_trait]
+impl NodeStore for CountingBatchNodeStore {
+    async fn insert_node(&self, _node: NodePayload) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        state.inserted_nodes += 1;
+        state.pending_nodes += 1;
+        if state.pending_nodes >= self.batch_size {
+            state.callbacks += 1;
+            state.pending_nodes = 0;
+        }
+        Ok(())
+    }
+
+    async fn flush(&self) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap();
+        if state.pending_nodes > 0 {
+            state.callbacks += 1;
+            state.pending_nodes = 0;
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn adapter_supports_aggregated_batch_callbacks() {
+    let adapter = VtAdapter;
+    let node_store = CountingBatchNodeStore::new(3);
+    let cache = crate::common::MockCache::new();
+    let queue = crate::common::MockUrlQueue::new();
+
+    let title_url = "https://legislature.vermont.gov/statutes/title/02";
+    cache.add_fixture(title_url, &load_fixture("vt/title_02.html"));
+    cache.add_fixture(
+        "https://legislature.vermont.gov/statutes/fullchapter/02/001",
+        &load_fixture("vt/fullchapter_02_001.html"),
+    );
+    cache.add_fixture(
+        "https://legislature.vermont.gov/statutes/fullchapter/02/002",
+        &load_fixture("vt/fullchapter_02_002.html"),
+    );
+
+    let mut context = IngestContext {
+        build: BuildContext {
+            source_version_id: "v1",
+            root_node_id: "vt/v1/root",
+            accessed_at: "2024-01-01",
+            unit_sort_order: 0,
+        },
+        nodes: Box::new(node_store.clone()),
+        blobs: Arc::new(crate::common::MockBlobStore),
+        cache: Arc::new(crate::common::MockCache {
+            fixtures: cache.fixtures.clone(),
+        }),
+        queue: Arc::new(crate::common::MockUrlQueue {
+            enqueued: queue.enqueued.clone(),
+        }),
+        logger: Arc::new(crate::common::MockLogger),
+    };
+
+    queue.enqueue(QueueItem {
+        url: title_url.to_string(),
+        parent_id: "vt/v1/root".to_string(),
+        level_name: "title".to_string(),
+        level_index: 0,
+        metadata: serde_json::json!({
+            "unit_id": "vt-title-02",
+            "title_num": "02",
+            "sort_order": 0
+        }),
+    });
+
+    while let Some(item) = queue.enqueued.lock().unwrap().pop_front() {
+        adapter
+            .process_url(&mut context, &item)
+            .await
+            .expect("processing should succeed");
+        context.nodes.flush().await.expect("flush should succeed");
+    }
+
+    let (inserted_nodes, callbacks) = node_store.counts();
+    assert!(inserted_nodes >= 6);
+    assert!(callbacks > 1);
+    assert!(callbacks < inserted_nodes);
 }

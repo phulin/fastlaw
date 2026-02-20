@@ -1,7 +1,7 @@
 use crate::common::load_fixture;
 use ingest::sources::rigl::parser::{
-    compare_designators, normalize_designator, normalize_text, parse_chapter_index,
-    parse_section_detail, parse_title_index, parse_title_links,
+    compare_designators, normalize_designator, normalize_text, normalize_text_for_comparison,
+    parse_chapter_index, parse_section_detail, parse_title_index, parse_title_links,
 };
 use std::cmp::Ordering;
 
@@ -65,12 +65,22 @@ fn parses_section_and_routes_history_block() {
     );
     assert!(parsed
         .body
-        .contains("(a) The president and CEO has supervision"));
+        .contains("**(a)** The president and CEO has supervision"));
     assert!(parsed
         .history
         .as_deref()
         .expect("history must exist")
         .starts_with("P.L. 1935, ch. 2250, § 63"));
+}
+
+#[test]
+fn preserves_bold_markers_from_source_content() {
+    let html = load_fixture("rigl/section_1-2-1.htm");
+    let parsed = parse_section_detail(&html).expect("section detail should parse");
+
+    assert!(parsed.body.contains("**(a)**"));
+    assert!(parsed.body.contains("**(1)**"));
+    assert!(parsed.body.contains("**(2)**"));
 }
 
 #[test]
@@ -88,29 +98,115 @@ fn normalizes_designators_for_slugs() {
 
 #[test]
 fn baseline_text_comparison_for_medium_section_fixture() {
-    let html = load_fixture("rigl/section_42-11-2.htm");
-    let parsed = parse_section_detail(&html).expect("section detail should parse");
-    let parser_concatenated = normalize_text(&format!(
-        "{} {} {}",
-        parsed.section_name,
-        parsed.body,
-        parsed.history.clone().unwrap_or_default()
-    ));
+    for fixture in [
+        "rigl/section_1-2-1.htm",
+        "rigl/section_1-2-5.htm",
+        "rigl/section_42-11-2.htm",
+        "rigl/section_42-11-2.2.htm",
+    ] {
+        let html = load_fixture(fixture);
+        let parsed = parse_section_detail(&html).expect("section detail should parse");
+        let parser_concatenated = normalize_text_for_comparison(&format!(
+            "{} {} {}",
+            parsed.section_name,
+            parsed.body,
+            parsed.history.clone().unwrap_or_default()
+        ));
 
-    let baseline_concatenated = normalize_text(&baseline_extract_section_text(&html));
-    let expected = normalize_text(&strip_heading_noise(&baseline_concatenated));
-    let actual = normalize_text(&strip_heading_noise(&parser_concatenated));
+        let baseline_concatenated =
+            normalize_text_for_comparison(&baseline_extract_section_text(&html));
+        let expected = normalize_text_for_comparison(&strip_heading_noise(&baseline_concatenated));
+        let actual = normalize_text_for_comparison(&strip_heading_noise(&parser_concatenated));
 
-    if expected != actual {
-        let mismatch = first_mismatch_index(&expected, &actual);
-        panic!(
-            "section={} mismatch_at={} expected='{}' actual='{}'",
-            parsed.section_num,
-            mismatch,
-            excerpt_at(&expected, mismatch),
-            excerpt_at(&actual, mismatch)
-        );
+        if expected != actual {
+            let mismatch = first_mismatch_index(&expected, &actual);
+            panic!(
+                "fixture={} section={} mismatch_at={} expected='{}' actual='{}'",
+                fixture,
+                parsed.section_num,
+                mismatch,
+                excerpt_at(&expected, mismatch),
+                excerpt_at(&actual, mismatch)
+            );
+        }
     }
+}
+
+#[test]
+fn captures_history_when_label_omits_period_and_uses_follow_on_paragraphs() {
+    let html = r#"
+<html>
+  <body>
+    <h1><center>Title 1<br>Aeronautics</center></h1>
+    <h2><center>Chapter 2<br>Airports and Landing Fields</center></h2>
+    <p><b>§ 1-2-999. Sample section.</b></p>
+    <p>Body paragraph.</p>
+    <p>History of Section</p>
+    <p>P.L. 2000, ch. 1, § 1.</p>
+    <p>P.L. 2001, ch. 2, § 2.</p>
+  </body>
+</html>
+"#;
+
+    let parsed = parse_section_detail(html).expect("section detail should parse");
+    assert_eq!(parsed.body, "Body paragraph.");
+    assert_eq!(
+        parsed.history.as_deref(),
+        Some("P.L. 2000, ch. 1, § 1.\n\nP.L. 2001, ch. 2, § 2.")
+    );
+}
+
+#[test]
+fn captures_inline_history_with_colon_separator() {
+    let html = r#"
+<html>
+  <body>
+    <h1><center>Title 1<br>Aeronautics</center></h1>
+    <h2><center>Chapter 2<br>Airports and Landing Fields</center></h2>
+    <p><b>§ 1-2-998. Sample section.</b></p>
+    <p>History of Section: P.L. 2002, ch. 3, § 3.</p>
+  </body>
+</html>
+"#;
+
+    let parsed = parse_section_detail(html).expect("section detail should parse");
+    assert_eq!(parsed.body, "");
+    assert_eq!(parsed.history.as_deref(), Some("P.L. 2002, ch. 3, § 3."));
+}
+
+#[test]
+fn parses_ucc_and_interstate_compact_style_designators() {
+    let html = r#"
+<html>
+  <body>
+    <h1><center>Title 6<br>Commercial Law — General Regulatory Provisions</center></h1>
+    <h2><center>Chapter 6A-1<br>Uniform Commercial Code</center></h2>
+    <p><b>§ 6A-1-101. Short title.</b></p>
+    <p><b>(a)</b> This chapter may be cited as the Uniform Commercial Code.</p>
+    <p>History of Section: P.L. 2001, ch. 1, § 1.</p>
+  </body>
+</html>
+"#;
+    let parsed = parse_section_detail(html).expect("UCC style section should parse");
+    assert_eq!(parsed.title_num, "6");
+    assert_eq!(parsed.chapter_num, "6A-1");
+    assert_eq!(parsed.section_num, "6A-1-101");
+    assert!(parsed.body.contains("**(a)**"));
+
+    let html_compact = r#"
+<html>
+  <body>
+    <h1><center>Title 42<br>State Affairs and Government</center></h1>
+    <h2><center>Chapter 42-64.1<br>Interstate Insurance Product Regulation Compact</center></h2>
+    <p><b>§ 42-64.1-1. Compact adoption.</b></p>
+    <p>The interstate compact is enacted and entered into.</p>
+  </body>
+</html>
+"#;
+    let parsed_compact =
+        parse_section_detail(html_compact).expect("compact style section should parse");
+    assert_eq!(parsed_compact.chapter_num, "42-64.1");
+    assert_eq!(parsed_compact.section_num, "42-64.1-1");
 }
 
 fn baseline_extract_section_text(html: &str) -> String {

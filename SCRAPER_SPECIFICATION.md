@@ -14,11 +14,16 @@ When adding a scraper for a new jurisdiction, first copy this checklist VERBATIM
 - [ ] Write tests for the full specification. Tests should cover:
 - - [ ] Extraction of all relevant information from an HTML file for all structural levels and for section bodies.
 - - [ ] Bolding of section markers (plus any other information bolded in the source).
-- - [ ] Cross-reference linking.
+- - [ ] Cross-reference linking - and the link href should be in the same format as the sections, i.e. the links should work.
+- - [ ] Capture of history and notes.
+- - [ ] Reserved/transferred/repealed behaviors (if source has them).
+- - [ ] Find the UCC and an interstate compact or two, which often have different formats. Confirm those parse correctly (at the structural and section level).
 - - [ ] An integration test with mocked HTTP responses that confirms that the full pipeline extracts correctly.
 - - [ ] A baseline test that compares concatenated parser output to a simple extract-all-text-content baseline.
 - [ ] Write the scraper. Make sure it:
+- - [ ] If possible, uses information from the source to create a source version that identifies this version of the source.
 - - [ ] Produces a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
+- - [ ] Includes all information from the source e.g. any history or citation notes.
 - - [ ] Inserts nodes in batches from container to Worker. This is important!
 - - [ ] Emits blobs and nodes as we parse the nodes, and doesn't accumulate them in memory.
 - [ ] Iterate until all required tests and quality checks pass.
