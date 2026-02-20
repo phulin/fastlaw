@@ -138,6 +138,23 @@ pub async fn post_unit_progress(
     .await;
 }
 
+pub async fn post_ingest_error(
+    client: &Client,
+    callback_base: &str,
+    callback_token: &str,
+    error: &str,
+) {
+    let _ = callback_fetch(
+        client,
+        callback_base,
+        callback_token,
+        "/api/callback/ingestError",
+        reqwest::Method::POST,
+        Some(serde_json::json!({ "error": error })),
+    )
+    .await;
+}
+
 pub async fn post_ensure_source_version(
     client: &Client,
     callback_base: &str,

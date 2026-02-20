@@ -145,7 +145,9 @@ pub fn parse_title_links(html: &str, base_url: &str) -> Result<Vec<VtTitleLink>,
             continue;
         };
 
-        let resolved = resolve_and_normalize_url(base_url, href.as_utf8_str().as_ref())?;
+        let Ok(resolved) = resolve_and_normalize_url(base_url, href.as_utf8_str().as_ref()) else {
+            continue;
+        };
         let Some(captures) = TITLE_PATH_RE.captures(resolved.path()) else {
             continue;
         };
@@ -204,7 +206,9 @@ pub fn parse_title_index(html: &str, base_url: &str) -> Result<VtTitleIndex, Str
             continue;
         };
 
-        let resolved = resolve_and_normalize_url(base_url, href.as_utf8_str().as_ref())?;
+        let Ok(resolved) = resolve_and_normalize_url(base_url, href.as_utf8_str().as_ref()) else {
+            continue;
+        };
         let Some(captures) = CHAPTER_PATH_RE.captures(resolved.path()) else {
             continue;
         };

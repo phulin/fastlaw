@@ -20,8 +20,11 @@ When adding a scraper for a new jurisdiction, first copy this checklist VERBATIM
 - - [ ] Reserved/transferred/repealed behaviors (if source has them).
 - - [ ] Find the UCC and an interstate compact or two, which often have different formats. Confirm those parse correctly (at the structural and section level).
 - - [ ] An integration test with mocked HTTP responses that confirms that the full pipeline extracts correctly.
+- - - [ ] Download the start URL (mock the HTTP response), confirm it produces the units for consumption.
+- - - [ ] Download a unit, confirm it emits the expected nodes.
 - - [ ] A baseline test that compares concatenated parser output to a simple extract-all-text-content baseline.
 - [ ] Write the scraper. Make sure it:
+- - [ ] Routes errors back to the worker using the logging callback so they aren't silently swallowed.
 - - [ ] If possible, uses information from the source to create a source version that identifies this version of the source.
 - - [ ] Produces a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
 - - [ ] Includes all information from the source e.g. any history or citation notes.

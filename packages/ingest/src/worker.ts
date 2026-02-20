@@ -396,6 +396,25 @@ app.post("/api/callback/containerLog", async (c) => {
 	return c.json({ ok: true });
 });
 
+app.post("/api/callback/ingestError", async (c) => {
+	const token = extractBearerToken(c.req.raw);
+	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	const { error } = await c.req.json<{ error: string }>();
+
+	console.error(
+		`[Worker] ingestError callback received. jobId=${params.jobId}, error=${error}`,
+	);
+	await recordTitleError(c.env.DB, params.jobId, error, true);
+
+	const container = c.env.INGEST_CONTAINER.getByName("ingest");
+	const result = await container.requestStopForJob(params.jobId);
+	console.log(
+		`[Worker] ingestError callback processed. jobId=${params.jobId}, stopped=${result.stopped}, remainingJobs=${result.runningJobs.length}`,
+	);
+
+	return c.json({ ok: true });
+});
+
 app.post("/api/callback/containerStop", async (c) => {
 	const token = extractBearerToken(c.req.raw);
 	const params = await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
@@ -538,6 +557,10 @@ app.post("/api/callback/progress", async (c) => {
 
 const CACHE_R2_PREFIX = "cache/";
 const R2_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
+const cacheWriteInFlight = new Map<
+	string,
+	Promise<{ r2Key: string; totalSize: number }>
+>();
 
 function concatChunks(chunks: Uint8Array[], totalSize: number): Uint8Array {
 	const combined = new Uint8Array(totalSize);
@@ -593,6 +616,93 @@ async function uploadMultipartFromChunks(
 	}
 }
 
+type CacheRequest = {
+	url: string;
+	extractZip?: boolean;
+	cacheKey: string;
+};
+
+function getValidatedCacheRequest(payload: CacheRequest): {
+	url: string;
+	extractZip: boolean;
+	cacheKey: string;
+} {
+	if (!payload.cacheKey) {
+		throw new Error("Missing cacheKey");
+	}
+	return {
+		url: payload.url,
+		extractZip: payload.extractZip === true,
+		cacheKey: payload.cacheKey,
+	};
+}
+
+async function populateCacheObject(
+	bucket: R2Bucket,
+	url: string,
+	r2Key: string,
+	extractZip: boolean,
+): Promise<{ r2Key: string; totalSize: number }> {
+	console.log("fetching", url);
+	const response = await fetch(url, {
+		headers: { "User-Agent": "fastlaw-ingest/1.0" },
+	});
+	if (!response.ok) {
+		throw new Error(`Failed to fetch ${url}: ${response.status}`);
+	}
+	const responseBody = response.body;
+	if (!responseBody) {
+		throw new Error("empty_response_body");
+	}
+
+	const contentType = response.headers.get("content-type") ?? "";
+	if (extractZip && contentType.toLowerCase().includes("text/html")) {
+		throw new Error("html_response");
+	}
+
+	if (extractZip) {
+		const totalSize = await uploadMultipartFromChunks(
+			bucket,
+			r2Key,
+			streamXmlFromZipStream(responseBody as ReadableStream<Uint8Array>),
+		);
+		console.log(`Cached ${url} → ${r2Key} (${totalSize} bytes, multipart)`);
+		return { r2Key, totalSize };
+	}
+
+	const responseBytes = await response.arrayBuffer();
+	await bucket.put(r2Key, responseBytes);
+	const stored = await bucket.head(r2Key);
+	const totalSize = stored?.size ?? 0;
+	console.log(`Cached ${url} → ${r2Key} (${totalSize} bytes)`);
+	return { r2Key, totalSize };
+}
+
+async function ensureCachedObject(
+	bucket: R2Bucket,
+	url: string,
+	cacheKey: string,
+	extractZip: boolean,
+): Promise<{ r2Key: string; totalSize: number }> {
+	const r2Key = `${CACHE_R2_PREFIX}${cacheKey}`;
+	const head = await bucket.head(r2Key);
+	if (head) {
+		return { r2Key, totalSize: head.size };
+	}
+
+	let inFlight = cacheWriteInFlight.get(r2Key);
+	if (!inFlight) {
+		inFlight = populateCacheObject(bucket, url, r2Key, extractZip).finally(
+			() => {
+				cacheWriteInFlight.delete(r2Key);
+			},
+		);
+		cacheWriteInFlight.set(r2Key, inFlight);
+	}
+
+	return inFlight;
+}
+
 app.post("/api/proxy/cache", async (c) => {
 	try {
 		const token = extractBearerToken(c.req.raw);
@@ -601,58 +711,83 @@ app.post("/api/proxy/cache", async (c) => {
 		return c.json({ error: "Unauthorized" }, 401);
 	}
 
-	const { url, extractZip, cacheKey } = await c.req.json<{
-		url: string;
-		extractZip?: boolean;
-		cacheKey: string;
-	}>();
-
-	if (!cacheKey) {
-		return c.json({ error: "Missing cacheKey" }, 400);
-	}
-
-	const r2Key = `${CACHE_R2_PREFIX}${cacheKey}`;
-
-	// Check if already cached
-	const head = await c.env.STORAGE.head(r2Key);
-	if (head) {
-		return c.json({ r2Key, totalSize: head.size });
-	}
-
-	// Fetch the URL
-	console.log("fetching", url);
-	const response = await fetch(url, {
-		headers: { "User-Agent": "fastlaw-ingest/1.0" },
-	});
-	if (!response.ok) {
-		return c.json({ error: `Failed to fetch ${url}: ${response.status}` }, 502);
-	}
-	const responseBody = response.body;
-	if (!responseBody) {
-		return c.json({ error: "empty_response_body" }, 502);
-	}
-
-	const contentType = response.headers.get("content-type") ?? "";
-	if (extractZip && contentType.toLowerCase().includes("text/html")) {
-		return c.json({ error: "html_response" }, 422);
-	}
-
-	if (extractZip) {
-		const totalSize = await uploadMultipartFromChunks(
-			c.env.STORAGE,
-			r2Key,
-			streamXmlFromZipStream(responseBody as ReadableStream<Uint8Array>),
+	try {
+		const { url, extractZip, cacheKey } = getValidatedCacheRequest(
+			await c.req.json<CacheRequest>(),
 		);
-		console.log(`Cached ${url} → ${r2Key} (${totalSize} bytes, multipart)`);
-		return c.json({ r2Key, totalSize });
+		const result = await ensureCachedObject(
+			c.env.STORAGE,
+			url,
+			cacheKey,
+			extractZip,
+		);
+		return c.json(result);
+	} catch (error) {
+		if (error instanceof Error) {
+			if (error.message === "Missing cacheKey") {
+				return c.json({ error: error.message }, 400);
+			}
+			if (error.message === "html_response") {
+				return c.json({ error: error.message }, 422);
+			}
+			if (error.message === "empty_response_body") {
+				return c.json({ error: error.message }, 502);
+			}
+			if (error.message.startsWith("Failed to fetch")) {
+				return c.json({ error: error.message }, 502);
+			}
+			return c.json({ error: error.message }, 500);
+		}
+		return c.json({ error: "cache_proxy_failed" }, 500);
+	}
+});
+
+app.post("/api/proxy/cache-read", async (c) => {
+	try {
+		const token = extractBearerToken(c.req.raw);
+		await verifyCallbackToken(token, c.env.CALLBACK_SECRET);
+	} catch {
+		return c.json({ error: "Unauthorized" }, 401);
 	}
 
-	await c.env.STORAGE.put(r2Key, responseBody as ReadableStream);
-	const stored = await c.env.STORAGE.head(r2Key);
-	const totalSize = stored?.size ?? 0;
-	console.log(`Cached ${url} → ${r2Key} (${totalSize} bytes)`);
-
-	return c.json({ r2Key, totalSize });
+	try {
+		const { url, extractZip, cacheKey } = getValidatedCacheRequest(
+			await c.req.json<CacheRequest>(),
+		);
+		const { r2Key } = await ensureCachedObject(
+			c.env.STORAGE,
+			url,
+			cacheKey,
+			extractZip,
+		);
+		const obj = await c.env.STORAGE.get(r2Key);
+		if (!obj) {
+			return c.json({ error: `Object not found: ${r2Key}` }, 404);
+		}
+		return new Response(obj.body, {
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"X-Cache-Key": r2Key,
+			},
+		});
+	} catch (error) {
+		if (error instanceof Error) {
+			if (error.message === "Missing cacheKey") {
+				return c.json({ error: error.message }, 400);
+			}
+			if (error.message === "html_response") {
+				return c.json({ error: error.message }, 422);
+			}
+			if (error.message === "empty_response_body") {
+				return c.json({ error: error.message }, 502);
+			}
+			if (error.message.startsWith("Failed to fetch")) {
+				return c.json({ error: error.message }, 502);
+			}
+			return c.json({ error: error.message }, 500);
+		}
+		return c.json({ error: "cache_read_failed" }, 500);
+	}
 });
 
 app.get("/api/proxy/r2-read", async (c) => {

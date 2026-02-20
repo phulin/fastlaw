@@ -5,6 +5,7 @@ use axum::{
     Router,
 };
 use ingest::ingest::ingest_source;
+use ingest::runtime::callbacks::post_ingest_error;
 use ingest::runtime::logging::{log_event_with_callback, LogLevel};
 use ingest::types::IngestConfig;
 use serde_json::json;
@@ -41,6 +42,8 @@ async fn handle_ingest(
 
         if let Err(err) = &ingest_result {
             tracing::error!("[Container] Ingest failed: {}", err);
+            let client = reqwest::Client::new();
+            post_ingest_error(&client, &callback_base, &callback_token, err).await;
         }
     });
 
@@ -49,6 +52,13 @@ async fn handle_ingest(
         if let Err(err) = handle.await {
             tracing::error!("[Container] Ingest task panicked or was cancelled: {}", err);
             let client = reqwest::Client::new();
+            post_ingest_error(
+                &client,
+                &callback_base_for_join,
+                &callback_token_for_join,
+                &err.to_string(),
+            )
+            .await;
             log_event_with_callback(
                 &client,
                 Some(&callback_base_for_join),

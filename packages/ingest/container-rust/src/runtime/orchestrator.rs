@@ -1,4 +1,4 @@
-use crate::runtime::cache::{ensure_cached, read_cached_file};
+use crate::runtime::cache::ensure_cached;
 use crate::runtime::callbacks::{
     post_ensure_source_version, post_node_batch, post_unit_progress, post_unit_start,
 };
@@ -13,31 +13,32 @@ use crate::types::{IngestConfig, NodePayload};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 const BATCH_SIZE: usize = 200;
+const UNIT_CONCURRENCY: usize = 8;
 
+#[derive(Clone)]
 struct HttpNodeStore {
     client: Client,
     callback_base: String,
     callback_token: String,
     unit_id: String,
-    unit_buffers: Arc<Mutex<HashMap<String, Vec<NodePayload>>>>,
+    buffer: Arc<Mutex<Vec<NodePayload>>>,
 }
 
 #[async_trait]
 impl NodeStore for HttpNodeStore {
     async fn insert_node(&self, node: NodePayload) -> Result<(), String> {
         let batch = {
-            let mut unit_buffers = self.unit_buffers.lock().map_err(|e| e.to_string())?;
-            let buffer = unit_buffers
-                .entry(self.unit_id.clone())
-                .or_insert_with(|| Vec::with_capacity(BATCH_SIZE));
+            let mut buffer = self.buffer.lock().map_err(|e| e.to_string())?;
             buffer.push(node);
             if buffer.len() >= BATCH_SIZE {
-                Some(std::mem::take(buffer))
+                Some(std::mem::take(&mut *buffer))
             } else {
                 None
             }
@@ -58,14 +59,12 @@ impl NodeStore for HttpNodeStore {
 
     async fn flush(&self) -> Result<(), String> {
         let batch = {
-            let mut unit_buffers = self.unit_buffers.lock().map_err(|e| e.to_string())?;
-            unit_buffers.get_mut(&self.unit_id).and_then(|buffer| {
-                if buffer.is_empty() {
-                    None
-                } else {
-                    Some(std::mem::take(buffer))
-                }
-            })
+            let mut buffer = self.buffer.lock().map_err(|e| e.to_string())?;
+            if buffer.is_empty() {
+                None
+            } else {
+                Some(std::mem::take(&mut *buffer))
+            }
         };
 
         if let Some(batch) = batch {
@@ -87,7 +86,6 @@ struct DummyBlobStore;
 #[async_trait]
 impl BlobStore for DummyBlobStore {
     async fn store_blob(&self, _id: &str, _content: &[u8]) -> Result<String, String> {
-        // Placeholder implementation
         Ok("dummy-blob-id".to_string())
     }
 }
@@ -111,20 +109,12 @@ impl Cache for HttpCache {
         )
         .await?;
 
-        let cache_info = cache_result.ok_or_else(|| {
+        cache_result.ok_or_else(|| {
             format!(
                 "Cache proxy returned 422 for URL (likely HTML response): {}",
                 url
             )
-        })?;
-
-        read_cached_file(
-            &self.client,
-            &cache_info,
-            &self.callback_base,
-            &self.callback_token,
-        )
-        .await
+        })
     }
 }
 
@@ -181,23 +171,123 @@ impl UrlQueue for SimpleUrlQueue {
     }
 }
 
+fn create_unit_roots(config: &IngestConfig, root_node_id: &str) -> Vec<QueueItem> {
+    if let Some(units) = &config.units {
+        return units
+            .iter()
+            .map(|unit| QueueItem {
+                url: unit.url.clone(),
+                parent_id: root_node_id.to_string(),
+                level_name: "unit".to_string(),
+                level_index: 0,
+                metadata: json!({
+                    "unit_id": unit.unit_id,
+                    "sort_order": unit.sort_order,
+                }),
+            })
+            .collect();
+    }
+
+    Vec::new()
+}
+
+async fn process_unit_root(
+    adapter: &'static (dyn crate::sources::SourceAdapter + Send + Sync),
+    client: Client,
+    callback_base: String,
+    callback_token: String,
+    source_version_id: String,
+    root_node_id: String,
+    accessed_at: String,
+    blob_store: Arc<dyn BlobStore>,
+    cache_store: Arc<dyn Cache>,
+    logger: Arc<dyn Logger>,
+    unit_root: QueueItem,
+) -> Result<(), String> {
+    let unit_id = unit_root.metadata["unit_id"]
+        .as_str()
+        .unwrap_or("root")
+        .to_string();
+    let unit_label = adapter.unit_label(&unit_root);
+    let unit_sort_order = unit_root.metadata["sort_order"].as_i64().unwrap_or(0) as i32;
+
+    post_unit_start(&client, &callback_base, &callback_token, &unit_id, 0).await?;
+
+    let queue = Arc::new(SimpleUrlQueue::new());
+    queue.enqueue(unit_root);
+
+    let node_store = HttpNodeStore {
+        client: client.clone(),
+        callback_base: callback_base.clone(),
+        callback_token: callback_token.clone(),
+        unit_id: unit_id.clone(),
+        buffer: Arc::new(Mutex::new(Vec::with_capacity(BATCH_SIZE))),
+    };
+
+    while let Some(item) = queue.pop() {
+        let build_context = BuildContext {
+            source_version_id: &source_version_id,
+            root_node_id: &root_node_id,
+            accessed_at: &accessed_at,
+            unit_sort_order,
+        };
+
+        let mut context = IngestContext {
+            build: build_context,
+            nodes: Box::new(node_store.clone()),
+            blobs: blob_store.clone(),
+            cache: cache_store.clone(),
+            queue: queue.clone(),
+            logger: logger.clone(),
+        };
+
+        if let Err(err) = adapter.process_url(&mut context, &item).await {
+            tracing::error!("[Orchestrator] {} failed: {}", unit_label, err);
+            node_store.flush().await?;
+            post_unit_progress(
+                &client,
+                &callback_base,
+                &callback_token,
+                &unit_id,
+                "error",
+                Some(&err),
+            )
+            .await;
+            return Ok(());
+        }
+    }
+
+    node_store.flush().await?;
+    post_unit_progress(
+        &client,
+        &callback_base,
+        &callback_token,
+        &unit_id,
+        "completed",
+        None,
+    )
+    .await;
+
+    Ok(())
+}
+
 pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(45))
         .build()
         .map_err(|err| format!("Failed to build HTTP client: {err}"))?;
+
     let adapter = adapter_for(config.source);
 
-    let queue = Arc::new(SimpleUrlQueue::new());
-    let blob_store = Arc::new(DummyBlobStore);
-    let cache_store = Arc::new(HttpCache {
+    let blob_store: Arc<dyn BlobStore> = Arc::new(DummyBlobStore);
+    let cache_store: Arc<dyn Cache> = Arc::new(HttpCache {
         client: client.clone(),
         callback_base: config.callback_base.clone(),
         callback_token: config.callback_token.clone(),
     });
 
-    let logger = Arc::new(HttpLogger {
+    let logger: Arc<dyn Logger> = Arc::new(HttpLogger {
         client: client.clone(),
         callback_base: config.callback_base.clone(),
         callback_token: config.callback_token.clone(),
@@ -206,32 +296,14 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
     let accessed_at = chrono::Utc::now().to_rfc3339();
     let mut source_version_id: Option<String> = config.source_version_id.clone();
     let mut root_node_id: Option<String> = config.root_node_id.clone();
-    let unit_buffers = Arc::new(Mutex::new(HashMap::<String, Vec<NodePayload>>::new()));
-    let mut started_units: Vec<String> = Vec::new();
-    let mut started_unit_ids: HashSet<String> = HashSet::new();
-    let mut failed_units: HashSet<String> = HashSet::new();
 
-    // Initial seeding
-    if let Some(units) = &config.units {
-        let rnid = config
-            .root_node_id
-            .as_deref()
-            .unwrap_or_default()
-            .to_string();
-        for unit in units {
-            queue.enqueue(QueueItem {
-                url: unit.url.clone(),
-                parent_id: rnid.clone(),
-                level_name: "unit".to_string(),
-                level_index: 0,
-                metadata: json!({
-                    "unit_id": unit.unit_id,
-                    "sort_order": unit.sort_order
-                }),
-            });
-        }
+    let mut unit_roots = if let Some(root_id) = &root_node_id {
+        create_unit_roots(&config, root_id)
     } else {
-        // Discovery mode: fetch root URL, discover units, sync with backend
+        Vec::new()
+    };
+
+    if unit_roots.is_empty() {
         let config_data = SourcesConfig::load_default().expect("Failed to load sources.json");
         let root_url = config_data
             .get_root_url(config.source)
@@ -258,125 +330,76 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
         )
         .await?;
 
-        let rnid = discovery.root_node.id.clone();
-        for (i, root) in discovery.unit_roots.into_iter().enumerate() {
-            queue.enqueue(QueueItem {
+        let parent_id = discovery.root_node.id;
+        unit_roots = discovery
+            .unit_roots
+            .into_iter()
+            .enumerate()
+            .map(|(idx, root)| QueueItem {
                 url: root.url,
-                parent_id: rnid.clone(),
+                parent_id: parent_id.clone(),
                 level_name: root.level_name,
                 level_index: root.level_index,
                 metadata: json!({
                     "unit_id": root.id,
                     "title_num": root.title_num,
-                    "sort_order": i as i32
+                    "sort_order": idx as i32,
                 }),
-            });
-        }
+            })
+            .collect();
     }
 
-    // Main processing loop
-    while let Some(item) = queue.pop() {
-        let unit_id = item.metadata["unit_id"]
-            .as_str()
-            .unwrap_or("root")
-            .to_string();
-        let unit_label = adapter.unit_label(&item);
+    let (Some(source_version_id), Some(root_node_id)) = (source_version_id, root_node_id) else {
+        return Err("source_version_id/root_node_id not set after discovery".to_string());
+    };
 
-        let (Some(svid), Some(rnid)) = (&source_version_id, &root_node_id) else {
-            return Err(format!(
-                "source_version_id/root_node_id not set when processing: {}",
-                item.level_name
-            ));
-        };
+    let semaphore = Arc::new(Semaphore::new(UNIT_CONCURRENCY));
+    let mut tasks = JoinSet::new();
 
-        let is_unit_root = item.parent_id == *rnid;
+    for unit_root in unit_roots {
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|err| format!("Failed to acquire unit permit: {err}"))?;
 
-        tracing::info!("[Orchestrator] Processing: {}", unit_label);
+        let callback_base = config.callback_base.clone();
+        let callback_token = config.callback_token.clone();
+        let source_version_id = source_version_id.clone();
+        let root_node_id = root_node_id.clone();
+        let accessed_at = accessed_at.clone();
+        let client = client.clone();
+        let blob_store = blob_store.clone();
+        let cache_store = cache_store.clone();
+        let logger = logger.clone();
 
-        let build_context = BuildContext {
-            source_version_id: svid,
-            root_node_id: rnid,
-            accessed_at: &accessed_at,
-            unit_sort_order: item.metadata["sort_order"].as_i64().unwrap_or(0) as i32,
-        };
-
-        let node_store = HttpNodeStore {
-            client: client.clone(),
-            callback_base: config.callback_base.clone(),
-            callback_token: config.callback_token.clone(),
-            unit_id: unit_id.clone(),
-            unit_buffers: unit_buffers.clone(),
-        };
-
-        let mut context = IngestContext {
-            build: build_context,
-            nodes: Box::new(node_store),
-            blobs: blob_store.clone(),
-            cache: cache_store.clone(),
-            queue: queue.clone(),
-            logger: logger.clone(),
-        };
-
-        // Only report start for unit-level tasks (direct children of root)
-        if is_unit_root && started_unit_ids.insert(unit_id.clone()) {
-            started_units.push(unit_id.clone());
-            post_unit_start(
-                &client,
-                &config.callback_base,
-                &config.callback_token,
-                &unit_id,
-                0,
+        tasks.spawn(async move {
+            let _permit = permit;
+            process_unit_root(
+                adapter,
+                client,
+                callback_base,
+                callback_token,
+                source_version_id,
+                root_node_id,
+                accessed_at,
+                blob_store,
+                cache_store,
+                logger,
+                unit_root,
             )
-            .await?;
-        }
+            .await
+        });
+    }
 
-        let result = adapter.process_url(&mut context, &item).await;
-
-        match result {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::error!("[Orchestrator] {} failed: {}", unit_label, err);
-                if failed_units.insert(unit_id.clone()) {
-                    post_unit_progress(
-                        &client,
-                        &config.callback_base,
-                        &config.callback_token,
-                        &unit_id,
-                        "error",
-                        Some(&err),
-                    )
-                    .await;
-                }
-            }
+    while let Some(join_result) = tasks.join_next().await {
+        match join_result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => return Err(err),
+            Err(err) => return Err(format!("Unit task failed to join: {err}")),
         }
     }
 
-    for unit_id in &started_units {
-        let node_store = HttpNodeStore {
-            client: client.clone(),
-            callback_base: config.callback_base.clone(),
-            callback_token: config.callback_token.clone(),
-            unit_id: unit_id.clone(),
-            unit_buffers: unit_buffers.clone(),
-        };
-        node_store.flush().await?;
-    }
-
-    for unit_id in started_units {
-        if failed_units.contains(&unit_id) {
-            continue;
-        }
-        post_unit_progress(
-            &client,
-            &config.callback_base,
-            &config.callback_token,
-            &unit_id,
-            "completed",
-            None,
-        )
-        .await;
-    }
-
-    tracing::info!("[Orchestrator] Queue drained. All tasks complete.");
+    tracing::info!("[Orchestrator] All unit tasks complete.");
     Ok(())
 }
