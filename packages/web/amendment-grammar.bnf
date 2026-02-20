@@ -35,7 +35,7 @@ sub_head ::= sub_id
   | sub_id " " subscope ", " text_location
   | sub_id " " text_location
 subscope ::= "in " sub_location_or_sub ( " of " sub_location_or_sub )? sub_amended_by?
-subscope_plural ::= "in "? sub_name_plural " " sub_location_list
+subscope_plural ::= "in "? sub_locations_plural
 sep ::= [,;]
 
 sub_amended_by ::= ", " sub_amended_by_spec ","? | " (" sub_amended_by_spec ")"
@@ -59,7 +59,7 @@ text_location ::= "in the " ordinal " sentence" text_location_anchor?
   | "in the heading" text_location_anchor?
   | "in the " sub_name " heading" text_location_anchor?
   | "in the matter " ( "preceding " | "following " ) sub_location sub_amended_by?
-  | "in " ( sub_name_plural " " sub_location_list | sub_location_or_sub ) text_location_anchor? sub_amended_by?
+  | "in " ( sub_locations_plural | sub_location_or_sub ) text_location_anchor? sub_amended_by?
   | ( "before " | "after " ) inner_location
 text_location_anchor ::= " thereof" | " of " sub_location_or_sub
 ordinal ::= "first" | "second" | "third" | "fourth" | "fifth" | "sixth" | "seventh" | "eighth" | "ninth" | "tenth"

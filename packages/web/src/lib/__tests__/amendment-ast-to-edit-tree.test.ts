@@ -120,7 +120,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in the first sentence of subsection (a) by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -146,7 +149,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in the paragraph heading thereof by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -172,7 +178,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in the matter preceding paragraph (2) by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -190,7 +199,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in the last sentence by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -208,7 +220,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in the heading of subsection (a) by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -229,7 +244,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in the matter following paragraph (2) by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -247,7 +265,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended before the period at the end of subsection (a) by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -279,7 +300,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended—\n(A) after the semicolon, by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -308,7 +332,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended—\n(A) after the comma, by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -337,7 +364,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended—\n(A) before the heading, by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -358,7 +388,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended—\n(A) before the subsection heading, by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -379,7 +412,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended—\n(A) before the section designation, by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -400,7 +436,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended—\n(A) after the second sentence, by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -427,7 +466,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended—\n(A) after the last sentence, by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -448,7 +490,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in subsections (a) and (b) by moving such sections before subsection (c).",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -476,7 +521,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended in subsections (a) through (c) by striking “A”.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const locationNode = result.tree.children[0];
+		let locationNode = result.tree.children[0];
+		if (locationNode?.type === SemanticNodeType.Scope) {
+			locationNode = locationNode.children[0] as any;
+		}
 		if (
 			!locationNode ||
 			locationNode.type !== SemanticNodeType.LocationRestriction
@@ -537,7 +585,10 @@ describe("translateInstructionAstToEditTree", () => {
 			"Section 101 of title 10, United States Code, is amended by redesignating clauses (i)-(iii) as clauses (ii)-(iv), respectively.",
 		);
 		const result = translateInstructionAstToEditTree(ast);
-		const editNode = result.tree.children[0];
+		let editNode = result.tree.children[0];
+		if (editNode?.type === SemanticNodeType.Scope) {
+			editNode = editNode.children[0] as any;
+		}
 		if (!editNode || editNode.type !== SemanticNodeType.Edit) {
 			throw new Error("Expected edit node.");
 		}

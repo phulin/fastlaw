@@ -921,7 +921,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		const indexOfA = result.indexOf("(A) IN GENERAL");
 		const indexOfB = result.indexOf("(B) EXCEPTION.—");
 		const addAtEndAttempt = effect.debug.operationAttempts.find(
-			(item) => item.operationType === "add_at_end",
+			(item) => item.operationType === "insert",
 		);
 		expect(indexOfA).toBeGreaterThanOrEqual(0);
 		expect(indexOfB).toBeGreaterThanOrEqual(0);

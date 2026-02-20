@@ -1,6 +1,8 @@
 Page 1
-[*] In the Senate of the United States, July 1 (legislative day, June 30), 2025.
-[*] Resolved, That the bill from the House of Representatives (H.R. 1) entitled “An Act to provide for reconciliation pursuant to title II of H. Con. Res. 14.”, do pass with the following AMENDMENT:
+[*] In the Senate of the United States,
+[*] July 1 (legislative day, June 30), 2025.
+[*] Resolved, That the bill from the House of Representatives (H.R. 1) entitled “An Act to provide for reconciliation pursuant to title II of H. Con. Res. 14.”, do pass with the following
+[*] AMENDMENT:
 [*] Strike all after the first word, and insert the following:
 [*] 1. TABLE OF CONTENTS.
 [*] The table of contents of this Act is as follows:
@@ -522,7 +524,9 @@ Page 23
 [*] “(i) IN GENERAL.—Subject to clause (iii), beginning in fiscal year 2028, if the payment error rate of a State as determined under clause (ii) is—
 [*] “(I) less than 6 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 100 percent, and the State share shall be 0 percent;
 [*] “(II) equal to or greater than 6 percent but less than 8 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 95 percent, and the State share shall be 5 percent;
-[*] “(III) equal to or greater than 8 percent but less than 10 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 90 by striking “2 years after the date of enactment of the RECA Extension Act of 2022” and inserting “December 31, 2027”. Attest:
+[*] “(III) equal to or greater than 8 percent but less than 10 percent, the Federal share of the cost of the allotment described in paragraph (1) for that State in a fiscal year shall be 90
 
 Page 24
+[*] by striking “2 years after the date of enactment of the RECA Extension Act of 2022” and inserting “December 31, 2027”.
+[*] Attest:
 [*] Secretary.

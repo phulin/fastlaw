@@ -712,14 +712,17 @@ function parseInReferences(
 	);
 	if (direct) return [direct];
 
-	const pluralName = findChild(node, GrammarAstNodeType.SubNamePlural);
-	const list = findChild(node, GrammarAstNodeType.SubLocationList);
-	if (pluralName && list) {
-		const ids = findChildren(list, GrammarAstNodeType.SubId).map((id) =>
+	const plural = findChild(node, GrammarAstNodeType.SubLocationsPlural);
+	if (plural) {
+		const pluralKindNode = findChild(plural, GrammarAstNodeType.SubNamePlural);
+		const kind = pluralKindNode
+			? scopeKindFromPluralText(pluralKindNode.text)
+			: null;
+		if (!kind) return [];
+		const rawIds = findChildren(plural, GrammarAstNodeType.SubId).map((id) =>
 			normalizeSubId(id.text),
 		);
-		const kind = scopeKindFromPluralText(pluralName.text);
-		if (!kind) return [];
+		const ids = expandPluralIds(rawIds, kind, plural);
 		return ids.map((label) => ({
 			kind,
 			path: [{ kind, label }],
@@ -733,14 +736,17 @@ function parsePluralScopeList(
 	node: RuleAst<GrammarAstNodeType.SubscopePlural>,
 	context: TranslationContext,
 ): StructuralReference[] {
-	const plural = findChild(node, GrammarAstNodeType.SubNamePlural);
-	const list = findChild(node, GrammarAstNodeType.SubLocationList);
-	if (!plural || !list) return [];
-	const kind = scopeKindFromPluralText(plural.text);
+	const plural = findChild(node, GrammarAstNodeType.SubLocationsPlural);
+	if (!plural) return [];
+	const pluralKindNode = findChild(plural, GrammarAstNodeType.SubNamePlural);
+	const kind = pluralKindNode
+		? scopeKindFromPluralText(pluralKindNode.text)
+		: null;
 	if (!kind) return [];
-	const ids = findChildren(list, GrammarAstNodeType.SubId).map((id) =>
+	const rawIds = findChildren(plural, GrammarAstNodeType.SubId).map((id) =>
 		normalizeSubId(id.text),
 	);
+	const ids = expandPluralIds(rawIds, kind, plural);
 	return ids.map((label) => ({
 		kind,
 		path: mergeScopePaths(context.scopePath, [{ kind, label }]),

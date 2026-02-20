@@ -323,6 +323,22 @@ export interface ScopeNode {
 	children: Array<ScopeNode | LocationRestrictionNode | EditNode>;
 }
 
+export function textSearchFromEditTarget(
+	target: EditTarget,
+): { text: string; eachPlaceItAppears: boolean } | null {
+	if ("kind" in target && target.kind === SearchTargetKind.Text) {
+		return {
+			text: target.text.text,
+			eachPlaceItAppears: target.eachPlaceItAppears ?? false,
+		};
+	}
+	return null;
+}
+
+export function textFromEditTarget(target: EditTarget): string | null {
+	return textSearchFromEditTarget(target)?.text ?? null;
+}
+
 export interface InstructionSemanticTree {
 	type: SemanticNodeType.InstructionRoot;
 	targetSection?: string;

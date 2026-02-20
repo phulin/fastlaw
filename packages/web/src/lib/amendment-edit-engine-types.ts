@@ -1,7 +1,4 @@
-import type {
-	PunctuationKind,
-	TextWithProvenance,
-} from "./amendment-edit-tree";
+import type { TextWithProvenance, UltimateEdit } from "./amendment-edit-tree";
 import type { MarkdownReplacementRange } from "./markdown";
 
 export type HierarchyLevelType =
@@ -17,87 +14,6 @@ export type HierarchyLevelType =
 export interface HierarchyLevel {
 	type: HierarchyLevelType;
 	val: string;
-}
-
-export type InstructionOperation =
-	| {
-			type: "replace";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			throughTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: TextWithProvenance;
-			strikingContent?: string;
-			eachPlaceItAppears?: boolean;
-			throughContent?: string;
-			throughPunctuation?: PunctuationKind;
-	  }
-	| {
-			type: "delete";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			throughTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			strikingContent?: string;
-			eachPlaceItAppears?: boolean;
-			throughContent?: string;
-			throughPunctuation?: PunctuationKind;
-	  }
-	| {
-			type: "insert_before";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: TextWithProvenance;
-			anchorContent?: string;
-			anchorTarget?: HierarchyLevel[];
-	  }
-	| {
-			type: "insert_after";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: TextWithProvenance;
-			anchorContent?: string;
-			anchorTarget?: HierarchyLevel[];
-	  }
-	| {
-			type: "insert";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: TextWithProvenance;
-	  }
-	| {
-			type: "add_at_end";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: TextWithProvenance;
-	  }
-	| {
-			type: "redesignate";
-			target: HierarchyLevel[];
-			fromLabel: string;
-			toLabel: string;
-	  }
-	| {
-			type: "move";
-			fromTargets: HierarchyLevel[][];
-			beforeTarget?: HierarchyLevel[];
-			afterTarget?: HierarchyLevel[];
-	  };
-
-export interface InstructionNode {
-	operation: InstructionOperation;
-	children: InstructionNode[];
-	text: string;
 }
 
 export interface ScopeRange {
@@ -148,7 +64,14 @@ export interface ResolutionIssue {
 export interface ResolvedInstructionOperation {
 	operationIndex: number;
 	nodeText: string;
-	operation: InstructionOperation;
+	edit: UltimateEdit;
+	/** For Insert edits: context says this should add at end of scope rather than inline. */
+	addAtEnd: boolean;
+	/** For Redesignate edits: index into edit.mappings that this operation handles. */
+	redesignateMappingIndex: number;
+	sentenceOrdinal: number | null;
+	hasMatterPrecedingTarget: boolean;
+	hasMatterFollowingTarget: boolean;
 	hasExplicitTargetPath: boolean;
 	targetPathText: string | null;
 	resolvedTargetId: string | null;

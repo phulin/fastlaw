@@ -61,7 +61,6 @@ describe("extractParagraphs", () => {
 						: "[no paragraphs]";
 				return `Page ${pageNumber}\n${body}`;
 			});
-
 			expect(`${pageOutput.join("\n\n")}\n`).toBe(expectedOutput);
 		} finally {
 			await pdf.destroy();
@@ -82,9 +81,7 @@ describe("extractParagraphs", () => {
 		);
 
 		const lines = extractor.getLines();
-		const paragraphs = splitParagraphsRulesBased(
-			lines,
-		);
+		const paragraphs = splitParagraphsRulesBased(lines);
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("Hello world");
 	});
@@ -105,9 +102,7 @@ describe("extractParagraphs", () => {
 		);
 
 		const lines = extractor.getLines();
-		const paragraphs = splitParagraphsRulesBased(
-			lines,
-		);
+		const paragraphs = splitParagraphsRulesBased(lines);
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("Body text");
 	});
@@ -125,12 +120,9 @@ describe("extractParagraphs", () => {
 		);
 
 		const lines = extractor.getLines();
-		const paragraphs = splitParagraphsRulesBased(
-			lines,
-			{
-				knownWords: new Set(["information"]),
-			},
-		);
+		const paragraphs = splitParagraphsRulesBased(lines, {
+			knownWords: new Set(["information"]),
+		});
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("information");
 	});
@@ -148,12 +140,9 @@ describe("extractParagraphs", () => {
 		);
 
 		const lines = extractor.getLines();
-		const paragraphs = splitParagraphsRulesBased(
-			lines,
-			{
-				knownWords: new Set(["information"]),
-			},
-		);
+		const paragraphs = splitParagraphsRulesBased(lines, {
+			knownWords: new Set(["information", "state", "owned"]),
+		});
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("state-owned");
 	});
@@ -290,9 +279,12 @@ describe("extractParagraphs", () => {
 
 		const lines = extractor.getLines();
 		const paragraphs = splitParagraphsRulesBased(lines);
-		expect(paragraphs).toHaveLength(1);
+		expect(paragraphs).toHaveLength(2);
 		expect(paragraphs[0]?.text).toBe(
-			"“(e) MANDATORY FUNDING.—Subject to subsections (b), (c), and (d), of the funds of the Commodity Credit Corporation, the Secretary shall make available to carry out the competitive grant program under section 4 $125,000,000 for fiscal year 2026 and each fiscal year thereafter.”.",
+			"“(e) MANDATORY FUNDING.—Subject to subsections",
+		);
+		expect(paragraphs[1]?.text).toBe(
+			"(b), (c), and (d), of the funds of the Commodity Credit Corporation, the Secretary shall make available to carry out the competitive grant program under section 4 $125,000,000 for fiscal year 2026 and each fiscal year thereafter.”.",
 		);
 	});
 

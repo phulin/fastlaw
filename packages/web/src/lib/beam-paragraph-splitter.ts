@@ -573,6 +573,12 @@ function scoreTransition(
 		) {
 			score += 1.5;
 		}
+		if (
+			previousFeatures.startsStructuralHeader &&
+			!features.isMostlyUppercase
+		) {
+			score += decision === "B" ? 5 : -5;
+		}
 	}
 
 	if (decision === "B" && features.marker && resolvedMarkerChain !== null) {

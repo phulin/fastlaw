@@ -34,10 +34,10 @@ describe("splitParagraphsRulesBased", () => {
 
 		expect(paragraphs).toHaveLength(2);
 		expect(paragraphs[0]?.text).toBe(
-			"SEC. 90001. BORDER INFRASTRUCTURE AND WALL SYSTEM. In addition to amounts otherwise available, there is",
+			"SEC. 90001. BORDER INFRASTRUCTURE AND WALL SYSTEM.",
 		);
 		expect(paragraphs[1]?.text).toBe(
-			"appropriated to the Commissioner of U.S. Customs and",
+			"In addition to amounts otherwise available, there is appropriated to the Commissioner of U.S. Customs and",
 		);
 	});
 
@@ -50,11 +50,12 @@ describe("splitParagraphsRulesBased", () => {
 
 		const paragraphs = splitParagraphsRulesBased(lines);
 
-		expect(paragraphs).toHaveLength(2);
+		expect(paragraphs).toHaveLength(3);
 		expect(paragraphs[0]?.text).toBe(
-			"SEC. 90001. BORDER INFRASTRUCTURE AND WALL SYSTEM. (a) IN GENERAL.—",
+			"SEC. 90001. BORDER INFRASTRUCTURE AND WALL SYSTEM.",
 		);
-		expect(paragraphs[1]?.text).toBe(
+		expect(paragraphs[1]?.text).toBe("(a) IN GENERAL.—");
+		expect(paragraphs[2]?.text).toBe(
 			"IN ADDITION TO AMOUNTS OTHERWISE AVAILABLE,",
 		);
 	});
