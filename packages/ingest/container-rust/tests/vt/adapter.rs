@@ -267,13 +267,17 @@ async fn adapter_supports_aggregated_batch_callbacks() {
         }),
     });
 
-    while let Some(item) = queue.enqueued.lock().unwrap().pop_front() {
+    loop {
+        let item = { queue.enqueued.lock().unwrap().pop_front() };
+        let Some(item) = item else {
+            break;
+        };
         adapter
             .process_url(&mut context, &item)
             .await
             .expect("processing should succeed");
-        context.nodes.flush().await.expect("flush should succeed");
     }
+    context.nodes.flush().await.expect("flush should succeed");
 
     let (inserted_nodes, callbacks) = node_store.counts();
     assert!(inserted_nodes >= 6);
