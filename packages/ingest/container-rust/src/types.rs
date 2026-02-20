@@ -6,6 +6,7 @@ pub enum SourceKind {
     Usc,
     Cgs,
     Mgl,
+    Nh,
     Rigl,
     Vt,
 }

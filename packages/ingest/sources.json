@@ -24,6 +24,14 @@
 			"description": "Massachusetts state statutory law",
 			"root_url": "https://malegislature.gov/Laws/GeneralLaws"
 		},
+		"nh": {
+			"name": "New Hampshire Revised Statutes",
+			"jurisdiction": "state",
+			"region": "NH",
+			"doc_type": "statute",
+			"description": "New Hampshire state statutory law",
+			"root_url": "https://gc.nh.gov/rsa/html/nhtoc.htm"
+		},
 		"rigl": {
 			"name": "Rhode Island General Laws",
 			"jurisdiction": "state",

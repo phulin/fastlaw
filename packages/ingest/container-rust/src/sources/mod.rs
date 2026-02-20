@@ -7,6 +7,7 @@ pub mod cgs;
 pub mod common;
 pub mod configs;
 pub mod mgl;
+pub mod nh;
 pub mod rigl;
 pub mod usc;
 pub mod vt;
@@ -41,6 +42,7 @@ pub fn adapter_for(source: SourceKind) -> &'static (dyn SourceAdapter + Send + S
         SourceKind::Usc => &usc::adapter::USC_ADAPTER,
         SourceKind::Cgs => &cgs::adapter::CGS_ADAPTER,
         SourceKind::Mgl => &mgl::adapter::MGL_ADAPTER,
+        SourceKind::Nh => &nh::adapter::NH_ADAPTER,
         SourceKind::Rigl => &rigl::adapter::RIGL_ADAPTER,
         SourceKind::Vt => &vt::adapter::VT_ADAPTER,
     }

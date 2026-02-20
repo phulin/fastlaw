@@ -1,10 +1,12 @@
 # Scraper Specification
 
+## Prompt
+
 You are implementing a new statute scraper in `packages/ingest` using the current ingestion architecture (Rust running in a container, callbacking batched nodes into the Worker).
 
 The goal is simple: produce a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
 
-DO NOT return success without a fully compliant scraper. Keep iterating until all requirements in this document are met.
+Use the planning-with-files skill. DO NOT return success without a fully compliant scraper. Keep iterating until all requirements in this document are met.
 
 ## 0. New Jurisdiction Implementation Playbook
 
@@ -27,6 +29,7 @@ When adding a scraper for a new jurisdiction, first copy this checklist VERBATIM
 - - [ ] Routes errors back to the worker using the logging callback so they aren't silently swallowed.
 - - [ ] If possible, uses information from the source to create a source version that identifies this version of the source.
 - - [ ] Produces a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
+- - [ ] Includes clean readable IDs for each node (no leading zeros unless those are present in the source).
 - - [ ] Includes all information from the source e.g. any history or citation notes.
 - - [ ] Inserts nodes in batches from container to Worker. This is important!
 - - [ ] Emits blobs and nodes as we parse the nodes, and doesn't accumulate them in memory.
