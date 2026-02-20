@@ -4,7 +4,9 @@ use ingest::runtime::types::{
 };
 use ingest::sources::cgs::adapter::CGS_ADAPTER;
 use ingest::sources::mgl::adapter::MGL_ADAPTER;
+use ingest::sources::rigl::adapter::RIGL_ADAPTER;
 use ingest::sources::usc::adapter::USC_ADAPTER;
+use ingest::sources::vt::adapter::VT_ADAPTER;
 use ingest::sources::SourceAdapter;
 use ingest::types::{NodePayload, SectionContent};
 use serde_json::{json, Value};
@@ -19,6 +21,8 @@ enum SourceArg {
     Usc,
     Cgs,
     Mgl,
+    Rigl,
+    Vt,
 }
 
 impl SourceArg {
@@ -27,6 +31,8 @@ impl SourceArg {
             "usc" => Some(Self::Usc),
             "cgs" => Some(Self::Cgs),
             "mgl" => Some(Self::Mgl),
+            "rigl" => Some(Self::Rigl),
+            "vt" => Some(Self::Vt),
             _ => None,
         }
     }
@@ -36,11 +42,12 @@ impl SourceArg {
 async fn main() -> Result<(), DynError> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() != 3 {
-        eprintln!("Usage: explore <usc|cgs|mgl> <file> <needle>");
+        eprintln!("Usage: explore <usc|cgs|mgl|rigl|vt> <file> <needle>");
         std::process::exit(2);
     }
 
-    let source = SourceArg::parse(&args[0]).ok_or("first argument must be usc, cgs, or mgl")?;
+    let source =
+        SourceArg::parse(&args[0]).ok_or("first argument must be usc, cgs, mgl, or rigl")?;
     let file_path = args[1].clone();
     let needle = args[2].clone();
     let input = std::fs::read_to_string(&file_path)?;
@@ -76,6 +83,14 @@ async fn main() -> Result<(), DynError> {
             .process_url(&mut ctx, &item)
             .await
             .map_err(|e| format!("MGL adapter process failed: {e}"))?,
+        SourceArg::Rigl => RIGL_ADAPTER
+            .process_url(&mut ctx, &item)
+            .await
+            .map_err(|e| format!("RIGL adapter process failed: {e}"))?,
+        SourceArg::Vt => VT_ADAPTER
+            .process_url(&mut ctx, &item)
+            .await
+            .map_err(|e| format!("VT adapter process failed: {e}"))?,
     }
 
     let nodes = node_store.nodes();
@@ -168,6 +183,41 @@ fn build_queue_item(source: SourceArg, file_path: &str) -> QueueItem {
                 }),
             }
         }
+        SourceArg::Rigl => {
+            let title_num = infer_title_id(&file_name).unwrap_or_else(|| "1".to_string());
+            let chapter_num =
+                infer_chapter_num_from_rigl(&file_name).unwrap_or_else(|| "1-1".to_string());
+            QueueItem {
+                url: file_path.to_string(),
+                parent_id: "root/title-1".to_string(),
+                level_name: "section".to_string(),
+                level_index: 2,
+                metadata: json!({
+                    "title_num": title_num,
+                    "chapter_num": chapter_num,
+                    "section_num": infer_section_num_from_rigl(&file_name).unwrap_or_else(|| "1-1-1".to_string()),
+                    "sort_order": 0
+                }),
+            }
+        }
+        SourceArg::Vt => {
+            let title_num = infer_title_num_from_vt(&file_name).unwrap_or_else(|| "02".to_string());
+            let chapter_num =
+                infer_chapter_num_from_vt(&file_name).unwrap_or_else(|| "001".to_string());
+            QueueItem {
+                url: file_path.to_string(),
+                parent_id: format!("root/title-{}", title_num.to_ascii_lowercase()),
+                level_name: "chapter".to_string(),
+                level_index: 1,
+                metadata: json!({
+                    "title_num": title_num,
+                    "title_display_num": "2",
+                    "chapter_num": chapter_num,
+                    "chapter_display_num": "1",
+                    "sort_order": 0
+                }),
+            }
+        }
     }
 }
 
@@ -201,6 +251,56 @@ fn infer_chapter_num(file_name: &str) -> Option<String> {
     }
     if let Some(value) = file_name.strip_prefix("mgl_section_") {
         return value.strip_suffix(".json").map(ToString::to_string);
+    }
+    None
+}
+
+fn infer_title_id(file_name: &str) -> Option<String> {
+    if let Some(value) = file_name.strip_prefix("title_") {
+        return value.strip_suffix("_index.htm").map(ToString::to_string);
+    }
+    None
+}
+
+fn infer_chapter_num_from_rigl(file_name: &str) -> Option<String> {
+    if let Some(value) = file_name.strip_prefix("chapter_") {
+        return value.strip_suffix("_index.htm").map(ToString::to_string);
+    }
+    if let Some(value) = file_name.strip_prefix("section_") {
+        let cleaned = value.strip_suffix(".htm")?;
+        let mut segments = cleaned.split('-').collect::<Vec<_>>();
+        if segments.len() >= 3 {
+            segments.pop();
+            return Some(segments.join("-"));
+        }
+    }
+    None
+}
+
+fn infer_section_num_from_rigl(file_name: &str) -> Option<String> {
+    file_name
+        .strip_prefix("section_")
+        .and_then(|value| value.strip_suffix(".htm"))
+        .map(ToString::to_string)
+}
+
+fn infer_title_num_from_vt(file_name: &str) -> Option<String> {
+    if let Some(value) = file_name.strip_prefix("title_") {
+        return value.strip_suffix(".html").map(ToString::to_string);
+    }
+    if let Some(value) = file_name.strip_prefix("fullchapter_") {
+        return value.split('_').next().map(ToString::to_string);
+    }
+    None
+}
+
+fn infer_chapter_num_from_vt(file_name: &str) -> Option<String> {
+    if let Some(value) = file_name.strip_prefix("fullchapter_") {
+        let mut parts = value.split('_');
+        let _title = parts.next()?;
+        return parts
+            .next()
+            .map(|part| part.trim_end_matches(".html").to_string());
     }
     None
 }

@@ -23,6 +23,22 @@
 			"doc_type": "statute",
 			"description": "Massachusetts state statutory law",
 			"root_url": "https://malegislature.gov/Laws/GeneralLaws"
+		},
+		"rigl": {
+			"name": "Rhode Island General Laws",
+			"jurisdiction": "state",
+			"region": "RI",
+			"doc_type": "statute",
+			"description": "Rhode Island state statutory law",
+			"root_url": "https://webserver.rilegislature.gov/statutes/Statutes.html"
+		},
+		"vt": {
+			"name": "Vermont Statutes",
+			"jurisdiction": "state",
+			"region": "VT",
+			"doc_type": "statute",
+			"description": "Vermont state statutory law",
+			"root_url": "https://legislature.vermont.gov/statutes/"
 		}
 	}
 }
