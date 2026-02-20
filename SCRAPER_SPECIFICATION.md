@@ -1,6 +1,6 @@
 # Scraper Specification
 
-You are implementing a new statute scraper in `packages/ingest` using the current ingestion architecture (Rust running in a container, callbacking batched nodes into the Worker). Awesome!
+You are implementing a new statute scraper in `packages/ingest` using the current ingestion architecture (Rust running in a container, callbacking batched nodes into the Worker).
 
 The goal is simple: produce a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
 
@@ -8,14 +8,20 @@ DO NOT return success without a fully compliant scraper. Keep iterating until al
 
 ## 0. New Jurisdiction Implementation Playbook
 
-When adding a scraper for a new jurisdiction, follow this sequence:
+When adding a scraper for a new jurisdiction, first copy this checklist VERBATIM into your `task_plan.md` file.
 
-1. Create a specification for the input: how do we access the data? how do we extract the relevant information?
-2. Then write tests to confirm that the implementation corresponds to the specification.
-3. You can look at existing source-adapter patterns.
-4. Keep parsing and callback flow bounded for container and Worker limits.
-5. Build comprehensive edge-case tests early.
-6. Iterate until all required tests and quality checks pass.
+- [ ] Create a specification for the input: how do we access the data? what format is it in? how do we extract hierarchy, node names, and node content?
+- [ ] Write tests for the full specification. Tests should cover:
+- - [ ] Extraction of all relevant information from an HTML file for all structural levels and for section bodies.
+- - [ ] Bolding of section markers (plus any other information bolded in the source).
+- - [ ] Cross-reference linking.
+- - [ ] An integration test with mocked HTTP responses that confirms that the full pipeline extracts correctly.
+- - [ ] A baseline test that compares concatenated parser output to a simple extract-all-text-content baseline.
+- [ ] Write the scraper. Make sure it:
+- - [ ] Produces a clean hierarchy of nodes plus per-section content blocks, with deterministic IDs and ordering, and enough tests to prove extraction quality.
+- - [ ] Inserts nodes in batches from container to Worker. This is important!
+- - [ ] Emits blobs and nodes as we parse the nodes, and doesn't accumulate them in memory.
+- [ ] Iterate until all required tests and quality checks pass.
 
 ### 0.1 Build order
 
@@ -31,8 +37,8 @@ When adding a scraper for a new jurisdiction, follow this sequence:
   - it is OK to hold one entire unit (for example one title XML) in memory
   - target deployment is a container with **1 GB RAM**; size parsing strategy for that budget
 - Keep callback and persistence throughput stable:
-  - emit nodes in batches from container to Worker
-  - avoid one-callback-per-node behavior
+  - emit nodes in batches from container to Worker. this is important!
+  - avoid one-callback-per-node behavior. DO NOT insert nodes one-by-one!
   - current baseline batch size is `BATCH_SIZE = 200` in `packages/ingest/container-rust/src/runtime/orchestrator.rs`
   - tune batch size only with measured memory/latency/throughput data
 - Keep ingest progress deterministic:
@@ -341,7 +347,7 @@ Keep diagnostics terse so fixture updates remain maintainable.
 1. Define source kinds, unit payload shape, and adapter module.
 2. Implement `discover` with version + root node + unit roots.
 3. Implement `process_unit` to emit structural and section nodes.
-4. Ensure node emission is buffered and flushed in batches.
+4. Ensure node emission is buffered and flushed in batches! DO NOT insert nodes one-by-one!
 5. Add URL normalization and parsing helpers.
 6. Add deterministic designator normalization/sort helpers.
 7. Add or adapt cross-reference extraction for the source citation grammar.
