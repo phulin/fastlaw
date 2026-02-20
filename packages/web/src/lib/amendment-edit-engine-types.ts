@@ -1,6 +1,28 @@
 import type { PunctuationKind } from "./amendment-edit-tree";
 import type { MarkdownReplacementRange } from "./markdown";
 
+export interface ParagraphRange {
+	paragraph: { text: string; level?: number };
+	start: number;
+	end: number;
+}
+
+export class ParagraphRanges {
+	constructor(readonly ranges: ParagraphRange[]) {}
+
+	toText(): string {
+		return this.ranges
+			.map((r) => r.paragraph.text.slice(r.start, r.end))
+			.join("\n");
+	}
+
+	static fromText(text: string): ParagraphRanges {
+		return new ParagraphRanges([
+			{ paragraph: { text }, start: 0, end: text.length },
+		]);
+	}
+}
+
 export type HierarchyLevelType =
 	| "section"
 	| "subsection"
@@ -24,7 +46,7 @@ export type InstructionOperation =
 			matterFollowingTarget?: HierarchyLevel[];
 			throughTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 			strikingContent?: string;
 			eachPlaceItAppears?: boolean;
 			throughContent?: string;
@@ -48,7 +70,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 			anchorContent?: string;
 			anchorTarget?: HierarchyLevel[];
 	  }
@@ -58,7 +80,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 			anchorContent?: string;
 			anchorTarget?: HierarchyLevel[];
 	  }
@@ -68,7 +90,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 	  }
 	| {
 			type: "add_at_end";
@@ -76,7 +98,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 	  }
 	| {
 			type: "redesignate";
@@ -181,7 +203,9 @@ export interface PlannedPatch {
 	start: number;
 	end: number;
 	deleted: string;
-	inserted: string;
+	inserted: ParagraphRanges;
+	insertedPrefix?: string;
+	insertedSuffix?: string;
 }
 
 export interface PlanEditsResult {

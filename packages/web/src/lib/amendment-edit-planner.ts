@@ -7,6 +7,7 @@ import type {
 	ResolvedInstructionOperation,
 	ScopeRange,
 } from "./amendment-edit-engine-types";
+import { ParagraphRanges } from "./amendment-edit-engine-types";
 import { PunctuationKind } from "./amendment-edit-tree";
 import { formatInsertedBlockContent } from "./inserted-block-format";
 
@@ -26,43 +27,72 @@ function punctuationText(kind: PunctuationKind): string {
 	}
 }
 
-function formatInsertionContent(content: string, targetLevel: number): string {
-	return formatInsertedBlockContent(content, {
-		baseDepth: targetLevel + 1,
-		quotePlainMultiline: true,
-	});
+function formatContentRanges(
+	content: ParagraphRanges,
+	baseDepth: number,
+): ParagraphRanges {
+	const hasLevelInfo = content.ranges.some(
+		(r) => r.paragraph.level !== undefined,
+	);
+	if (!hasLevelInfo) {
+		return ParagraphRanges.fromText(
+			formatInsertedBlockContent(content.toText(), {
+				baseDepth,
+				quotePlainMultiline: true,
+			}),
+		);
+	}
+	const levels = content.ranges.map((r) => r.paragraph.level ?? 0);
+	const minLevel = Math.min(...levels);
+	return new ParagraphRanges(
+		content.ranges.map((range, i) => {
+			const text = range.paragraph.text.slice(range.start, range.end);
+			const depth = baseDepth + ((levels[i] ?? minLevel) - minLevel);
+			const formatted = formatInsertedBlockContent(text, {
+				baseDepth: depth,
+				quotePlainMultiline: true,
+			});
+			return {
+				paragraph: { text: formatted, level: range.paragraph.level },
+				start: 0,
+				end: formatted.length,
+			};
+		}),
+	);
+}
+
+function formatInsertionContent(
+	content: ParagraphRanges,
+	targetLevel: number,
+): ParagraphRanges {
+	return formatContentRanges(content, targetLevel + 1);
 }
 
 function formatReplacementContent(
-	content: string,
+	content: ParagraphRanges,
 	targetLevel: number,
-): string {
-	return formatInsertedBlockContent(content, {
-		baseDepth: targetLevel,
-		quotePlainMultiline: true,
-	});
+): ParagraphRanges {
+	return formatContentRanges(content, targetLevel);
 }
 
-function ensureMultilineReplacementBoundary(
-	inserted: string,
+function multilineReplacementSuffix(
+	inserted: ParagraphRanges,
 	sourceText: string,
 	rangeEnd: number,
 ): string {
-	if (!inserted.includes("\n")) return inserted;
-	if (inserted.endsWith("\n")) return inserted;
+	const text = inserted.toText();
+	if (!text.includes("\n")) return "";
+	if (text.endsWith("\n")) return "";
 	const nextChar = sourceText[rangeEnd] ?? "";
-	if (nextChar.length === 0 || nextChar === "\n") return inserted;
-	return `${inserted}\n`;
+	if (nextChar.length === 0 || nextChar === "\n") return "";
+	return "\n";
 }
 
 function formatBlockInsertionContent(
-	content: string,
+	content: ParagraphRanges,
 	targetLevel: number,
-): string {
-	return formatInsertedBlockContent(content, {
-		baseDepth: targetLevel + 1,
-		quotePlainMultiline: true,
-	});
+): ParagraphRanges {
+	return formatContentRanges(content, targetLevel + 1);
 }
 
 function resolveSentenceOrdinalRange(
@@ -296,53 +326,53 @@ function planPatchForOperation(
 						range.targetLevel !== undefined &&
 						throughRange.targetLevel === range.targetLevel;
 					if (!sameTargetLevel) {
-						const inserted = ensureMultilineReplacementBoundary(
-							formatReplacementContent(
-								replacementContent,
-								range.targetLevel ?? 0,
-							),
-							sourceText,
-							range.end,
+						const formatted = formatReplacementContent(
+							replacementContent,
+							range.targetLevel ?? 0,
 						);
 						patches.push({
 							operationIndex: operation.operationIndex,
 							start: range.start,
 							end: range.end,
 							deleted: scopedText,
-							inserted,
+							inserted: formatted,
+							insertedSuffix:
+								multilineReplacementSuffix(formatted, sourceText, range.end) ||
+								undefined,
 						});
 						break;
 					}
 					const start = Math.min(range.start, throughRange.start);
 					const end = Math.max(range.end, throughRange.end);
-					const inserted = ensureMultilineReplacementBoundary(
-						formatReplacementContent(
-							replacementContent,
-							range.targetLevel ?? 0,
-						),
-						sourceText,
-						end,
+					const formatted = formatReplacementContent(
+						replacementContent,
+						range.targetLevel ?? 0,
 					);
 					patches.push({
 						operationIndex: operation.operationIndex,
 						start,
 						end,
 						deleted: sourceText.slice(start, end),
-						inserted,
+						inserted: formatted,
+						insertedSuffix:
+							multilineReplacementSuffix(formatted, sourceText, end) ||
+							undefined,
 					});
 					break;
 				}
-				const inserted = ensureMultilineReplacementBoundary(
-					formatReplacementContent(replacementContent, range.targetLevel ?? 0),
-					sourceText,
-					range.end,
+				const formatted = formatReplacementContent(
+					replacementContent,
+					range.targetLevel ?? 0,
 				);
 				patches.push({
 					operationIndex: operation.operationIndex,
 					start: range.start,
 					end: range.end,
 					deleted: scopedText,
-					inserted,
+					inserted: formatted,
+					insertedSuffix:
+						multilineReplacementSuffix(formatted, sourceText, range.end) ||
+						undefined,
 				});
 				break;
 			}
@@ -403,7 +433,7 @@ function planPatchForOperation(
 							start: range.start,
 							end: range.end,
 							deleted: scopedText,
-							inserted: "",
+							inserted: new ParagraphRanges([]),
 						});
 						break;
 					}
@@ -414,7 +444,7 @@ function planPatchForOperation(
 						start,
 						end,
 						deleted: sourceText.slice(start, end),
-						inserted: "",
+						inserted: new ParagraphRanges([]),
 					});
 					break;
 				}
@@ -423,7 +453,7 @@ function planPatchForOperation(
 					start: range.start,
 					end: range.end,
 					deleted: scopedText,
-					inserted: "",
+					inserted: new ParagraphRanges([]),
 				});
 				break;
 			}
@@ -449,7 +479,7 @@ function planPatchForOperation(
 						start: range.start + occurrenceIndex,
 						end: range.start + occurrenceIndex + strikingContent.length,
 						deleted: strikingContent,
-						inserted: "",
+						inserted: new ParagraphRanges([]),
 					});
 				}
 				break;
@@ -496,7 +526,7 @@ function planPatchForOperation(
 				start: patchStart,
 				end: patchEnd,
 				deleted: sourceText.slice(patchStart, patchEnd),
-				inserted: "",
+				inserted: new ParagraphRanges([]),
 			});
 			break;
 		}
@@ -526,15 +556,21 @@ function planPatchForOperation(
 
 			if (anchorStart === null) break;
 			const formatted = formatInsertionContent(content, range.targetLevel ?? 0);
-			const value = anchor
-				? `${formatted}${/[A-Za-z0-9)]$/.test(formatted) && /^[A-Za-z0-9(]/.test(anchor) ? " " : ""}`
-				: `${formatted}${formatted.endsWith("\n") ? "" : "\n"}`;
+			const formattedText = formatted.toText();
+			const suffix = anchor
+				? /[A-Za-z0-9)]$/.test(formattedText) && /^[A-Za-z0-9(]/.test(anchor)
+					? " "
+					: ""
+				: formattedText.endsWith("\n")
+					? ""
+					: "\n";
 			patches.push({
 				operationIndex: operation.operationIndex,
 				start: anchorStart,
 				end: anchorStart,
 				deleted: "",
-				inserted: value,
+				inserted: formatted,
+				insertedSuffix: suffix || undefined,
 			});
 			break;
 		}
@@ -565,15 +601,21 @@ function planPatchForOperation(
 
 			if (anchorEnd === null) break;
 			const formatted = formatInsertionContent(content, range.targetLevel ?? 0);
-			const value = anchor
-				? `${/[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(formatted) ? " " : ""}${formatted}`
-				: `${sourceText[anchorEnd - 1] === "\n" || anchorEnd === 0 ? "" : "\n"}${formatted}`;
+			const formattedText = formatted.toText();
+			const prefix = anchor
+				? /[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(formattedText)
+					? " "
+					: ""
+				: sourceText[anchorEnd - 1] === "\n" || anchorEnd === 0
+					? ""
+					: "\n";
 			patches.push({
 				operationIndex: operation.operationIndex,
 				start: anchorEnd,
 				end: anchorEnd,
 				deleted: "",
-				inserted: value,
+				inserted: formatted,
+				insertedPrefix: prefix || undefined,
 			});
 			break;
 		}
@@ -589,7 +631,8 @@ function planPatchForOperation(
 				start: insertAt,
 				end: insertAt,
 				deleted: "",
-				inserted: `${prefix}${formatted}`,
+				inserted: formatted,
+				insertedPrefix: prefix || undefined,
 			});
 			break;
 		}
@@ -610,7 +653,9 @@ function planPatchForOperation(
 				start: insertAt,
 				end: insertAt,
 				deleted: "",
-				inserted: `${prefix}${formatted}${suffix}`,
+				inserted: formatted,
+				insertedPrefix: prefix || undefined,
+				insertedSuffix: suffix,
 			});
 			break;
 		}
@@ -627,7 +672,7 @@ function planPatchForOperation(
 				start: range.start + localIndex,
 				end: range.start + localIndex + marker.length,
 				deleted: marker,
-				inserted: replacement,
+				inserted: ParagraphRanges.fromText(replacement),
 			});
 			break;
 		}
@@ -694,7 +739,7 @@ function planPatchForOperation(
 				start: 0,
 				end: sourceText.length,
 				deleted: sourceText,
-				inserted: movedText,
+				inserted: ParagraphRanges.fromText(movedText),
 			});
 			break;
 		}

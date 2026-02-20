@@ -1,6 +1,9 @@
 import { buildAmendmentDocumentModel } from "./amendment-document-model";
 import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
-import type { ResolutionIssue } from "./amendment-edit-engine-types";
+import {
+	ParagraphRanges,
+	type ResolutionIssue,
+} from "./amendment-edit-engine-types";
 import { planEdits } from "./amendment-edit-planner";
 import {
 	type EditNode,
@@ -45,7 +48,7 @@ type InstructionOperation =
 			matterFollowingTarget?: HierarchyLevel[];
 			throughTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 			strikingContent?: string;
 			eachPlaceItAppears?: boolean;
 			throughContent?: string;
@@ -69,7 +72,7 @@ type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 			anchorContent?: string;
 			anchorTarget?: HierarchyLevel[];
 	  }
@@ -79,7 +82,7 @@ type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 			anchorContent?: string;
 			anchorTarget?: HierarchyLevel[];
 	  }
@@ -89,7 +92,7 @@ type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 	  }
 	| {
 			type: "add_at_end";
@@ -97,7 +100,7 @@ type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: string;
+			content?: ParagraphRanges;
 	  }
 	| {
 			type: "redesignate";
@@ -425,7 +428,7 @@ function flattenEdit(
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							strikingContent: strikingContent ?? undefined,
 							eachPlaceItAppears: strikeTarget?.eachPlaceItAppears || undefined,
-							content: edit.insert,
+							content: ParagraphRanges.fromText(edit.insert),
 						},
 						text,
 					),
@@ -503,7 +506,7 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: edit.content,
+								content: ParagraphRanges.fromText(edit.content),
 								anchorContent: anchor ?? undefined,
 								anchorTarget: scopedAnchorTarget,
 							},
@@ -536,7 +539,7 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: edit.content,
+								content: ParagraphRanges.fromText(edit.content),
 								anchorContent: anchor ?? undefined,
 								anchorTarget: scopedAnchorTarget,
 							},
@@ -559,7 +562,7 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: edit.content,
+								content: ParagraphRanges.fromText(edit.content),
 							},
 							"by adding at the end the following",
 						),
@@ -582,7 +585,7 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: edit.content,
+								content: ParagraphRanges.fromText(edit.content),
 							},
 							"by adding at the end the following",
 						),
@@ -599,7 +602,7 @@ function flattenEdit(
 							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
 							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-							content: edit.content,
+							content: ParagraphRanges.fromText(edit.content),
 						},
 						"by inserting",
 					),
@@ -620,7 +623,7 @@ function flattenEdit(
 							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
 							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-							content: edit.content,
+							content: ParagraphRanges.fromText(edit.content),
 						},
 						"to read as follows:",
 					),
@@ -902,13 +905,13 @@ export function applyAmendmentEditTreeToSection(
 
 	const changes = patches.map((patch) => ({
 		deleted: patch.deleted,
-		inserted: patch.inserted,
+		inserted: patch.inserted.toText(),
 	}));
 	const deleted = patches
 		.map((patch) => patch.deleted)
 		.filter((value) => value.length > 0);
 	const inserted = patches
-		.map((patch) => patch.inserted)
+		.map((patch) => patch.inserted.toText())
 		.filter((value) => value.length > 0);
 	const operationAttempts = attempts;
 	const applySummary = buildApplySummary(operationAttempts, issues);

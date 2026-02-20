@@ -3,15 +3,23 @@ import type {
 	PlannedPatch,
 } from "./amendment-edit-engine-types";
 
+function patchInsertedText(patch: PlannedPatch): string {
+	return `${patch.insertedPrefix ?? ""}${patch.inserted.toText()}${patch.insertedSuffix ?? ""}`;
+}
+
 function applyPatch(
 	text: string,
-	patch: Pick<PlannedPatch, "start" | "end" | "inserted">,
+	patch: Pick<
+		PlannedPatch,
+		"start" | "end" | "inserted" | "insertedPrefix" | "insertedSuffix"
+	>,
 ): string {
-	return `${text.slice(0, patch.start)}${patch.inserted}${text.slice(patch.end)}`;
+	const insertedText = `${patch.insertedPrefix ?? ""}${patch.inserted.toText()}${patch.insertedSuffix ?? ""}`;
+	return `${text.slice(0, patch.start)}${insertedText}${text.slice(patch.end)}`;
 }
 
 function deltaForPatch(patch: PlannedPatch): number {
-	return patch.inserted.length - patch.deleted.length;
+	return patchInsertedText(patch).length - patch.deleted.length;
 }
 
 function toReplacementRanges(patches: PlannedPatch[]) {
@@ -29,9 +37,10 @@ function toReplacementRanges(patches: PlannedPatch[]) {
 				}
 			}
 			const finalStart = patch.start + deltaBefore;
+			const insertedText = patchInsertedText(patch);
 			return {
 				start: finalStart,
-				end: finalStart + patch.inserted.length,
+				end: finalStart + insertedText.length,
 				deletedText: patch.deleted,
 			};
 		})
