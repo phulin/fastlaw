@@ -98,7 +98,12 @@ struct HttpCache {
 
 #[async_trait]
 impl Cache for HttpCache {
-    async fn fetch_cached(&self, url: &str, key: &str) -> Result<String, String> {
+    async fn fetch_cached(
+        &self,
+        url: &str,
+        key: &str,
+        throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String> {
         let cache_result = ensure_cached(
             &self.client,
             url,
@@ -106,6 +111,7 @@ impl Cache for HttpCache {
             &self.callback_token,
             url.to_lowercase().ends_with(".zip"),
             key,
+            throttle_requests_per_second,
         )
         .await?;
 

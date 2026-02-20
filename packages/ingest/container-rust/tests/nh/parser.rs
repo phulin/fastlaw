@@ -48,6 +48,26 @@ fn parses_chapter_index_and_section_links() {
 }
 
 #[test]
+fn parses_chapter_index_without_chapter_heading() {
+    let html = r#"
+        <html><body>
+            <h2>Table of Contents</h2>
+            <ul>
+                <li><a href="../VI/80/80-1.htm">Section: 80:1 Definitions.</a></li>
+                <li><a href="../VI/80/80-2.htm">Section: 80:2 Construction.</a></li>
+            </ul>
+        </body></html>
+    "#;
+    let parsed = parse_chapter_index(&html, "https://gc.nh.gov/rsa/html/NHTOC/NHTOC-VI-80.htm")
+        .expect("chapter index should parse");
+
+    assert_eq!(parsed.chapter_num, "80");
+    assert_eq!(parsed.chapter_name, "80");
+    assert_eq!(parsed.sections.len(), 2);
+    assert_eq!(parsed.sections[0].section_num, "80:1");
+}
+
+#[test]
 fn parses_single_section_and_routes_source_note() {
     let html = load_fixture("nh/section_21-j-31.htm");
     let parsed = parse_section_detail(&html).expect("section detail should parse");

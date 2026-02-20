@@ -561,6 +561,36 @@ const cacheWriteInFlight = new Map<
 	string,
 	Promise<{ r2Key: string; totalSize: number }>
 >();
+const requestRateLimiters = new Map<
+	number,
+	{ nextAllowedAtMs: number; throttleChain: Promise<void> }
+>();
+
+async function throttleRequestsPerSecond(
+	requestsPerSecond?: number,
+): Promise<void> {
+	if (requestsPerSecond === undefined) return;
+	const intervalMs = 1000 / requestsPerSecond;
+	const limiterKey = Math.round(intervalMs);
+	const limiter = requestRateLimiters.get(limiterKey) ?? {
+		nextAllowedAtMs: 0,
+		throttleChain: Promise.resolve(),
+	};
+	requestRateLimiters.set(limiterKey, limiter);
+
+	const scheduled = limiter.throttleChain.then(async () => {
+		const now = Date.now();
+		const waitMs = Math.max(0, limiter.nextAllowedAtMs - now);
+		if (waitMs > 0) {
+			await new Promise<void>((resolve) => {
+				setTimeout(resolve, waitMs);
+			});
+		}
+		limiter.nextAllowedAtMs = Date.now() + intervalMs;
+	});
+	limiter.throttleChain = scheduled.catch(() => undefined);
+	await scheduled;
+}
 
 function concatChunks(chunks: Uint8Array[], totalSize: number): Uint8Array {
 	const combined = new Uint8Array(totalSize);
@@ -620,20 +650,30 @@ type CacheRequest = {
 	url: string;
 	extractZip?: boolean;
 	cacheKey: string;
+	throttleRequestsPerSecond?: number;
 };
 
 function getValidatedCacheRequest(payload: CacheRequest): {
 	url: string;
 	extractZip: boolean;
 	cacheKey: string;
+	throttleRequestsPerSecond?: number;
 } {
 	if (!payload.cacheKey) {
 		throw new Error("Missing cacheKey");
+	}
+	if (
+		payload.throttleRequestsPerSecond !== undefined &&
+		(!Number.isFinite(payload.throttleRequestsPerSecond) ||
+			payload.throttleRequestsPerSecond <= 0)
+	) {
+		throw new Error("Invalid throttleRequestsPerSecond");
 	}
 	return {
 		url: payload.url,
 		extractZip: payload.extractZip === true,
 		cacheKey: payload.cacheKey,
+		throttleRequestsPerSecond: payload.throttleRequestsPerSecond,
 	};
 }
 
@@ -642,7 +682,10 @@ async function populateCacheObject(
 	url: string,
 	r2Key: string,
 	extractZip: boolean,
+	throttleRps?: number,
 ): Promise<{ r2Key: string; totalSize: number }> {
+	await throttleRequestsPerSecond(throttleRps);
+
 	console.log("fetching", url);
 	const response = await fetch(url, {
 		headers: { "User-Agent": "fastlaw-ingest/1.0" },
@@ -683,6 +726,7 @@ async function ensureCachedObject(
 	url: string,
 	cacheKey: string,
 	extractZip: boolean,
+	throttleRps?: number,
 ): Promise<{ r2Key: string; totalSize: number }> {
 	const r2Key = `${CACHE_R2_PREFIX}${cacheKey}`;
 	const head = await bucket.head(r2Key);
@@ -692,11 +736,15 @@ async function ensureCachedObject(
 
 	let inFlight = cacheWriteInFlight.get(r2Key);
 	if (!inFlight) {
-		inFlight = populateCacheObject(bucket, url, r2Key, extractZip).finally(
-			() => {
-				cacheWriteInFlight.delete(r2Key);
-			},
-		);
+		inFlight = populateCacheObject(
+			bucket,
+			url,
+			r2Key,
+			extractZip,
+			throttleRps,
+		).finally(() => {
+			cacheWriteInFlight.delete(r2Key);
+		});
 		cacheWriteInFlight.set(r2Key, inFlight);
 	}
 
@@ -712,19 +760,22 @@ app.post("/api/proxy/cache", async (c) => {
 	}
 
 	try {
-		const { url, extractZip, cacheKey } = getValidatedCacheRequest(
-			await c.req.json<CacheRequest>(),
-		);
+		const { url, extractZip, cacheKey, throttleRequestsPerSecond } =
+			getValidatedCacheRequest(await c.req.json<CacheRequest>());
 		const result = await ensureCachedObject(
 			c.env.STORAGE,
 			url,
 			cacheKey,
 			extractZip,
+			throttleRequestsPerSecond,
 		);
 		return c.json(result);
 	} catch (error) {
 		if (error instanceof Error) {
 			if (error.message === "Missing cacheKey") {
+				return c.json({ error: error.message }, 400);
+			}
+			if (error.message === "Invalid throttleRequestsPerSecond") {
 				return c.json({ error: error.message }, 400);
 			}
 			if (error.message === "html_response") {
@@ -751,14 +802,14 @@ app.post("/api/proxy/cache-read", async (c) => {
 	}
 
 	try {
-		const { url, extractZip, cacheKey } = getValidatedCacheRequest(
-			await c.req.json<CacheRequest>(),
-		);
+		const { url, extractZip, cacheKey, throttleRequestsPerSecond } =
+			getValidatedCacheRequest(await c.req.json<CacheRequest>());
 		const { r2Key } = await ensureCachedObject(
 			c.env.STORAGE,
 			url,
 			cacheKey,
 			extractZip,
+			throttleRequestsPerSecond,
 		);
 		const obj = await c.env.STORAGE.get(r2Key);
 		if (!obj) {
@@ -773,6 +824,9 @@ app.post("/api/proxy/cache-read", async (c) => {
 	} catch (error) {
 		if (error instanceof Error) {
 			if (error.message === "Missing cacheKey") {
+				return c.json({ error: error.message }, 400);
+			}
+			if (error.message === "Invalid throttleRequestsPerSecond") {
 				return c.json({ error: error.message }, 400);
 			}
 			if (error.message === "html_response") {

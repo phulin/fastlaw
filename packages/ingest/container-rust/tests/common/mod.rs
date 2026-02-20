@@ -72,7 +72,12 @@ impl MockCache {
 
 #[async_trait]
 impl Cache for MockCache {
-    async fn fetch_cached(&self, url: &str, _key: &str) -> Result<String, String> {
+    async fn fetch_cached(
+        &self,
+        url: &str,
+        _key: &str,
+        _throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String> {
         self.fixtures
             .lock()
             .unwrap()

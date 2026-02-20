@@ -388,7 +388,12 @@ impl NoopCache {
 
 #[async_trait]
 impl Cache for NoopCache {
-    async fn fetch_cached(&self, url: &str, _key: &str) -> Result<String, String> {
+    async fn fetch_cached(
+        &self,
+        url: &str,
+        _key: &str,
+        _throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String> {
         if url == self.file_path {
             Ok(self.content.clone())
         } else {

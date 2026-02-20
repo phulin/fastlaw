@@ -39,7 +39,10 @@ impl SourceAdapter for VtAdapter {
                     context.build.source_version_id,
                     title_num.to_ascii_lowercase()
                 );
-                let html = context.cache.fetch_cached(&item.url, &cache_key).await?;
+                let html = context
+                    .cache
+                    .fetch_cached(&item.url, &cache_key, None)
+                    .await?;
                 let title = parse_title_index(&html, &item.url)?;
                 let title_num_for_chapters = title.title_num.clone();
                 let title_display_num_for_chapters = title.title_display_num.clone();
@@ -110,7 +113,7 @@ impl SourceAdapter for VtAdapter {
                 );
                 let html = context
                     .cache
-                    .fetch_cached(&fullchapter_url, &cache_key)
+                    .fetch_cached(&fullchapter_url, &cache_key, None)
                     .await?;
                 let parsed =
                     parse_fullchapter_detail(&html, &title_display_num, &chapter_display_num)?;

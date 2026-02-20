@@ -197,31 +197,6 @@ pub fn parse_title_index(html: &str, base_url: &str) -> Result<NhTitleIndex, Str
 pub fn parse_chapter_index(html: &str, base_url: &str) -> Result<NhChapterIndex, String> {
     let dom = parse_dom(html)?;
     let parser = dom.parser();
-    let mut chapter_num = String::new();
-    let mut chapter_name = String::new();
-
-    for node in dom.nodes().iter() {
-        let Some(tag) = node.as_tag() else {
-            continue;
-        };
-        if tag.name().as_utf8_str().as_ref() != "h2" {
-            continue;
-        }
-        let text = normalize_text(&tag.inner_text(parser));
-        let Some(captures) = CHAPTER_RE.captures(&text) else {
-            continue;
-        };
-        chapter_num = captures[1].to_string();
-        chapter_name = captures[2].trim().to_string();
-        break;
-    }
-
-    if chapter_num.is_empty() {
-        return Err(
-            "Failed to parse New Hampshire chapter heading from chapter TOC page.".to_string(),
-        );
-    }
-
     let mut sections = Vec::new();
     for node in dom.nodes().iter() {
         let Some(tag) = node.as_tag() else {
@@ -246,6 +221,50 @@ pub fn parse_chapter_index(html: &str, base_url: &str) -> Result<NhChapterIndex,
 
     sections.sort_by(|a, b| compare_designators(&a.section_num, &b.section_num));
     sections.dedup_by(|a, b| a.section_num == b.section_num);
+
+    let mut chapter_num = String::new();
+    let mut chapter_name = String::new();
+
+    for node in dom.nodes().iter() {
+        let Some(tag) = node.as_tag() else {
+            continue;
+        };
+        let tag_name = tag.name().as_utf8_str().as_ref().to_ascii_lowercase();
+        if !matches!(tag_name.as_str(), "h1" | "h2" | "h3" | "a" | "title") {
+            continue;
+        }
+        let text = normalize_text(&tag.inner_text(parser));
+        let Some(captures) = CHAPTER_RE.captures(&text) else {
+            continue;
+        };
+        chapter_num = captures[1].to_string();
+        chapter_name = captures[2]
+            .split("Section:")
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        break;
+    }
+
+    if chapter_num.is_empty() && !sections.is_empty() {
+        chapter_num = sections[0]
+            .section_num
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+    }
+
+    if chapter_num.is_empty() {
+        return Err(
+            "Failed to parse New Hampshire chapter heading from chapter TOC page.".to_string(),
+        );
+    }
+
+    if chapter_name.is_empty() {
+        chapter_name = chapter_num.clone();
+    }
 
     Ok(NhChapterIndex {
         chapter_num,

@@ -38,7 +38,10 @@ impl SourceAdapter for NhAdapter {
                     "nh/{}/title-{title_slug}.html",
                     context.build.source_version_id
                 );
-                let html = context.cache.fetch_cached(&item.url, &cache_key).await?;
+                let html = context
+                    .cache
+                    .fetch_cached(&item.url, &cache_key, Some(10))
+                    .await?;
                 let title = parse_title_index(&html, &item.url)?;
                 let title_id = format!("{}/title-{title_slug}", context.build.root_node_id);
 
@@ -93,7 +96,10 @@ impl SourceAdapter for NhAdapter {
                     "nh/{}/title-{title_slug}/chapter-{chapter_slug}.html",
                     context.build.source_version_id
                 );
-                let chapter_html = context.cache.fetch_cached(&item.url, &cache_key).await?;
+                let chapter_html = context
+                    .cache
+                    .fetch_cached(&item.url, &cache_key, Some(10))
+                    .await?;
                 let chapter = parse_chapter_index(&chapter_html, &item.url)?;
                 let chapter_name = if chapter.chapter_name.is_empty() {
                     chapter_name_hint
@@ -131,7 +137,7 @@ impl SourceAdapter for NhAdapter {
                     );
                     let merged_html = context
                         .cache
-                        .fetch_cached(&merged_url, &merged_cache_key)
+                        .fetch_cached(&merged_url, &merged_cache_key, Some(10))
                         .await?;
                     let sections = parse_merged_chapter_sections(&merged_html)?;
                     for (index, section) in sections.into_iter().enumerate() {
@@ -177,7 +183,10 @@ impl SourceAdapter for NhAdapter {
                     "nh/{}/title-{title_slug}/chapter-{chapter_slug}/section-{section_slug}.html",
                     context.build.source_version_id
                 );
-                let html = context.cache.fetch_cached(&item.url, &cache_key).await?;
+                let html = context
+                    .cache
+                    .fetch_cached(&item.url, &cache_key, Some(10))
+                    .await?;
                 let parsed = parse_section_detail(&html)?;
                 let mut section = parsed.clone();
                 if section.section_name == section.section_num {

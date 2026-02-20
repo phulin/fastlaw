@@ -42,7 +42,7 @@ impl SourceAdapter for RiglAdapter {
                     version_id,
                     normalize_designator(title_num)
                 );
-                let html = context.cache.fetch_cached(url, &cache_key).await?;
+                let html = context.cache.fetch_cached(url, &cache_key, None).await?;
                 let title = parse_title_index(&html, url)?;
                 let title_num = if title_num.is_empty() {
                     title.title_num
@@ -100,7 +100,7 @@ impl SourceAdapter for RiglAdapter {
                     "rigl/{}/title-{}/chapter-{}.html",
                     version_id, title_slug, chapter_slug_hint
                 );
-                let html = context.cache.fetch_cached(url, &cache_key).await?;
+                let html = context.cache.fetch_cached(url, &cache_key, None).await?;
                 let chapter = parse_chapter_index(&html, url)?;
                 let chapter_num = if chapter_num_hint.is_empty() {
                     chapter.chapter_num
@@ -167,7 +167,7 @@ impl SourceAdapter for RiglAdapter {
                     "rigl/{}/title-{}/chapter-{}/section-{}.html",
                     version_id, title_slug, chapter_slug, section_slug_hint
                 );
-                let html = context.cache.fetch_cached(url, &cache_key).await?;
+                let html = context.cache.fetch_cached(url, &cache_key, None).await?;
                 let parsed = parse_section_detail(&html)?;
                 let section_num = if section_num_hint.is_empty() {
                     parsed.section_num

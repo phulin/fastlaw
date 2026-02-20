@@ -23,7 +23,12 @@ pub trait BlobStore: Send + Sync {
 
 #[async_trait]
 pub trait Cache: Send + Sync {
-    async fn fetch_cached(&self, url: &str, key: &str) -> Result<String, String>;
+    async fn fetch_cached(
+        &self,
+        url: &str,
+        key: &str,
+        throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String>;
 }
 
 #[derive(Debug, Clone)]

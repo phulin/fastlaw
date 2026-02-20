@@ -39,7 +39,7 @@ impl SourceAdapter for MglAdapter {
 
                 let version_id = &context.build.source_version_id;
                 let cache_key = format!("mgl/{}/part-{}.json", version_id, title_num);
-                let json_str = context.cache.fetch_cached(url, &cache_key).await?;
+                let json_str = context.cache.fetch_cached(url, &cache_key, None).await?;
                 let part: MglApiPart = serde_json::from_str(&json_str)
                     .map_err(|err| format!("Failed to parse MGL part JSON: {url}: {err}"))?;
 
@@ -97,7 +97,7 @@ impl SourceAdapter for MglAdapter {
                     version_id,
                     chapter_code.to_lowercase()
                 );
-                let json_str = context.cache.fetch_cached(url, &cache_key).await?;
+                let json_str = context.cache.fetch_cached(url, &cache_key, None).await?;
                 let chapter: MglApiChapter = serde_json::from_str(&json_str)
                     .map_err(|err| format!("Failed to parse MGL chapter JSON: {url}: {err}"))?;
 
@@ -186,7 +186,7 @@ impl SourceAdapter for MglAdapter {
                         chapter_code.to_lowercase(),
                         section_code.to_lowercase()
                     );
-                    match context.cache.fetch_cached(url, &cache_key).await {
+                    match context.cache.fetch_cached(url, &cache_key, None).await {
                         Ok(json_str) => {
                             if let Ok(full_section) =
                                 serde_json::from_str::<MglApiSection>(&json_str)
