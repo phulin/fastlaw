@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { splitParagraphsBeamSearch } from "../beam-paragraph-splitter";
-import type { Line } from "../text-extract";
+import type { Line } from "../types";
 
 function line(text: string, xStart: number, page = 1): Line {
 	return {

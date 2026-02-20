@@ -14,6 +14,7 @@ import {
 } from "../amendment-edit-tree";
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
+import { tp } from "./test-utils";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(TEST_DIR, "../../..");
@@ -60,7 +61,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 						kind: UltimateEditKind.Strike,
 						target: {
 							kind: SearchTargetKind.Text,
-							text: "old",
+							text: tp("old"),
 						},
 					},
 				},
@@ -91,10 +92,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 						kind: UltimateEditKind.StrikeInsert,
 						strike: {
 							kind: SearchTargetKind.Text,
-							text: "2023",
+							text: tp("2023"),
 							eachPlaceItAppears: true,
 						},
-						insert: "2031",
+						insert: tp("2031"),
 					},
 				},
 			],
@@ -130,7 +131,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 						kind: UltimateEditKind.Strike,
 						target: {
 							kind: SearchTargetKind.Text,
-							text: "x",
+							text: tp("x"),
 							eachPlaceItAppears: true,
 						},
 					},
@@ -160,16 +161,16 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.StrikeInsert,
-						strike: { kind: SearchTargetKind.Text, text: "old" },
-						insert: "new",
+						strike: { kind: SearchTargetKind.Text, text: tp("old") },
+						insert: tp("new"),
 					},
 				},
 				{
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.StrikeInsert,
-						strike: { kind: SearchTargetKind.Text, text: "missing" },
-						insert: "new",
+						strike: { kind: SearchTargetKind.Text, text: tp("missing") },
+						insert: tp("new"),
 					},
 				},
 			],
@@ -202,8 +203,8 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old" },
-								insert: "new",
+								strike: { kind: SearchTargetKind.Text, text: tp("old") },
+								insert: tp("new"),
 							},
 						},
 					],
@@ -212,8 +213,8 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.StrikeInsert,
-						strike: { kind: SearchTargetKind.Text, text: "old" },
-						insert: "new",
+						strike: { kind: SearchTargetKind.Text, text: tp("old") },
+						insert: tp("new"),
 					},
 				},
 			],
@@ -242,7 +243,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			children: [
 				{
 					type: SemanticNodeType.Edit,
-					edit: { kind: UltimateEditKind.Insert, content: "new text" },
+					edit: { kind: UltimateEditKind.Insert, content: tp("new text") },
 				},
 			],
 		};
@@ -269,7 +270,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "(1) Alpha.\n(2) Beta.",
+						content: tp("(1) Alpha.\n(2) Beta."),
 					},
 				},
 			],
@@ -300,11 +301,13 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.Rewrite,
-								content: [
-									"(u) THRIFTY FOOD PLAN.—",
-									"(1) IN GENERAL.—Alpha.",
-									"(A) Beta.",
-								].join("\n"),
+								content: tp(
+									[
+										"(u) THRIFTY FOOD PLAN.—",
+										"(1) IN GENERAL.—Alpha.",
+										"(A) Beta.",
+									].join("\n"),
+								),
 							},
 						},
 					],
@@ -354,8 +357,9 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 												path: [{ kind: ScopeKind.Clause, label: "ii" }],
 											},
 										},
-										insert:
+										insert: tp(
 											"(ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.",
+										),
 									},
 								},
 							],
@@ -364,11 +368,13 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.Insert,
-								content: [
-									"(C) DEFINITION OF NONCONTIGUOUS STATE.—",
-									"(i) IN GENERAL.—In this paragraph, the term 'noncontiguous State' means a State that is not 1 of the contiguous 48 States or the District of Columbia.",
-									"(ii) EXCLUSIONS.—The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
-								].join("\n"),
+								content: tp(
+									[
+										"(C) DEFINITION OF NONCONTIGUOUS STATE.—",
+										"(i) IN GENERAL.—In this paragraph, the term 'noncontiguous State' means a State that is not 1 of the contiguous 48 States or the District of Columbia.",
+										"(ii) EXCLUSIONS.—The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
+									].join("\n"),
+								),
 							},
 						},
 					],
@@ -428,8 +434,8 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.StrikeInsert,
-						strike: { kind: SearchTargetKind.Text, text: "old" },
-						insert: "new",
+						strike: { kind: SearchTargetKind.Text, text: tp("old") },
+						insert: tp("new"),
 					},
 				},
 			],
@@ -460,7 +466,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			children: [
 				{
 					type: SemanticNodeType.Edit,
-					edit: { kind: UltimateEditKind.Insert, content: "NEW" },
+					edit: { kind: UltimateEditKind.Insert, content: tp("NEW") },
 				},
 			],
 		};
@@ -488,7 +494,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Rewrite,
-						content: "Replacement text.",
+						content: tp("Replacement text."),
 					},
 				},
 			],
@@ -586,8 +592,8 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Strike,
-						target: { kind: SearchTargetKind.Text, text: "alpha" },
-						through: { kind: SearchTargetKind.Text, text: "beta" },
+						target: { kind: SearchTargetKind.Text, text: tp("alpha") },
+						through: { kind: SearchTargetKind.Text, text: tp("beta") },
 					},
 				},
 			],
@@ -618,7 +624,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 								path: [{ kind: ScopeKind.Paragraph, label: "a" }],
 							},
 						},
-						insert: "new",
+						insert: tp("new"),
 					},
 				},
 			],
@@ -656,7 +662,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 								},
 							],
 						},
-						insert: "(a) New first.\n(b) New second.",
+						insert: tp("(a) New first.\n(b) New second."),
 					},
 				},
 			],
@@ -685,7 +691,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "new",
+						content: tp("new"),
 						before: {
 							ref: {
 								kind: ScopeKind.Paragraph,
@@ -704,7 +710,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "new",
+						content: tp("new"),
 						after: {
 							ref: {
 								kind: ScopeKind.Paragraph,
@@ -742,8 +748,8 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "new",
-						before: { kind: SearchTargetKind.Text, text: "old" },
+						content: tp("new"),
+						before: { kind: SearchTargetKind.Text, text: tp("old") },
 					},
 				},
 			],
@@ -756,8 +762,8 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "new",
-						after: { kind: SearchTargetKind.Text, text: "old" },
+						content: tp("new"),
+						after: { kind: SearchTargetKind.Text, text: tp("old") },
 					},
 				},
 			],
@@ -789,7 +795,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "(1) New item.",
+						content: tp("(1) New item."),
 						atEndOf: {
 							kind: ScopeKind.Paragraph,
 							path: [{ kind: ScopeKind.Paragraph, label: "a" }],
@@ -810,7 +816,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.Insert,
-								content: "(2) Another item.",
+								content: tp("(2) Another item."),
 							},
 						},
 					],
@@ -848,7 +854,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "(c) Newly added subsection.",
+						content: tp("(c) Newly added subsection."),
 						atEndOf: {
 							kind: ScopeKind.Section,
 							path: [{ kind: ScopeKind.Section, label: "1" }],
@@ -887,8 +893,9 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.Insert,
-								content:
+								content: tp(
 									"(B) EXCEPTION.—If the Secretary makes an upward adjustment.",
+								),
 							},
 						},
 					],
@@ -941,8 +948,9 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 										path: [{ kind: ScopeKind.Paragraph, label: "2" }],
 									},
 								},
-								insert:
+								insert: tp(
 									"(2) VALUE OF ASSISTANCE.—The value of the assistance provided under paragraph (1) shall be—\n(A) for the period beginning on August 1, 2013, and ending on July 31, 2025, 3 cents per pound; and\n(B) beginning on August 1, 2025, 5 cents per pound.",
+								),
 							},
 						},
 					],
@@ -993,8 +1001,9 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 										path: [{ kind: ScopeKind.Paragraph, label: "2" }],
 									},
 								},
-								insert:
+								insert: tp(
 									"(2) VALUE OF ASSISTANCE.—The value of the assistance provided under paragraph (1) shall be—\n(A) for the period beginning on August 1, 2013, and ending on July 31, 2025, 3 cents per pound; and\n(B) beginning on August 1, 2025, 5 cents per pound.",
+								),
 							},
 						},
 					],
@@ -1055,8 +1064,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.StrikeInsert,
-						strike: { kind: SearchTargetKind.Text, text: "old" },
-						insert: "new",
+						strike: { kind: SearchTargetKind.Text, text: tp("old") },
+						insert: tp("new"),
 					},
 				},
 			],
@@ -1078,8 +1087,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old" },
-								insert: "new",
+								strike: { kind: SearchTargetKind.Text, text: tp("old") },
+								insert: tp("new"),
 							},
 						},
 					],
@@ -1107,8 +1116,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 									type: SemanticNodeType.Edit,
 									edit: {
 										kind: UltimateEditKind.StrikeInsert,
-										strike: { kind: SearchTargetKind.Text, text: "old" },
-										insert: "new",
+										strike: { kind: SearchTargetKind.Text, text: tp("old") },
+										insert: tp("new"),
 									},
 								},
 							],
@@ -1146,8 +1155,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old" },
-								insert: "new",
+								strike: { kind: SearchTargetKind.Text, text: tp("old") },
+								insert: tp("new"),
 							},
 						},
 					],
@@ -1174,8 +1183,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old" },
-								insert: "new",
+								strike: { kind: SearchTargetKind.Text, text: tp("old") },
+								insert: tp("new"),
 							},
 						},
 					],
@@ -1201,8 +1210,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old" },
-								insert: "new",
+								strike: { kind: SearchTargetKind.Text, text: tp("old") },
+								insert: tp("new"),
 							},
 						},
 					],
@@ -1235,8 +1244,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old text" },
-								insert: "new text",
+								strike: { kind: SearchTargetKind.Text, text: tp("old text") },
+								insert: tp("new text"),
 							},
 						},
 					],
@@ -1281,8 +1290,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old text" },
-								insert: "new text",
+								strike: { kind: SearchTargetKind.Text, text: tp("old text") },
+								insert: tp("new text"),
 							},
 						},
 					],
@@ -1330,8 +1339,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.StrikeInsert,
-								strike: { kind: SearchTargetKind.Text, text: "old text" },
-								insert: "new text",
+								strike: { kind: SearchTargetKind.Text, text: tp("old text") },
+								insert: tp("new text"),
 							},
 						},
 					],
@@ -1378,8 +1387,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 									type: SemanticNodeType.Edit,
 									edit: {
 										kind: UltimateEditKind.StrikeInsert,
-										strike: { kind: SearchTargetKind.Text, text: "old" },
-										insert: "new",
+										strike: { kind: SearchTargetKind.Text, text: tp("old") },
+										insert: tp("new"),
 									},
 								},
 							],
@@ -1409,8 +1418,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 									type: SemanticNodeType.Edit,
 									edit: {
 										kind: UltimateEditKind.StrikeInsert,
-										strike: { kind: SearchTargetKind.Text, text: "old" },
-										insert: "new",
+										strike: { kind: SearchTargetKind.Text, text: tp("old") },
+										insert: tp("new"),
 									},
 								},
 							],
@@ -1432,15 +1441,15 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Strike,
-						target: { kind: SearchTargetKind.Text, text: "old" },
+						target: { kind: SearchTargetKind.Text, text: tp("old") },
 					},
 				},
 				{
 					type: SemanticNodeType.Edit,
 					edit: {
 						kind: UltimateEditKind.Insert,
-						content: "new",
-						after: { kind: SearchTargetKind.Text, text: "text" },
+						content: tp("new"),
+						after: { kind: SearchTargetKind.Text, text: tp("text") },
 					},
 				},
 			],
@@ -1462,7 +1471,7 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 							type: SemanticNodeType.Edit,
 							edit: {
 								kind: UltimateEditKind.Strike,
-								target: { kind: SearchTargetKind.Text, text: "old" },
+								target: { kind: SearchTargetKind.Text, text: tp("old") },
 							},
 						},
 					],

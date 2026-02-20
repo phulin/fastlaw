@@ -1,3 +1,5 @@
+import type { ParagraphRange } from "./types";
+
 export enum SemanticNodeType {
 	InstructionRoot = "instruction_root",
 	Scope = "scope",
@@ -214,9 +216,14 @@ export type LocationRestriction =
 	| BeforeLocationRestriction
 	| AfterLocationRestriction;
 
+export interface TextWithProvenance {
+	text: string;
+	sourceLocation: ParagraphRange;
+}
+
 export interface TextSearchTarget {
 	kind: SearchTargetKind.Text;
-	text: string;
+	text: TextWithProvenance;
 	eachPlaceItAppears?: boolean;
 }
 
@@ -255,7 +262,7 @@ export interface StrikeEdit {
 
 export interface InsertEdit {
 	kind: UltimateEditKind.Insert;
-	content: string;
+	content: TextWithProvenance;
 	before?: EditTarget;
 	after?: EditTarget;
 	atEndOf?: StructuralReference;
@@ -264,13 +271,13 @@ export interface InsertEdit {
 export interface StrikeInsertEdit {
 	kind: UltimateEditKind.StrikeInsert;
 	strike: EditTarget;
-	insert: string;
+	insert: TextWithProvenance;
 }
 
 export interface RewriteEdit {
 	kind: UltimateEditKind.Rewrite;
 	target?: StructuralReference;
-	content: string;
+	content: TextWithProvenance;
 }
 
 export interface RedesignateMapping {

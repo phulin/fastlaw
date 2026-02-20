@@ -2,50 +2,12 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { assignIndentationLevels } from "./cluster-indentation";
 import { splitParagraphsRulesBased } from "./rules-paragraph-condenser-3";
+import type { Line, Paragraph } from "./types";
 import { wordDictionary } from "./word-dictionary";
-
-/* ===========================
- * Public types
- * =========================== */
-
-export interface Line {
-	page: number;
-	y: number; // baseline
-	yStart: number; // top
-	yEnd: number; // bottom
-	xStart: number;
-	xEnd: number;
-	text: string;
-	items: TextItem[];
-	pageHeight: number;
-	isBold: boolean;
-}
-
-export interface Paragraph {
-	startPage: number;
-	endPage: number;
-	text: string;
-	lines: Line[];
-	confidence: number;
-	y: number; // start line baseline
-	yStart: number; // start line top
-	yEnd: number; // start line bottom
-	pageHeight: number;
-	isBold: boolean;
-	level?: number;
-}
 
 /* ===========================
  * Internal types
  * =========================== */
-
-interface ParagraphBuilder {
-	lines: Line[];
-	text: string;
-	startPage: number;
-	lastLine: Line;
-	confidence: number;
-}
 
 interface LineNumberColumnState {
 	x: number;
@@ -77,58 +39,8 @@ function isNumeric(s: string): boolean {
 	return /^\d{1,4}$/.test(s.trim());
 }
 
-function endsWithHyphen(s: string): boolean {
-	const trimmed = s.trim();
-	// Standard hyphens, em-dashes, and en-dashes are used for word/line joining.
-	return /[-—–]$/.test(trimmed);
-}
-
-function endsWithPunctuation(s: string): boolean {
-	const t = s.trim();
-	// Match major punctuation markers followed by optional closing quotes
-	return /[.!?\\);:]["’’”]?$/.test(t);
-}
-
-function startsLowercase(s: string): boolean {
-	return /^[a-z]/.test(s.trim());
-}
-
-const SECTION_MARKER_RE =
-	/^(DIVISION|TITLE|Subtitle|CHAPTER|Subchapter|SUBCHAPTER|PART|SUBPART|SECTION|Section|Sec\.|SEC\.)\s+[A-Z0-9]/;
-function startsSectionMarker(s: string): boolean {
-	const t = s.trim();
-	// Legislative headers: SEC. 101. or Section 5(e) or Title IV
-	if (SECTION_MARKER_RE.test(t)) {
-		return true;
-	}
-	return false;
-}
-
-const LIST_ITEM_MARKER_RE = /^["‘‘“”]?\([a-z0-9,.]+\)[,;]?(\s|$)/i;
-function isListItemMarker(s: string): boolean {
-	// Matches (a), (1), (iv), (A), "(i)", etc.
-	// Includes smart quotes and handles trailing punctuation.
-	return LIST_ITEM_MARKER_RE.test(s);
-}
-
-const ALL_CAPS_LIST_HEADING_RE =
-	/^(?:["‘‘“”]?\([a-z]\)\s+)[A-Z][A-Z\s,&'’-]+(?:\.—|—)/;
-function isAllCapsListHeadingStart(s: string): boolean {
-	return ALL_CAPS_LIST_HEADING_RE.test(s);
-}
-
 function isWhitespaceOnly(s: string): boolean {
 	return s.trim().length === 0;
-}
-
-function isAllCapsText(s: string): boolean {
-	const t = s.trim();
-	return t.length > 0 && /^[A-Z\s\d.,;:—–\-''""()"']+$/.test(t);
-}
-
-function startsDoubleOpeningQuote(s: string): boolean {
-	const t = s.trimStart();
-	return t.startsWith("‘‘") || t.startsWith('"') || t.startsWith("“");
 }
 
 function normalizeDoubleQuotes(s: string): string {
@@ -153,44 +65,6 @@ function normalizeLeadingLineNumberArtifact(s: string): string {
 		.replace(/^\d{1,2}\s+(The table of contents\b)/i, "$1");
 }
 
-function isWord(s: string): boolean {
-	const w = s.toLowerCase();
-	return wordDictionary.has(w);
-}
-
-function shouldDropTrailingHyphenWhenCoalescing(
-	paragraphText: string,
-	nextLineText: string,
-): boolean {
-	const leftMatch = paragraphText.trimEnd().match(/([a-zA-Z]+)-$/);
-	const rightMatch = nextLineText.trimStart().match(/^([a-zA-Z]+)/);
-	if (!leftMatch || !rightMatch) return false;
-
-	const part1 = leftMatch[1];
-	const part2 = rightMatch[1];
-	const p1 = part1.toLowerCase();
-	const p2 = part2.toLowerCase();
-	const combinedWord = `${p1}${p2}`;
-
-	// Ensure legislative terms are correctly joined according to fixture.
-	if (combinedWord === "expenses" || combinedWord === "allowances") return true;
-
-	if (isWord(combinedWord)) return true;
-
-	if (startsLowercase(nextLineText)) {
-		if (isWord(p1) && isWord(p2) && (p1.length >= 3 || p2.length >= 3)) {
-			return false;
-		}
-		if (p1 === "inter" || p1 === "infra" || p1 === "intra" || p1 === "sub")
-			return true;
-		if (!isWord(p1)) return true;
-		if (p2.length <= 4) return true;
-		return true;
-	}
-
-	return false;
-}
-
 function isTopCenteredPageNumberSpan(
 	item: TextItem,
 	pageWidth: number,
@@ -208,7 +82,7 @@ function isTopCenteredPageNumberSpan(
 	);
 }
 
-function isBottomDaggerShortLine(line: Line, pageHeight: number): boolean {
+function isBottomNoteShortLine(line: Line, pageHeight: number): boolean {
 	const text = line.text.trim();
 	return !!text.match("[†•]") && text.length < 20 && line.y <= pageHeight * 0.1;
 }
@@ -258,15 +132,10 @@ function isBoldTextStyle(
  * Extractor class
  * =========================== */
 
-export class PdfParagraphExtractor {
-	private openParagraph: ParagraphBuilder | null = null;
-	private paragraphs: Paragraph[] = [];
-	private lastLine: Line | null = null;
+export class PdfLineExtractor {
+	private lines: Line[] = [];
 
 	private lineNumberColumn: LineNumberColumnState | null = null;
-
-	private recentGaps: number[] = [];
-	private medianGap: number | null = null;
 
 	/* ===========================
 	 * Public API
@@ -291,16 +160,8 @@ export class PdfParagraphExtractor {
 		}
 	}
 
-	/**
-	 * Final flush — closes any open paragraph.
-	 * Call once at end of document.
-	 */
-	finish(): Paragraph[] {
-		if (this.openParagraph) {
-			this.paragraphs.push(this.finalizeParagraph(this.openParagraph));
-			this.openParagraph = null;
-		}
-		return this.paragraphs;
+	getLines(): Line[] {
+		return this.lines;
 	}
 
 	/* ===========================
@@ -322,30 +183,7 @@ export class PdfParagraphExtractor {
 			text: normalizeLeadingLineNumberArtifact(strippedLine.text),
 		};
 
-		if (this.lastLine && this.lastLine.page === line.page) {
-			this.recentGaps.push(this.lastLine.y - line.y);
-			if (this.recentGaps.length > 20) this.recentGaps.shift();
-			this.medianGap = median(this.recentGaps);
-		}
-
-		if (!this.openParagraph) {
-			this.openParagraph = this.startParagraph(line);
-			this.lastLine = line;
-			return;
-		}
-
-		if (
-			this.lastLine &&
-			this.medianGap !== null &&
-			this.shouldCloseParagraph(this.lastLine, line, this.medianGap)
-		) {
-			this.paragraphs.push(this.finalizeParagraph(this.openParagraph));
-			this.openParagraph = this.startParagraph(line);
-		} else {
-			this.appendLine(this.openParagraph, line);
-		}
-
-		this.lastLine = line;
+		this.lines.push(line);
 	}
 
 	/* ===========================
@@ -405,7 +243,7 @@ export class PdfParagraphExtractor {
 			lines.push(this.buildLine(current, pageNumber, pageHeight));
 		}
 
-		return lines.filter((line) => !isBottomDaggerShortLine(line, pageHeight));
+		return lines.filter((line) => !isBottomNoteShortLine(line, pageHeight));
 	}
 
 	private buildLine(
@@ -523,185 +361,6 @@ export class PdfParagraphExtractor {
 
 		return line;
 	}
-
-	/* ===========================
-	 * Paragraph logic
-	 * =========================== */
-
-	private shouldCloseParagraph(
-		prev: Line,
-		curr: Line,
-		medianGap: number,
-	): boolean {
-		const trimmedCurr = curr.text.trim();
-		const trimmedPrev = prev.text.trim();
-
-		// Compute gap early so all handlers can use it (cross-page safe).
-		const gap = prev.page === curr.page ? prev.y - curr.y : medianGap;
-		const indentChange = Math.abs(curr.xStart - prev.xStart);
-
-		const isListStart = isListItemMarker(trimmedCurr);
-		const isLegislativeRef =
-			/\b([Ss]ubsections?|[Pp]aragraphs?|[Ss]ubparagraphs?|[Cc]lauses?|[Ss]ubclauses?|[Ii]tems?|[Ss]ubitems?)[)\s]*$/.test(
-				trimmedPrev,
-			);
-		const hasOpeningQuote = startsDoubleOpeningQuote(trimmedCurr);
-		const openParagraphText = this.openParagraph?.text.trim() ?? "";
-		if (
-			startsDoubleOpeningQuote(openParagraphText) &&
-			/;\s*and$/i.test(openParagraphText)
-		) {
-			return true;
-		}
-
-		// High priority: Quotes starting a line
-		if (hasOpeningQuote) {
-			// Join if it follows an unpunctuated legislative reference word
-			if (isLegislativeRef && !endsWithPunctuation(prev.text)) return false;
-
-			// Quoted list markers like "(A), "(1) are structural — usually split
-			if (isListStart) {
-				if (gap < 0.6 * medianGap) return false;
-				return true;
-			}
-
-			// Plain quotes (not list markers): join if prev is mid-sentence
-			if (!endsWithPunctuation(prev.text) && !/—\s*$/.test(trimmedPrev))
-				return false;
-
-			if (gap < 0.6 * medianGap) return false;
-
-			return true;
-		}
-
-		// ALWAYS SPLIT section markers if they follow punctuation, quotes, or significant gap
-		if (startsSectionMarker(curr.text)) {
-			// Em-dash at end of prev: subsection header introducing body text — join
-			if (/—\s*$/.test(prev.text) && gap < 1.1 * medianGap) return false;
-
-			// Colon at end: only join if prev itself is a header (section marker or all-caps)
-			if (
-				/:\s*$/.test(prev.text) &&
-				gap < 1.1 * medianGap &&
-				(startsSectionMarker(prev.text) ||
-					/^[A-Z\s\d.,;:—]+$/.test(trimmedPrev))
-			)
-				return false;
-
-			if (endsWithPunctuation(prev.text)) return true;
-			if (/["''"][.]?$|[.]["''"]$/.test(trimmedPrev)) return true;
-			if (gap > 1.25 * medianGap) return true;
-
-			return true;
-		}
-
-		if (/\btable of contents\b/i.test(trimmedCurr)) return true;
-
-		if (isListStart) {
-			// Parenthetical all-caps headings are structural and should begin a new paragraph.
-			if (isAllCapsListHeadingStart(trimmedCurr)) return true;
-
-			// If it follows a legislative reference and didn't end in punctuation (like "; and"), JOIN
-			if (isLegislativeRef && !endsWithPunctuation(prev.text)) return false;
-
-			// Wrapped inline enumerations often continue as "... (D)," then "(E), ...".
-			// Keep them together unless the previous line was already a standalone list item.
-			if (
-				!isListItemMarker(trimmedPrev) &&
-				/,\s*["’’”]?$/.test(trimmedPrev) &&
-				indentChange <= 12 &&
-				gap <= 1.25 * medianGap
-			) {
-				return false;
-			}
-
-			// "; and/or" continuation: join if no indentation change (parallel structure stays together)
-			const startsNumericListToken = /^\(\d+[a-z]?\)/i.test(trimmedCurr);
-			if (
-				/\b(and|or)$/i.test(trimmedPrev) &&
-				!hasOpeningQuote &&
-				(indentChange <= 12 ||
-					(startsNumericListToken &&
-						indentChange <= 32 &&
-						gap <= 1.25 * medianGap)) &&
-				// If it is "; and", it usually marks the end of a list item, so we should split (to allow the next list marker to start a new paragraph)
-				!/[,;]\s*(and|or)$/i.test(trimmedPrev)
-			) {
-				return false;
-			}
-
-			// If we just ended a sentence or a list continuation like "; and", split
-			if (endsWithPunctuation(prev.text)) return true;
-
-			// If indentation is significantly different, it's a split
-			if (indentChange > 12) return true;
-
-			// If the gap is substantial, it's a split
-			if (gap > 1.25 * medianGap) return true;
-
-			// join only if tight
-			if (gap < 0.9 * medianGap) return false;
-
-			return true;
-		}
-
-		if (endsWithHyphen(prev.text)) return false;
-
-		// Join all-caps continuations (e.g., title wrapping across lines).
-		// Section markers have already been caught above, so this only affects
-		// non-section-marker all-caps text like "FORESTRY" continuing "...AND".
-		if (isAllCapsText(trimmedCurr) && isAllCapsText(trimmedPrev)) return false;
-
-		const punctuationSplit = endsWithPunctuation(prev.text);
-		if (gap > 2.0 * medianGap) return true;
-		if (indentChange > 35 && punctuationSplit) return true;
-
-		if (!punctuationSplit) return false;
-		if (startsLowercase(curr.text)) return false;
-
-		return false;
-	}
-
-	private startParagraph(line: Line): ParagraphBuilder {
-		return {
-			lines: [line],
-			text: line.text,
-			startPage: line.page,
-			lastLine: line,
-			confidence: 0.6,
-		};
-	}
-
-	private appendLine(p: ParagraphBuilder, line: Line): void {
-		if (endsWithHyphen(p.text)) {
-			if (shouldDropTrailingHyphenWhenCoalescing(p.text, line.text)) {
-				p.text = p.text.replace(/-?\s*$/, "");
-			}
-		} else if (!endsWithHyphen(p.text)) {
-			p.text += " ";
-		}
-		p.text += line.text;
-		p.lines.push(line);
-		p.lastLine = line;
-		p.confidence = Math.min(1, p.confidence + 0.1);
-	}
-
-	private finalizeParagraph(p: ParagraphBuilder): Paragraph {
-		const boldLineCount = p.lines.filter((line) => line.isBold).length;
-		const isBold = boldLineCount > p.lines.length / 2;
-		return {
-			startPage: p.startPage,
-			endPage: p.lastLine.page,
-			text: p.text.trim(),
-			lines: p.lines,
-			confidence: p.confidence,
-			y: p.lines[0].y,
-			yStart: p.lines[0].yStart,
-			yEnd: p.lines[0].yEnd,
-			pageHeight: p.lines[0].pageHeight,
-			isBold,
-		};
-	}
 }
 
 export async function extractParagraphs(
@@ -727,7 +386,7 @@ export async function extractParagraphs(
 		return { items, styles };
 	};
 
-	const extractor = new PdfParagraphExtractor();
+	const extractor = new PdfLineExtractor();
 
 	for (let pageNum = startPage; pageNum <= endPage; pageNum++) {
 		if (pageNum % 25 === 0) await waitForAnimationFrame();
@@ -743,35 +402,14 @@ export async function extractParagraphs(
 		);
 	}
 
-	const extractedParagraphs = extractor.finish();
-	const extractedLines = extractedParagraphs.flatMap(
-		(paragraph) => paragraph.lines,
-	);
-	const linesByIndex = new Map<number, Line>();
-	const linesWithGeometry = extractedLines.map((line, lineIndex) => {
-		linesByIndex.set(lineIndex, line);
-		return {
-			page: line.page,
-			lineIndex,
-			text: line.text,
-			xStart: line.xStart,
-			xEnd: line.xEnd,
-			y: line.y,
-			yStart: line.yStart,
-			yEnd: line.yEnd,
-			itemCount: line.items.length,
-			pageHeight: line.pageHeight,
-		};
-	});
-	const condensedParagraphs = splitParagraphsRulesBased(linesWithGeometry, {
+	const extractedLines = extractor.getLines();
+	const condensedParagraphs = splitParagraphsRulesBased(extractedLines, {
 		knownWords: wordDictionary,
 	});
 
 	const paragraphs: Paragraph[] = condensedParagraphs
 		.map((paragraph) => {
-			const lines = paragraph.lines
-				.map((line) => linesByIndex.get(line.lineIndex))
-				.filter((line): line is Line => line !== undefined);
+			const lines = paragraph.lines;
 			const firstLine = lines[0];
 			if (!firstLine) return null;
 			const boldLineCount = lines.filter((line) => line.isBold).length;

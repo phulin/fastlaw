@@ -1,5 +1,7 @@
 // D1 Database Types - New unified schema
 
+import type { TextItem } from "pdfjs-dist/types/src/display/api";
+
 export interface SourceRecord {
 	id: string;
 	name: string;
@@ -148,4 +150,60 @@ export interface Env {
 	AGENT_MAX_STEPS: string;
 	GEMINI_API_KEY: string;
 	GEMINI_MODEL: string;
+}
+/* ===========================
+ * Public types
+ * =========================== */
+
+export interface Line {
+	page: number;
+	y: number; // baseline
+	yStart: number; // top
+	yEnd: number; // bottom
+	xStart: number;
+	xEnd: number;
+	text: string;
+	items: TextItem[];
+	pageHeight: number;
+	isBold: boolean;
+}
+
+export interface Paragraph {
+	startPage: number;
+	endPage: number;
+	text: string;
+	lines: Line[];
+	confidence: number;
+	y: number; // start line baseline
+	yStart: number; // start line top
+	yEnd: number; // start line bottom
+	pageHeight: number;
+	isBold: boolean;
+	level?: number;
+}
+
+export class ParagraphRange {
+	constructor(
+		readonly paragraphs: Paragraph[],
+		readonly startFirst: number,
+		readonly endLast: number,
+	) {
+		this.paragraphs = paragraphs;
+		this.startFirst = startFirst;
+		this.endLast = endLast;
+	}
+
+	toText(): string {
+		return this.paragraphs
+			.map((paragraph, index) =>
+				index === 0 && index === this.paragraphs.length - 1
+					? paragraph.text.slice(this.startFirst, this.endLast)
+					: index === 0
+						? paragraph.text.slice(this.startFirst)
+						: index === this.paragraphs.length - 1
+							? paragraph.text.slice(0, this.endLast)
+							: paragraph.text,
+			)
+			.join("\n");
+	}
 }

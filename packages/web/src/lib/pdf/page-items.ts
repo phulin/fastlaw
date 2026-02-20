@@ -4,8 +4,7 @@ import {
 	type AmendmentEffect,
 	applyAmendmentEditTreeToSection,
 } from "../amendment-edit-tree-apply";
-import type { Paragraph } from "../text-extract";
-import type { NodeContent } from "../types";
+import type { NodeContent, Paragraph } from "../types";
 import {
 	discoverParsedInstructionSpans,
 	findBillSectionForInstruction,
@@ -117,7 +116,7 @@ export const buildPageItemsFromParagraphs = async ({
 			if (instructionIndex === undefined) continue;
 			const span = instructionSpans[instructionIndex];
 			if (!span) continue;
-			const firstParagraph = span.paragraphs[0];
+			const firstParagraph = span.paragraphRange.paragraphs[0];
 			if (!firstParagraph) continue;
 			const topPercent = firstParagraph.pageHeight
 				? ((firstParagraph.pageHeight - firstParagraph.y) /
@@ -132,7 +131,7 @@ export const buildPageItemsFromParagraphs = async ({
 				? sectionBodyCache.get(sectionPath)
 				: undefined;
 			const sectionBodyText = getSectionBodyText(sectionContent);
-			const instructionText = span.paragraphs
+			const instructionText = span.paragraphRange.paragraphs
 				.map((instructionParagraph) => instructionParagraph.text)
 				.join("\n");
 			const splitLines = instructionText.split("\n");
@@ -154,6 +153,7 @@ export const buildPageItemsFromParagraphs = async ({
 				? formatTargetScopePath(translatedEditTree.tree.targetScopePath)
 				: "";
 
+			const paragraphs = span.paragraphRange.paragraphs;
 			pageItems.push({
 				item: {
 					type: "instruction",
@@ -165,10 +165,10 @@ export const buildPageItemsFromParagraphs = async ({
 						target: span.parsedInstruction.ast.parent.text,
 						uscCitation,
 						text: instructionText,
-						paragraphs: span.paragraphs,
+						paragraphs,
 						startPage: firstParagraph.startPage,
 						endPage:
-							span.paragraphs[span.paragraphs.length - 1]?.endPage ??
+							paragraphs[paragraphs.length - 1]?.endPage ??
 							firstParagraph.endPage,
 						targetScopePath,
 					},

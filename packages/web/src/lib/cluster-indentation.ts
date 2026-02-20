@@ -1,4 +1,4 @@
-import type { Paragraph } from "./text-extract";
+import type { Paragraph } from "./types";
 
 const FIXED_CLUSTER_UPPER_BOUNDS = [171, 199, 227, 255, 283, 311] as const;
 

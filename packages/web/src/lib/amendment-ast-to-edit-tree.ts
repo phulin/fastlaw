@@ -16,6 +16,7 @@ import {
 	type StructuralReference,
 	type TargetScopeSegment,
 	TextLocationAnchorKind,
+	type TextWithProvenance,
 	type UltimateEdit,
 	UltimateEditKind,
 } from "./amendment-edit-tree";
@@ -25,6 +26,7 @@ import {
 	type ResolutionAst,
 	type RuleAst,
 } from "./handcrafted-instruction-parser";
+import { ParagraphRange } from "./types";
 
 type TreeChild = ScopeNode | LocationRestrictionNode | EditNode;
 
@@ -265,7 +267,10 @@ function parseEdit(
 			? parseStrikingTarget(strikingTarget, context)
 			: ({
 					kind: SearchTargetKind.Text,
-					text: text.slice("striking ".length),
+					text: {
+						text: text.slice("striking ".length),
+						sourceLocation: new ParagraphRange([], 0, 0),
+					},
 				} as const);
 
 		const insertingSpec = findChild(
@@ -454,7 +459,13 @@ function parseStrikingTarget(
 			GrammarAstNodeType.Appearances,
 		);
 		if (!inline) {
-			return { kind: SearchTargetKind.Text, text: strikingSearch.text.trim() };
+			return {
+				kind: SearchTargetKind.Text,
+				text: {
+					text: strikingSearch.text.trim(),
+					sourceLocation: strikingSearch.sourceLocation,
+				},
+			};
 		}
 		return {
 			kind: SearchTargetKind.Text,
@@ -487,7 +498,10 @@ function parseStrikingTarget(
 	if (inline)
 		return { kind: SearchTargetKind.Text, text: extractInlineContent(inline) };
 
-	return { kind: SearchTargetKind.Text, text: node.text.trim() };
+	return {
+		kind: SearchTargetKind.Text,
+		text: { text: node.text.trim(), sourceLocation: node.sourceLocation },
+	};
 }
 
 function parseThroughSpec(
@@ -508,7 +522,11 @@ function parseEditTarget(
 	node: RuleAst | null,
 	context: TranslationContext,
 ): EditTarget {
-	if (!node) return { kind: SearchTargetKind.Text, text: "" };
+	if (!node)
+		return {
+			kind: SearchTargetKind.Text,
+			text: { text: "", sourceLocation: new ParagraphRange([], 0, 0) },
+		};
 	const inline = findChild(node, GrammarAstNodeType.Inline);
 	if (inline)
 		return { kind: SearchTargetKind.Text, text: extractInlineContent(inline) };
@@ -531,7 +549,10 @@ function parseEditTarget(
 		);
 	if (structural) return { ref: structural };
 
-	return { kind: SearchTargetKind.Text, text: node.text.trim() };
+	return {
+		kind: SearchTargetKind.Text,
+		text: { text: node.text.trim(), sourceLocation: node.sourceLocation },
+	};
 }
 
 function parseTextLocation(
@@ -1269,18 +1290,30 @@ function extractCodeOrActReference(
 	return null;
 }
 
-function extractInlineContent(node: RuleAst): string {
+function extractInlineContent(node: RuleAst): TextWithProvenance {
 	const inline = findChildDeep(node, GrammarAstNodeType.Inline);
-	if (!inline) return "";
-	return normalizeQuotedText(inline.text);
+	if (!inline)
+		return { text: "", sourceLocation: new ParagraphRange([], 0, 0) };
+	return {
+		text: normalizeQuotedText(inline.text),
+		sourceLocation: inline.sourceLocation,
+	};
 }
 
-function extractContent(node: RuleAst): string {
+function extractContent(node: RuleAst): TextWithProvenance {
 	const block = findChildDeep(node, GrammarAstNodeType.Block);
-	if (block) return normalizeQuotedText(block.text);
+	if (block)
+		return {
+			text: normalizeQuotedText(block.text),
+			sourceLocation: block.sourceLocation,
+		};
 	const inline = findChildDeep(node, GrammarAstNodeType.Inline);
-	if (inline) return normalizeQuotedText(inline.text);
-	return "";
+	if (inline)
+		return {
+			text: normalizeQuotedText(inline.text),
+			sourceLocation: inline.sourceLocation,
+		};
+	return { text: "", sourceLocation: new ParagraphRange([], 0, 0) };
 }
 
 function normalizeQuotedText(value: string): string {

@@ -1,9 +1,9 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { createEffect, createSignal, onCleanup } from "solid-js";
+import type { Paragraph } from "~/lib/types";
 import type { TranslationResult } from "../lib/amendment-ast-to-edit-tree";
 import type { AmendmentEffect } from "../lib/amendment-edit-tree-apply";
 import type { ParsedInstruction } from "../lib/handcrafted-instruction-parser";
-import type { Paragraph } from "../lib/text-extract";
 
 export interface InstructionWorkflowDebug {
 	sectionText: string;

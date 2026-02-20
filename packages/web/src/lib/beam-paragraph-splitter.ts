@@ -4,7 +4,7 @@ import {
 	HierarchyStack,
 	LevelType,
 } from "./hierarchy-stack";
-import type { Line, Paragraph } from "./text-extract";
+import type { Line, Paragraph } from "./types";
 import { wordDictionary } from "./word-dictionary";
 
 export interface BeamParagraphSplitterOptions {

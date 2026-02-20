@@ -1,21 +1,10 @@
-export interface LineWithGeometry {
-	page: number;
-	lineIndex: number;
-	text: string;
-	xStart: number;
-	xEnd: number;
-	y: number;
-	yStart: number;
-	yEnd: number;
-	itemCount: number;
-	pageHeight: number;
-}
+import type { Line } from "./types";
 
 export interface CondensedParagraph {
 	startPage: number;
 	endPage: number;
 	text: string;
-	lines: LineWithGeometry[];
+	lines: Line[];
 }
 
 export interface RulesParagraphCondenserOptions {
@@ -57,12 +46,12 @@ function startsSectionHeader(text: string): boolean {
 	return SECTION_HEADER_RE.test(trimmed);
 }
 
-function isCenteredOnPage(line: LineWithGeometry): boolean {
+function isCenteredOnPage(line: Line): boolean {
 	const lineCenter = (line.xStart + line.xEnd) / 2;
 	return Math.abs(lineCenter - PAGE_CENTER_X) <= CENTER_TOLERANCE;
 }
 
-function isShortLine(line: LineWithGeometry, xEndP75: number): boolean {
+function isShortLine(line: Line, xEndP75: number): boolean {
 	return line.xEnd < xEndP75 - 8;
 }
 
@@ -138,7 +127,7 @@ function shouldDropTrailingHyphenWhenCoalescing(
 	}
 	if (!isWord(left, knownWords)) return true;
 	if (right.length <= 4) return true;
-	return true;
+	return false;
 }
 
 function countOpenQuotes(text: string): number {
@@ -182,7 +171,8 @@ function parseMarker(text: string): MarkerInfo | null {
 
 	const markerMatch = trimmed.match(/^["'“”‘’]?((?:\([a-zA-Z0-9]+\))+)/);
 	if (!markerMatch) return null;
-	if (trimmed[markerMatch[0].length] !== " ") return null;
+	const afterMarker = trimmed.slice(markerMatch[0].length);
+	if (!/^[ ,]/.test(afterMarker)) return null;
 	const markerTokens = Array.from(
 		markerMatch[1].matchAll(/\(([a-zA-Z0-9]+)\)/g),
 		(match) => match[1],
@@ -215,7 +205,7 @@ function appendLine(
 }
 
 export function splitParagraphsRulesBased(
-	lines: LineWithGeometry[],
+	lines: Line[],
 	options: RulesParagraphCondenserOptions = {},
 ): CondensedParagraph[] {
 	if (lines.length === 0) return [];
@@ -227,7 +217,7 @@ export function splitParagraphsRulesBased(
 	);
 	const paragraphs: CondensedParagraph[] = [];
 
-	let currentLines: LineWithGeometry[] = [lines[0]];
+	let currentLines: Line[] = [lines[0]];
 	let currentText = lines[0].text;
 	let quoteDepth = Math.max(
 		0,

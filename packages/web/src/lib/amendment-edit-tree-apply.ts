@@ -1,8 +1,10 @@
 import { buildAmendmentDocumentModel } from "./amendment-document-model";
 import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
-import {
-	ParagraphRanges,
-	type ResolutionIssue,
+import type {
+	HierarchyLevel,
+	InstructionNode,
+	OperationMatchAttempt,
+	ResolutionIssue,
 } from "./amendment-edit-engine-types";
 import { planEdits } from "./amendment-edit-planner";
 import {
@@ -10,7 +12,6 @@ import {
 	type EditTarget,
 	type InstructionSemanticTree,
 	LocationRestrictionKind,
-	type PunctuationKind,
 	ScopeKind,
 	SearchTargetKind,
 	SemanticNodeType,
@@ -27,124 +28,11 @@ interface ApplyEditTreeArgs {
 	instructionText?: string;
 }
 
-type HierarchyLevel = {
-	type:
-		| "section"
-		| "subsection"
-		| "paragraph"
-		| "subparagraph"
-		| "clause"
-		| "subclause"
-		| "item"
-		| "subitem";
-	val: string;
-};
-
-type InstructionOperation =
-	| {
-			type: "replace";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			throughTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
-			strikingContent?: string;
-			eachPlaceItAppears?: boolean;
-			throughContent?: string;
-			throughPunctuation?: PunctuationKind;
-	  }
-	| {
-			type: "delete";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			throughTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			strikingContent?: string;
-			eachPlaceItAppears?: boolean;
-			throughContent?: string;
-			throughPunctuation?: PunctuationKind;
-	  }
-	| {
-			type: "insert_before";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
-			anchorContent?: string;
-			anchorTarget?: HierarchyLevel[];
-	  }
-	| {
-			type: "insert_after";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
-			anchorContent?: string;
-			anchorTarget?: HierarchyLevel[];
-	  }
-	| {
-			type: "insert";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
-	  }
-	| {
-			type: "add_at_end";
-			target?: HierarchyLevel[];
-			matterPrecedingTarget?: HierarchyLevel[];
-			matterFollowingTarget?: HierarchyLevel[];
-			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
-	  }
-	| {
-			type: "redesignate";
-			target: HierarchyLevel[];
-			fromLabel: string;
-			toLabel: string;
-	  }
-	| {
-			type: "move";
-			fromTargets: HierarchyLevel[][];
-			beforeTarget?: HierarchyLevel[];
-			afterTarget?: HierarchyLevel[];
-	  };
-
-interface InstructionNode {
-	operation: InstructionOperation;
-	children: InstructionNode[];
-	text: string;
-}
-
 type AmendmentSegmentKind = "unchanged" | "deleted" | "inserted";
 
 interface AmendmentEffectSegment {
 	kind: AmendmentSegmentKind;
 	text: string;
-}
-
-interface OperationMatchAttempt {
-	operationType: string;
-	nodeText: string;
-	strikingContent: string | null;
-	targetPath: string | null;
-	hasExplicitTargetPath: boolean;
-	scopedRange: {
-		start: number;
-		end: number;
-		length: number;
-		preview: string;
-	} | null;
-	searchText: string | null;
-	searchTextKind: "striking" | "anchor_before" | "anchor_after" | "none";
-	searchIndex: number | null;
-	patchApplied: boolean;
-	outcome: "applied" | "no_patch" | "scope_unresolved";
 }
 
 interface AmendmentEffectDebug {
@@ -336,7 +224,7 @@ function textSearchFromEditTarget(
 ): TextSearchTargetPayload | null {
 	if ("kind" in target && target.kind === SearchTargetKind.Text) {
 		return {
-			text: target.text,
+			text: target.text.text,
 			eachPlaceItAppears: target.eachPlaceItAppears ?? false,
 		};
 	}
@@ -411,8 +299,8 @@ function flattenEdit(
 				};
 			}
 			const text = context.matterPreceding
-				? `in the matter preceding ${context.matterPreceding.kind} (${context.matterPreceding.path.at(-1)?.label ?? ""}), by striking "${strikingContent}" and inserting "${edit.insert}"`
-				: `by striking "${strikingContent}" and inserting "${edit.insert}"`;
+				? `in the matter preceding ${context.matterPreceding.kind} (${context.matterPreceding.path.at(-1)?.label ?? ""}), by striking "${strikingContent}" and inserting "${edit.insert.text}"`
+				: `by striking "${strikingContent}" and inserting "${edit.insert.text}"`;
 			return {
 				nodes: [
 					makeNode(
@@ -428,7 +316,7 @@ function flattenEdit(
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
 							strikingContent: strikingContent ?? undefined,
 							eachPlaceItAppears: strikeTarget?.eachPlaceItAppears || undefined,
-							content: ParagraphRanges.fromText(edit.insert),
+							content: edit.insert,
 						},
 						text,
 					),
@@ -506,11 +394,11 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: ParagraphRanges.fromText(edit.content),
+								content: edit.content,
 								anchorContent: anchor ?? undefined,
 								anchorTarget: scopedAnchorTarget,
 							},
-							`by inserting "${edit.content}" before "${anchor ?? "target"}"`,
+							`by inserting "${edit.content.text}" before "${anchor ?? "target"}"`,
 						),
 					],
 					unsupportedReasons: [],
@@ -539,11 +427,11 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: ParagraphRanges.fromText(edit.content),
+								content: edit.content,
 								anchorContent: anchor ?? undefined,
 								anchorTarget: scopedAnchorTarget,
 							},
-							`by inserting "${edit.content}" after "${anchor ?? "target"}"`,
+							`by inserting "${edit.content.text}" after "${anchor ?? "target"}"`,
 						),
 					],
 					unsupportedReasons: [],
@@ -562,7 +450,7 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: ParagraphRanges.fromText(edit.content),
+								content: edit.content,
 							},
 							"by adding at the end the following",
 						),
@@ -572,7 +460,7 @@ function flattenEdit(
 			}
 			if (
 				context.unanchoredInsertMode === "add_at_end" ||
-				looksLikeBlockContent(edit.content)
+				looksLikeBlockContent(edit.content.text)
 			) {
 				return {
 					nodes: [
@@ -585,7 +473,7 @@ function flattenEdit(
 								matterFollowingTarget:
 									context.matterFollowingTarget ?? undefined,
 								sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-								content: ParagraphRanges.fromText(edit.content),
+								content: edit.content,
 							},
 							"by adding at the end the following",
 						),
@@ -602,7 +490,7 @@ function flattenEdit(
 							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
 							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-							content: ParagraphRanges.fromText(edit.content),
+							content: edit.content,
 						},
 						"by inserting",
 					),
@@ -623,7 +511,7 @@ function flattenEdit(
 							matterPrecedingTarget: context.matterPrecedingTarget ?? undefined,
 							matterFollowingTarget: context.matterFollowingTarget ?? undefined,
 							sentenceOrdinal: context.sentenceOrdinal ?? undefined,
-							content: ParagraphRanges.fromText(edit.content),
+							content: edit.content,
 						},
 						"to read as follows:",
 					),
@@ -905,13 +793,13 @@ export function applyAmendmentEditTreeToSection(
 
 	const changes = patches.map((patch) => ({
 		deleted: patch.deleted,
-		inserted: patch.inserted.toText(),
+		inserted: patch.inserted.text,
 	}));
 	const deleted = patches
 		.map((patch) => patch.deleted)
 		.filter((value) => value.length > 0);
 	const inserted = patches
-		.map((patch) => patch.inserted.toText())
+		.map((patch) => patch.inserted.text)
 		.filter((value) => value.length > 0);
 	const operationAttempts = attempts;
 	const applySummary = buildApplySummary(operationAttempts, issues);

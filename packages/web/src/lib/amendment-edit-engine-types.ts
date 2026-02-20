@@ -1,27 +1,8 @@
-import type { PunctuationKind } from "./amendment-edit-tree";
+import type {
+	PunctuationKind,
+	TextWithProvenance,
+} from "./amendment-edit-tree";
 import type { MarkdownReplacementRange } from "./markdown";
-
-export interface ParagraphRange {
-	paragraph: { text: string; level?: number };
-	start: number;
-	end: number;
-}
-
-export class ParagraphRanges {
-	constructor(readonly ranges: ParagraphRange[]) {}
-
-	toText(): string {
-		return this.ranges
-			.map((r) => r.paragraph.text.slice(r.start, r.end))
-			.join("\n");
-	}
-
-	static fromText(text: string): ParagraphRanges {
-		return new ParagraphRanges([
-			{ paragraph: { text }, start: 0, end: text.length },
-		]);
-	}
-}
 
 export type HierarchyLevelType =
 	| "section"
@@ -46,7 +27,7 @@ export type InstructionOperation =
 			matterFollowingTarget?: HierarchyLevel[];
 			throughTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
+			content?: TextWithProvenance;
 			strikingContent?: string;
 			eachPlaceItAppears?: boolean;
 			throughContent?: string;
@@ -70,7 +51,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
+			content?: TextWithProvenance;
 			anchorContent?: string;
 			anchorTarget?: HierarchyLevel[];
 	  }
@@ -80,7 +61,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
+			content?: TextWithProvenance;
 			anchorContent?: string;
 			anchorTarget?: HierarchyLevel[];
 	  }
@@ -90,7 +71,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
+			content?: TextWithProvenance;
 	  }
 	| {
 			type: "add_at_end";
@@ -98,7 +79,7 @@ export type InstructionOperation =
 			matterPrecedingTarget?: HierarchyLevel[];
 			matterFollowingTarget?: HierarchyLevel[];
 			sentenceOrdinal?: number;
-			content?: ParagraphRanges;
+			content?: TextWithProvenance;
 	  }
 	| {
 			type: "redesignate";
@@ -203,7 +184,7 @@ export interface PlannedPatch {
 	start: number;
 	end: number;
 	deleted: string;
-	inserted: ParagraphRanges;
+	inserted: TextWithProvenance;
 	insertedPrefix?: string;
 	insertedSuffix?: string;
 }

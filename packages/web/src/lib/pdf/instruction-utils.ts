@@ -4,8 +4,7 @@ import {
 	HandcraftedInstructionParser,
 	type ParsedInstruction,
 } from "../handcrafted-instruction-parser";
-import type { Paragraph } from "../text-extract";
-import type { NodeContent } from "../types";
+import { type NodeContent, type Paragraph, ParagraphRange } from "../types";
 
 const CODE_REFERENCE_TITLE_RE = /^(\d+)\s+U\.S\.C\.$/i;
 const EN_DASH = /\u2013/g;
@@ -16,7 +15,7 @@ const instructionParser = new HandcraftedInstructionParser(
 export interface ParsedInstructionSpan {
 	startParagraphIndex: number;
 	endParagraphIndex: number;
-	paragraphs: Paragraph[];
+	paragraphRange: ParagraphRange;
 	parsedInstruction: ParsedInstruction;
 }
 
@@ -122,9 +121,52 @@ export const discoverParsedInstructionSpans = (
 	while (paragraphIndex < paragraphs.length) {
 		const startLineIndex = paragraphStartLineIndexes[paragraphIndex];
 		if (startLineIndex === undefined) break;
+
+		const sourceParagraphs = paragraphs.slice(paragraphIndex);
+		const resolveRange = (start: number, end: number): ParagraphRange => {
+			let currentOffset = 0;
+			let startParaIdx = -1;
+			let endParaIdx = -1;
+			let startFirstOffset = 0;
+			let endLastOffset = 0;
+
+			for (let i = 0; i < sourceParagraphs.length; i++) {
+				const pLen = sourceParagraphs[i].text.length;
+				const pStart = currentOffset;
+				const pEnd = currentOffset + pLen;
+
+				if (startParaIdx === -1 && start <= pEnd) {
+					startParaIdx = i;
+					startFirstOffset = Math.max(0, start - pStart);
+				}
+				if (end > pStart) {
+					endParaIdx = i;
+					endLastOffset = Math.min(pLen, end - pStart);
+				}
+
+				currentOffset += pLen + 1; // +1 for the "\n"
+			}
+
+			if (startParaIdx === -1) return new ParagraphRange([], 0, 0);
+			if (endParaIdx === -1) endParaIdx = startParaIdx;
+
+			const rangeParagraphs = sourceParagraphs.slice(
+				startParaIdx,
+				endParaIdx + 1,
+			);
+			if (rangeParagraphs.length === 0) return new ParagraphRange([], 0, 0);
+
+			return new ParagraphRange(
+				rangeParagraphs,
+				startFirstOffset,
+				endLastOffset,
+			);
+		};
+
 		const parsed = instructionParser.parseInstructionFromLines(
 			lines,
 			startLineIndex,
+			resolveRange,
 		);
 		if (!parsed || parsed.parseOffset !== 0) {
 			paragraphIndex += 1;
@@ -146,10 +188,15 @@ export const discoverParsedInstructionSpans = (
 			continue;
 		}
 
+		const endParagraph = paragraphs[endParagraphIndex];
 		spans.push({
 			startParagraphIndex: paragraphIndex,
 			endParagraphIndex,
-			paragraphs: instructionParagraphs,
+			paragraphRange: new ParagraphRange(
+				instructionParagraphs,
+				0,
+				endParagraph.text.length,
+			),
 			parsedInstruction: parsed,
 		});
 		paragraphIndex = endParagraphIndex + 1;

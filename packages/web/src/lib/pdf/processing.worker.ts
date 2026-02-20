@@ -1,6 +1,5 @@
-import type { Paragraph } from "../text-extract";
 import { extractParagraphs } from "../text-extract";
-import type { NodeContent } from "../types";
+import type { NodeContent, Paragraph } from "../types";
 import { buildPageItemsFromParagraphs } from "./page-items";
 import type {
 	ProcessingWorkerRequest,

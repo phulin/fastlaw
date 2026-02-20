@@ -1,4 +1,9 @@
-import type { Line, Paragraph } from "../text-extract";
+import type { TextWithProvenance } from "../amendment-edit-tree";
+import { type Line, type Paragraph, ParagraphRange } from "../types";
+
+export function tp(text: string): TextWithProvenance {
+	return { text, sourceLocation: new ParagraphRange([], 0, 0) };
+}
 
 export function createParagraph(
 	text: string,

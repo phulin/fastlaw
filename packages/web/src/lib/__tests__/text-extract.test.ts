@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { describe, expect, it } from "vitest";
-import { extractParagraphs, PdfParagraphExtractor } from "../text-extract";
+import { splitParagraphsRulesBased } from "../rules-paragraph-condenser-3";
+import { extractParagraphs, PdfLineExtractor } from "../text-extract";
 
 const makeTextItem = (
 	str: string,
@@ -68,7 +69,7 @@ describe("extractParagraphs", () => {
 	}, 120_000);
 
 	it("drops centered top-of-page 1-4 digit spans", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			1,
 			[
@@ -80,13 +81,16 @@ describe("extractParagraphs", () => {
 			1000,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(
+			lines,
+		);
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("Hello world");
 	});
 
 	it("drops bottom-of-page short dagger lines", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			1,
 			[
@@ -100,13 +104,16 @@ describe("extractParagraphs", () => {
 			1000,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(
+			lines,
+		);
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("Body text");
 	});
 
 	it("drops trailing hyphen when joined word exists in dictionary", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			1,
 			[
@@ -117,13 +124,19 @@ describe("extractParagraphs", () => {
 			1000,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(
+			lines,
+			{
+				knownWords: new Set(["information"]),
+			},
+		);
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("information");
 	});
 
 	it("keeps trailing hyphen when joined word is not in dictionary", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			1,
 			[
@@ -134,13 +147,19 @@ describe("extractParagraphs", () => {
 			1000,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(
+			lines,
+			{
+				knownWords: new Set(["information"]),
+			},
+		);
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe("state-owned");
 	});
 
 	it("keeps wrapped quoted continuation lines in the same paragraph when the continuation line starts with a marker", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			72,
 			[
@@ -212,7 +231,8 @@ describe("extractParagraphs", () => {
 			792,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(lines);
 		expect(paragraphs).toHaveLength(2);
 		expect(paragraphs[0]?.text).toBe(
 			"“(D) UNBORN LIVESTOCK DEATH LOSSES DEFINED.—In this paragraph, the term ‘unborn livestock death losses’ means losses of any livestock described in subparagraph (A), (B), (D), (E), (F), or (G) of subsection (a)(4) that was gestating on the date of the death of the livestock.”.",
@@ -223,7 +243,7 @@ describe("extractParagraphs", () => {
 	});
 
 	it("coalesces wrapped quoted text when the next line begins with a parenthetical list token inside the sentence", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			92,
 			[
@@ -268,7 +288,8 @@ describe("extractParagraphs", () => {
 			792,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(lines);
 		expect(paragraphs).toHaveLength(1);
 		expect(paragraphs[0]?.text).toBe(
 			"“(e) MANDATORY FUNDING.—Subject to subsections (b), (c), and (d), of the funds of the Commodity Credit Corporation, the Secretary shall make available to carry out the competitive grant program under section 4 $125,000,000 for fiscal year 2026 and each fiscal year thereafter.”.",
@@ -276,7 +297,7 @@ describe("extractParagraphs", () => {
 	});
 
 	it("splits SHEEP PRODUCTION amendment from following subsection heading on HR 1 page 96 line geometry", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			96,
 			[
@@ -319,7 +340,8 @@ describe("extractParagraphs", () => {
 			792,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(lines);
 		const paragraphWithSecondAmendment = paragraphs.find((paragraph) =>
 			paragraph.text.includes("(2) by inserting"),
 		);
@@ -335,7 +357,7 @@ describe("extractParagraphs", () => {
 	});
 
 	it("coalesces wrapped redesignation lines with a line-number column when the first line ends with 'and'", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		const fixtureLines = [
 			{
 				lineNumber: "1",
@@ -454,7 +476,8 @@ describe("extractParagraphs", () => {
 			792,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(lines);
 		const redesignationParagraph = paragraphs.find((paragraph) =>
 			paragraph.text.startsWith("(B) by redesignating paragraphs (1) and"),
 		);
@@ -464,7 +487,7 @@ describe("extractParagraphs", () => {
 	});
 
 	it("inserts missing space when a closing quote is immediately followed by a word in a single span", () => {
-		const extractor = new PdfParagraphExtractor();
+		const extractor = new PdfLineExtractor();
 		extractor.ingestPage(
 			96,
 			[
@@ -509,7 +532,8 @@ describe("extractParagraphs", () => {
 			792,
 		);
 
-		const paragraphs = extractor.finish();
+		const lines = extractor.getLines();
+		const paragraphs = splitParagraphsRulesBased(lines);
 		const targetParagraph = paragraphs.find((paragraph) =>
 			paragraph.text.includes("(2) in subsection (h), by striking"),
 		);

@@ -1,3 +1,5 @@
+import { ParagraphRange } from "./types";
+
 type GrammarNode =
 	| { type: "literal"; value: string }
 	| { type: "charClass"; value: string }
@@ -124,6 +126,7 @@ export interface RuleAst<Name extends GrammarAstNodeType = GrammarAstNodeType> {
 	text: string;
 	children: RuleAst[];
 	tokens: string[];
+	sourceLocation: ParagraphRange;
 }
 
 export interface ResolutionAst extends RuleAst<GrammarAstNodeType.Resolution> {
@@ -723,11 +726,15 @@ function buildSequenceToTarget(
 	return null;
 }
 
-function toRuleAst(node: CstRule, input: string): RuleAst {
+function toRuleAst(
+	node: CstRule,
+	input: string,
+	resolveRange: (start: number, end: number) => ParagraphRange,
+): RuleAst {
 	const children: RuleAst[] = node.children
 		.filter((child): child is CstRule => child.kind === "rule")
 		.filter((child) => child.name !== "sep" && child.name !== "preceding")
-		.map((child) => toRuleAst(child, input));
+		.map((child) => toRuleAst(child, input, resolveRange));
 	const tokens = node.children
 		.filter((child): child is CstToken => child.kind === "token")
 		.map((child) => child.text);
@@ -736,6 +743,7 @@ function toRuleAst(node: CstRule, input: string): RuleAst {
 		text: input.slice(node.start, node.end),
 		children,
 		tokens,
+		sourceLocation: resolveRange(node.start, node.end),
 	};
 }
 
@@ -809,10 +817,15 @@ function buildSubinstructionsAst(
 	};
 }
 
-function buildInstructionAst(cst: CstRule, source: string): InstructionAst {
+function buildInstructionAst(
+	cst: CstRule,
+	source: string,
+	resolveRange: (start: number, end: number) => ParagraphRange,
+): InstructionAst {
 	const ruleAst = toRuleAst(
 		cst,
 		source,
+		resolveRange,
 	) as RuleAst<GrammarAstNodeType.Instruction>;
 	const parent = firstRuleChildByName(ruleAst, GrammarAstNodeType.Parent);
 	if (!parent) {
@@ -876,6 +889,8 @@ export class HandcraftedInstructionParser {
 	parseInstructionFromLines(
 		lines: readonly string[],
 		startIndex: number,
+		resolveRange: (start: number, end: number) => ParagraphRange = () =>
+			new ParagraphRange([], 0, 0),
 	): ParsedInstruction | null {
 		if (startIndex < 0 || startIndex >= lines.length) return null;
 		const source = lines.slice(startIndex).join("\n");
@@ -910,7 +925,9 @@ export class HandcraftedInstructionParser {
 			sequenceCache: new Map(),
 		});
 		if (!ruleNode) return null;
-		const ast = buildInstructionAst(ruleNode, parseInput);
+		const ast = buildInstructionAst(ruleNode, parseInput, (start, end) =>
+			resolveRange(best.parseOffset + start, best.parseOffset + end),
+		);
 
 		const parsedText = source.slice(0, best.end);
 		const newlineCount = (parsedText.match(/\n/g) ?? []).length;

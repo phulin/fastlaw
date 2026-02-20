@@ -4,7 +4,7 @@ import type {
 } from "./amendment-edit-engine-types";
 
 function patchInsertedText(patch: PlannedPatch): string {
-	return `${patch.insertedPrefix ?? ""}${patch.inserted.toText()}${patch.insertedSuffix ?? ""}`;
+	return `${patch.insertedPrefix ?? ""}${patch.inserted.text}${patch.insertedSuffix ?? ""}`;
 }
 
 function applyPatch(
@@ -14,7 +14,7 @@ function applyPatch(
 		"start" | "end" | "inserted" | "insertedPrefix" | "insertedSuffix"
 	>,
 ): string {
-	const insertedText = `${patch.insertedPrefix ?? ""}${patch.inserted.toText()}${patch.insertedSuffix ?? ""}`;
+	const insertedText = `${patch.insertedPrefix ?? ""}${patch.inserted.text}${patch.insertedSuffix ?? ""}`;
 	return `${text.slice(0, patch.start)}${insertedText}${text.slice(patch.end)}`;
 }
 

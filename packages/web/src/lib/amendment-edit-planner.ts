@@ -7,9 +7,12 @@ import type {
 	ResolvedInstructionOperation,
 	ScopeRange,
 } from "./amendment-edit-engine-types";
-import { ParagraphRanges } from "./amendment-edit-engine-types";
-import { PunctuationKind } from "./amendment-edit-tree";
+import {
+	PunctuationKind,
+	type TextWithProvenance,
+} from "./amendment-edit-tree";
 import { formatInsertedBlockContent } from "./inserted-block-format";
+import { ParagraphRange } from "./types";
 
 function previewRange(text: string, range: ScopeRange | null): string {
 	if (!range) return "";
@@ -27,71 +30,87 @@ function punctuationText(kind: PunctuationKind): string {
 	}
 }
 
+function paragraphTexts(range: ParagraphRange): string[] {
+	return range.paragraphs.map((p, i) => {
+		if (i === 0 && i === range.paragraphs.length - 1) {
+			return p.text.slice(range.startFirst, range.endLast);
+		} else if (i === 0) {
+			return p.text.slice(range.startFirst);
+		} else if (i === range.paragraphs.length - 1) {
+			return p.text.slice(0, range.endLast);
+		}
+		return p.text;
+	});
+}
+
+function emptyInserted(): TextWithProvenance {
+	return { text: "", sourceLocation: new ParagraphRange([], 0, 0) };
+}
+
+function syntheticInserted(text: string): TextWithProvenance {
+	return { text, sourceLocation: new ParagraphRange([], 0, 0) };
+}
+
 function formatContentRanges(
-	content: ParagraphRanges,
+	content: TextWithProvenance,
 	baseDepth: number,
-): ParagraphRanges {
-	const hasLevelInfo = content.ranges.some(
-		(r) => r.paragraph.level !== undefined,
-	);
+): TextWithProvenance {
+	const { paragraphs } = content.sourceLocation;
+	const hasLevelInfo = paragraphs.some((p) => p.level !== undefined);
 	if (!hasLevelInfo) {
-		return ParagraphRanges.fromText(
-			formatInsertedBlockContent(content.toText(), {
+		return {
+			text: formatInsertedBlockContent(content.text, {
 				baseDepth,
 				quotePlainMultiline: true,
 			}),
-		);
+			sourceLocation: content.sourceLocation,
+		};
 	}
-	const levels = content.ranges.map((r) => r.paragraph.level ?? 0);
+	const levels = paragraphs.map((p) => p.level ?? 0);
 	const minLevel = Math.min(...levels);
-	return new ParagraphRanges(
-		content.ranges.map((range, i) => {
-			const text = range.paragraph.text.slice(range.start, range.end);
+	const texts = paragraphTexts(content.sourceLocation);
+	const formattedText = texts
+		.map((text, i) => {
 			const depth = baseDepth + ((levels[i] ?? minLevel) - minLevel);
-			const formatted = formatInsertedBlockContent(text, {
+			return formatInsertedBlockContent(text, {
 				baseDepth: depth,
 				quotePlainMultiline: true,
 			});
-			return {
-				paragraph: { text: formatted, level: range.paragraph.level },
-				start: 0,
-				end: formatted.length,
-			};
-		}),
-	);
+		})
+		.join("\n");
+	return { text: formattedText, sourceLocation: content.sourceLocation };
 }
 
 function formatInsertionContent(
-	content: ParagraphRanges,
+	content: TextWithProvenance,
 	targetLevel: number,
-): ParagraphRanges {
+): TextWithProvenance {
 	return formatContentRanges(content, targetLevel + 1);
 }
 
 function formatReplacementContent(
-	content: ParagraphRanges,
+	content: TextWithProvenance,
 	targetLevel: number,
-): ParagraphRanges {
+): TextWithProvenance {
 	return formatContentRanges(content, targetLevel);
 }
 
 function multilineReplacementSuffix(
-	inserted: ParagraphRanges,
+	inserted: TextWithProvenance,
 	sourceText: string,
 	rangeEnd: number,
 ): string {
-	const text = inserted.toText();
-	if (!text.includes("\n")) return "";
-	if (text.endsWith("\n")) return "";
+	if (!inserted.text.includes("\n")) return "";
+	if (inserted.text.endsWith("\n")) return "";
 	const nextChar = sourceText[rangeEnd] ?? "";
 	if (nextChar.length === 0 || nextChar === "\n") return "";
 	return "\n";
 }
 
 function formatBlockInsertionContent(
-	content: ParagraphRanges,
+	content: TextWithProvenance,
 	targetLevel: number,
-): ParagraphRanges {
+): TextWithProvenance {
 	return formatContentRanges(content, targetLevel + 1);
 }
 
@@ -433,7 +452,7 @@ function planPatchForOperation(
 							start: range.start,
 							end: range.end,
 							deleted: scopedText,
-							inserted: new ParagraphRanges([]),
+							inserted: emptyInserted(),
 						});
 						break;
 					}
@@ -444,7 +463,7 @@ function planPatchForOperation(
 						start,
 						end,
 						deleted: sourceText.slice(start, end),
-						inserted: new ParagraphRanges([]),
+						inserted: emptyInserted(),
 					});
 					break;
 				}
@@ -453,7 +472,7 @@ function planPatchForOperation(
 					start: range.start,
 					end: range.end,
 					deleted: scopedText,
-					inserted: new ParagraphRanges([]),
+					inserted: emptyInserted(),
 				});
 				break;
 			}
@@ -479,7 +498,7 @@ function planPatchForOperation(
 						start: range.start + occurrenceIndex,
 						end: range.start + occurrenceIndex + strikingContent.length,
 						deleted: strikingContent,
-						inserted: new ParagraphRanges([]),
+						inserted: emptyInserted(),
 					});
 				}
 				break;
@@ -526,7 +545,7 @@ function planPatchForOperation(
 				start: patchStart,
 				end: patchEnd,
 				deleted: sourceText.slice(patchStart, patchEnd),
-				inserted: new ParagraphRanges([]),
+				inserted: emptyInserted(),
 			});
 			break;
 		}
@@ -556,7 +575,7 @@ function planPatchForOperation(
 
 			if (anchorStart === null) break;
 			const formatted = formatInsertionContent(content, range.targetLevel ?? 0);
-			const formattedText = formatted.toText();
+			const formattedText = formatted.text;
 			const suffix = anchor
 				? /[A-Za-z0-9)]$/.test(formattedText) && /^[A-Za-z0-9(]/.test(anchor)
 					? " "
@@ -601,7 +620,7 @@ function planPatchForOperation(
 
 			if (anchorEnd === null) break;
 			const formatted = formatInsertionContent(content, range.targetLevel ?? 0);
-			const formattedText = formatted.toText();
+			const formattedText = formatted.text;
 			const prefix = anchor
 				? /[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(formattedText)
 					? " "
@@ -672,7 +691,7 @@ function planPatchForOperation(
 				start: range.start + localIndex,
 				end: range.start + localIndex + marker.length,
 				deleted: marker,
-				inserted: ParagraphRanges.fromText(replacement),
+				inserted: syntheticInserted(replacement),
 			});
 			break;
 		}
@@ -739,7 +758,7 @@ function planPatchForOperation(
 				start: 0,
 				end: sourceText.length,
 				deleted: sourceText,
-				inserted: ParagraphRanges.fromText(movedText),
+				inserted: syntheticInserted(movedText),
 			});
 			break;
 		}
