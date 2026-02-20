@@ -14,6 +14,7 @@ When adding a scraper for a new jurisdiction, first copy this checklist VERBATIM
 - [ ] Write tests for the full specification. Tests should cover:
 - - [ ] Extraction of all relevant information from an HTML file for all structural levels and for section bodies.
 - - [ ] Bolding of section markers (plus any other information bolded in the source).
+- - [ ] Indentation of nested outline markers.
 - - [ ] Cross-reference linking - and the link href should be in the same format as the sections, i.e. the links should work.
 - - [ ] Capture of history and notes.
 - - [ ] Reserved/transferred/repealed behaviors (if source has them).
