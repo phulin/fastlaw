@@ -1,25 +1,40 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { initSync, segment as rawSegment } from "sentencex-wasm";
+import wasmUrl from "sentencex-wasm/sentencex_wasm_bg.wasm?url";
 
-let initialized = false;
+export async function initSentencex() {
+	if (
+		typeof process !== "undefined" &&
+		process.versions &&
+		process.versions.node
+	) {
+		// Use a dynamic import via new Function to completely hide it from Vite/Rollup
+		const dynamicImport = new Function(
+			"modulePath",
+			"return import(modulePath)",
+		);
 
-function ensureInit() {
-	if (initialized) return;
-	// Load the wasm file synchronously
-	const __dirname = dirname(fileURLToPath(import.meta.url));
-	// src/lib/sentencex.ts points up to packages/web, then up to root node_modules
-	const wasmPath = resolve(
-		__dirname,
-		"../../../../node_modules/sentencex-wasm/sentencex_wasm_bg.wasm",
-	);
-	const wasmBuffer = readFileSync(wasmPath);
-	initSync({ module: wasmBuffer });
-	initialized = true;
+		const { readFileSync } = await dynamicImport("node:fs");
+		const { fileURLToPath } = await dynamicImport("node:url");
+		const { dirname, resolve } = await dynamicImport("node:path");
+
+		const __dirname = dirname(fileURLToPath(import.meta.url));
+		const wasmPath = resolve(
+			__dirname,
+			"../../../../node_modules/sentencex-wasm/sentencex_wasm_bg.wasm",
+		);
+		const wasmBuffer = readFileSync(wasmPath);
+		initSync({ module: wasmBuffer });
+	} else {
+		// Ensure this is properly fetched in the browser
+		const response = await fetch(wasmUrl);
+		const wasmArrayBuffer = await response.arrayBuffer();
+		initSync({ module: wasmArrayBuffer });
+	}
 }
 
+// Ensure it's initialized before usage
+await initSentencex();
+
 export function segment(language: string, text: string): string[] {
-	ensureInit();
 	return rawSegment(language, text);
 }
