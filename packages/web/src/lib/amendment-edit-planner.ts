@@ -19,6 +19,7 @@ import {
 	UltimateEditKind,
 } from "./amendment-edit-tree";
 import { formatInsertedBlockContent } from "./inserted-block-format";
+import { segment } from "./sentencex";
 import type { ParagraphRange } from "./types";
 
 function previewRange(text: string, range: ScopeRange | null): string {
@@ -152,33 +153,49 @@ function resolveSentenceOrdinalRange(
 	text: string,
 	ordinal: number,
 ): { start: number; end: number } | null {
-	if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
-		const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
-		const sentences = Array.from(segmenter.segment(text));
-		if (sentences.length === 0) return null;
-		const sentenceIndex =
-			ordinal <= 0
-				? sentences.length - 1
-				: Math.min(ordinal - 1, sentences.length - 1);
-		const sentence = sentences[sentenceIndex];
-		if (sentence && typeof sentence.index === "number") {
-			const start = sentence.index;
-			const end = sentence.index + sentence.segment.length;
-			return { start, end };
+	const sentences = segment("en", text);
+	if (sentences.length === 0) return null;
+
+	const validSentences: { text: string; start: number; end: number }[] = [];
+	let cursor = 0;
+	for (const s of sentences) {
+		const start = cursor;
+		const end = cursor + s.length;
+		cursor = end;
+
+		const trimmed = s.trim();
+		if (!/[a-zA-Z0-9]/.test(trimmed)) {
+			continue;
 		}
+
+		if (trimmed.startsWith("—") && validSentences.length > 0) {
+			const prev = validSentences[validSentences.length - 1];
+			if (prev) {
+				prev.text += s;
+				prev.end = end;
+			}
+			continue;
+		}
+
+		const isHeader =
+			!/[.!?]['"]?$/.test(trimmed) &&
+			trimmed.length < 150 &&
+			!trimmed.includes("\n");
+		if (isHeader) {
+			continue;
+		}
+
+		validSentences.push({ text: s, start, end });
 	}
 
-	const matches = Array.from(text.matchAll(/[^.!?]+[.!?]+|[^.!?]+$/g));
-	if (matches.length === 0) return null;
+	if (validSentences.length === 0) return null;
 	const sentenceIndex =
 		ordinal <= 0
-			? matches.length - 1
-			: Math.min(ordinal - 1, matches.length - 1);
-	const sentence = matches[sentenceIndex];
+			? validSentences.length - 1
+			: Math.min(ordinal - 1, validSentences.length - 1);
+	const sentence = validSentences[sentenceIndex];
 	if (!sentence) return null;
-	const start = sentence.index ?? 0;
-	const end = start + sentence[0].length;
-	return { start, end };
+	return { start: sentence.start, end: sentence.end };
 }
 
 function extractAnchor(

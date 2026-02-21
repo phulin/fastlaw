@@ -1,15 +1,124 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
+import { type Paragraph, ParagraphRange } from "../types";
+import { createParagraph } from "./test-utils";
 
 interface SelectedInstructionBlock {
 	citation: string;
 	sectionPath: string;
 	instructionText: string;
-	body: string;
-	expectedBody: string;
+	instructionLineLevels: number[];
+	expectedEditedExcerpt: string;
 }
+
+interface LeveledLine {
+	text: string;
+	level: number;
+}
+
+const LEVEL_TO_XSTART = 24;
+const TEST_DIR = dirname(fileURLToPath(import.meta.url));
+const WEB_ROOT = resolve(TEST_DIR, "../../..");
+
+const fixturePathFromSectionPath = (sectionPath: string): string => {
+	const parts = sectionPath.split("/").filter((part) => part.length > 0);
+	const sectionIndex = parts.indexOf("section");
+	if (sectionIndex < 0) {
+		throw new Error(`Invalid section path: ${sectionPath}`);
+	}
+	const title = parts[sectionIndex + 1];
+	const section = parts[sectionIndex + 2];
+	if (!title || !section) {
+		throw new Error(`Unable to resolve title/section from: ${sectionPath}`);
+	}
+	return resolve(
+		WEB_ROOT,
+		`src/lib/__fixtures__/usc-${title}-${section}-full.md`,
+	);
+};
+
+const splitFixtureLines = (text: string): string[] =>
+	text
+		.split("\n")
+		.map((rawLine) => rawLine.trim())
+		.filter((line) => line.length > 0);
+
+const toLeveledLines = (
+	text: string,
+	lineLevels: readonly number[],
+): LeveledLine[] => {
+	const lines = splitFixtureLines(text);
+	if (lines.length !== lineLevels.length) {
+		throw new Error(
+			`Line count mismatch: got ${lines.length} lines and ${lineLevels.length} levels.`,
+		);
+	}
+	const minLevel =
+		lineLevels.length === 0 ? 0 : Math.min(...lineLevels.map((level) => level));
+	return lines.map((line, index) => ({
+		text: line,
+		level: (lineLevels[index] ?? 0) - minLevel,
+	}));
+};
+
+const createInstructionParagraphs = (
+	instructionText: string,
+	lineLevels: readonly number[],
+): Paragraph[] =>
+	toLeveledLines(instructionText, lineLevels).map((line, index) =>
+		createParagraph(line.text, {
+			level: line.level,
+			y: 780 - index * 12,
+			lines: [
+				{
+					xStart: line.level * LEVEL_TO_XSTART,
+					y: 780 - index * 12,
+					page: 1,
+				},
+			],
+		}),
+	);
+
+const resolveRangeFromParagraphs = (
+	paragraphs: readonly Paragraph[],
+	start: number,
+	end: number,
+): ParagraphRange => {
+	let cursor = 0;
+	let startIndex = 0;
+	let endIndex = paragraphs.length - 1;
+	let startFirst = 0;
+	let endLast = 0;
+
+	for (let i = 0; i < paragraphs.length; i += 1) {
+		const paragraph = paragraphs[i];
+		if (!paragraph) continue;
+		const lineStart = cursor;
+		const lineEnd = lineStart + paragraph.text.length;
+
+		if (start >= lineStart && start <= lineEnd) {
+			startIndex = i;
+			startFirst = start - lineStart;
+		}
+		if (end >= lineStart && end <= lineEnd) {
+			endIndex = i;
+			endLast = end - lineStart;
+			break;
+		}
+		cursor = lineEnd + 1;
+	}
+
+	return new ParagraphRange(
+		paragraphs.slice(startIndex, endIndex + 1),
+		startFirst,
+		endLast,
+	);
+};
 
 const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
 	{
@@ -17,37 +126,42 @@ const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
 		sectionPath: "/statutes/usc/section/7/2012",
 		instructionText: `(a) IN GENERAL.—Section 3 of the Food and Nutrition Act of 2008 (7 U.S.C. 2012) is amended by striking subsection (u) and inserting the following:
 “(u) THRIFTY FOOD PLAN.—
-“(1) IN GENERAL.—The term ‘thrifty food plan’ means the diet..."`,
-		body: `(u) Thrifty food plan
-The term "thrifty food plan" means the diet required...`,
-		expectedBody: `(u) THRIFTY FOOD PLAN.—
-(1) IN GENERAL.—The term ‘thrifty food plan’ means the diet...`,
+“(1) IN GENERAL.—The term ‘thrifty food plan’ means the diet...”`,
+		instructionLineLevels: [1, 1, 2],
+		expectedEditedExcerpt: "(u) THRIFTY FOOD PLAN.—",
 	},
 	{
 		citation: "7 U.S.C. 2015(o)(4)",
 		sectionPath: "/statutes/usc/section/7/2015/o",
 		instructionText: `(b) STANDARDIZING ENFORCEMENT.—Section 6(o)(4) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(o)(4)) is amended—
 (1) in subparagraph (A), by striking clause (ii) and inserting the following:
-“(ii) is in a noncontiguous State.”;
+“(ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.”; and
 (2) by adding at the end the following:
-“(C) DEFINITION.—”`,
-		body: `(4) Waivers
-(A) On request...
-(i) has an unemployment...
-(ii) does not have a sufficient number...`,
-		expectedBody: `(4) Waivers
-(A) On request...
-(i) has an unemployment...
-(ii) is in a noncontiguous State.
-(C) DEFINITION.—`,
+“(C) DEFINITION OF NONCONTIGUOUS STATE.—
+“(i) IN GENERAL.—In this paragraph, the term 'noncontiguous State' means a State that is not 1 of the contiguous 48 States or the District of Columbia.
+“(ii) EXCLUSIONS.—The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.”.`,
+		instructionLineLevels: [1, 2, 5, 2, 3, 4, 4],
+		expectedEditedExcerpt: `(ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.
+
+(B) Report
+
+The Secretary shall report the basis for a waiver under subparagraph (A) to the Committee on Agriculture of the House of Representatives and the Committee on Agriculture, Nutrition, and Forestry of the Senate.
+(C) DEFINITION OF NONCONTIGUOUS STATE.—`,
 	},
 	{
 		citation: "7 U.S.C. 2015(f)",
 		sectionPath: "/statutes/usc/section/7/2015/f",
 		instructionText: `Section 6(f) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(f)) is amended to read as follows:
-“(f) No individual who is a member of a household...”`,
-		body: `(f) No individual who is a member... (old version)`,
-		expectedBody: `(f) No individual who is a member of a household...`,
+“(f) No individual who is a member of a household otherwise eligible to participate in the supplemental nutrition assistance program under this section shall be eligible to participate in the supplemental nutrition assistance program as a member of that or any other household unless he or she is—
+“(1) a resident of the United States; and
+“(2) either—
+“(A) a citizen or national of the United States;
+“(B) an alien lawfully admitted for permanent residence as an immigrant as defined by sections 101(a)(15) and 101(a)(20) of the Immigration and Nationality Act, excluding, among others, alien visitors, tourists, diplomats, and students who enter the United States temporarily with no intention of abandoning their residence in a foreign country;
+“(C) an alien who has been granted the status of Cuban and Haitian entrant, as defined in section 501(e) of the Refugee Education Assistance Act of 1980 (Public Law 96–422); or
+“(D) an individual who lawfully resides in the United States in accordance with a Compact of Free Association referred to in section 402(b)(2)(G) of the Personal Responsibility and Work Opportunity Reconciliation Act of 1996.
+The income (less, at State option, a pro rata share) and financial resources of the individual rendered ineligible to participate in the supplemental nutrition assistance program under this subsection shall be considered in determining the eligibility and the value of the allotment of the household of which such individual is a member.”.`,
+		instructionLineLevels: [0, 1, 2, 2, 3, 3, 3, 3, 1],
+		expectedEditedExcerpt: "(A) a citizen or national of the United States;",
 	},
 	{
 		citation: "7 U.S.C. 2015(o)",
@@ -55,14 +169,9 @@ The term "thrifty food plan" means the diet required...`,
 		instructionText: `(c) WAIVER FOR NONCONTIGUOUS STATES.—Section 6(o) of the Food and Nutrition Act of 2008 (7 U.S.C. 2015(o)) is amended—
 (1) by redesignating paragraph (7) as paragraph (8); and
 (2) by inserting after paragraph (6) the following:
-“(7) EXEMPTION.—”`,
-		body: `(o) Work requirement
-(6) 15-percent exemption...
-(7) Other exemptions...`,
-		expectedBody: `(o) Work requirement
-(6) 15-percent exemption...
-(7) EXEMPTION.—
-(8) Other exemptions...`,
+“(7) EXEMPTION FOR NONCONTIGUOUS STATES.—”`,
+		instructionLineLevels: [1, 2, 2, 3],
+		expectedEditedExcerpt: "(8) Other program rules",
 	},
 	{
 		citation: "7 U.S.C. 2013(a)",
@@ -73,27 +182,23 @@ The term "thrifty food plan" means the diet required...`,
 “(1) ESTABLISHMENT.—Subject to”; and
 (2) by adding at the end the following:
 “(2) STATE QUALITY CONTROL INCENTIVE.—”`,
-		body: `(a) Subject to the availability of funds...`,
-		expectedBody: `(a) PROGRAM.—
-(1) ESTABLISHMENT.—Subject to the availability of funds...
-(2) STATE QUALITY CONTROL INCENTIVE.—`,
+		instructionLineLevels: [1, 2, 1, 2, 2, 2],
+		expectedEditedExcerpt: "(2) STATE QUALITY CONTROL INCENTIVE.—",
 	},
 	{
 		citation: "7 U.S.C. 9011(8)(B)(ii)",
 		sectionPath: "/statutes/usc/section/7/9011/8/B",
-		instructionText: `Section 1111(8)(B)(ii) of the Agricultural Act of 2014 (7 U.S.C. 9011(8)(B)(ii)) is amended by striking “85” and inserting “beginning with the crop year 2025, 88”.`,
-		body: `(ii) 85 percent of the average of the marketing year average price of the covered commodity...`,
-		expectedBody: `(ii) beginning with the crop year 2025, 88 percent of the average of the marketing year average price of the covered commodity...`,
+		instructionText: `(a) EFFECTIVE REFERENCE PRICE.—Section 1111(8)(B)(ii) of the Agricultural Act of 2014 (7 U.S.C. 9011(8)(B)(ii)) is amended by striking “85” and inserting “beginning with the crop year 2025, 88”.`,
+		instructionLineLevels: [1],
+		expectedEditedExcerpt: "beginning with the crop year 2025, 88",
 	},
 	{
 		citation: "7 U.S.C. 9015",
 		sectionPath: "/statutes/usc/section/7/9015",
-		instructionText: `Section 1115 of the Agricultural Act of 2014 (7 U.S.C. 9015) is amended—
+		instructionText: `(a) IN GENERAL.—Section 1115 of the Agricultural Act of 2014 (7 U.S.C. 9015) is amended—
 (1) in subsection (a), in the matter preceding paragraph (1), by striking “2023” and inserting “2031”;`,
-		body: `(a) Producer election
-For the 2014 through 2023 crop years, all of the producers on a farm shall...`,
-		expectedBody: `(a) Producer election
-For the 2014 through 2031 crop years, all of the producers on a farm shall...`,
+		instructionLineLevels: [1, 2],
+		expectedEditedExcerpt: "for the 2019 through 2031 crop years",
 	},
 	{
 		citation: "7 U.S.C. 9034",
@@ -102,105 +207,74 @@ For the 2014 through 2031 crop years, all of the producers on a farm shall...`,
 (1) in subsection (b)—
 (A) by redesignating paragraph (1) as subparagraph (A) and indenting appropriately;
 (B) in the matter preceding subparagraph (A) (as so redesignated), by striking “The Secretary” and inserting the following:
-“(1) IN GENERAL.—The Secretary"; 
+“(1) IN GENERAL.—The Secretary”; and
 (C) by striking paragraph (2) and inserting the following:
-“(B)(i) in the case of long grain rice;
-“(ii) in the case of upland cotton.
+“(B)(i) in the case of long grain rice and medium grain rice, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section; or
+“(ii) in the case of upland cotton, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section.
 “(2) REFUND FOR UPLAND COTTON.—”`,
-		body: `(b) Repayment
-The Secretary shall permit producers to repay a marketing assistance loan at the lesser of—
-(1) the loan rate;
-(2) the prevailing world market price.`,
-		expectedBody: `(b) Repayment
-(1) IN GENERAL.—The Secretary shall permit producers to repay a marketing assistance loan at the lesser of—
-(A) the loan rate;
-(B)(i) in the case of long grain rice;
-(ii) in the case of upland cotton.
-(2) REFUND FOR UPLAND COTTON.—`,
+		instructionLineLevels: [0, 2, 3, 3, 2, 3, 3, 4, 2],
+		expectedEditedExcerpt: "(2) REFUND FOR UPLAND COTTON.—",
 	},
 	{
 		citation: "7 U.S.C. 2036(a)(2)",
 		sectionPath: "/statutes/usc/section/7/2036/a",
-		instructionText: `Section 27(a)(2) of the Food and Nutrition Act of 2008 (7 U.S.C. 2036(a)(2))) is amended by striking “section 3(u)(4)” each place it appears and inserting “section 3(u)(3)”.`,
-		body: `(2) The amount allocated under section 3(u)(4) shall be equal to the amount determined under section 3(u)(4) of this Act.`,
-		expectedBody: `(2) The amount allocated under section 3(u)(3) shall be equal to the amount determined under section 3(u)(3) of this Act.`,
+		instructionText: `(3) Section 27(a)(2) of the Food and Nutrition Act of 2008 (7 U.S.C. 2036(a)(2))) is amended by striking “section 3(u)(4)” each place it appears and inserting “section 3(u)(3)”.`,
+		instructionLineLevels: [1],
+		expectedEditedExcerpt: "section 3(u)(3)",
 	},
 	{
 		citation: "42 U.S.C. 1396o-1(a)(1)",
 		sectionPath: "/statutes/usc/section/42/1396o-1/a",
-		instructionText: `Section 1916A(a)(1) of the Social Security Act (42 U.S.C. 1396o–1(a)(1)) is amended, in the second sentence, by striking “or (j)” and inserting “(j), or (k)”.`,
-		body: `(a) State option
-(1) In general
-Notwithstanding section 1396o of this title, a State may impose a premium. A state may also waive the rules of section (i) or (j) in certain conditions.`,
-		expectedBody: `(a) State option
-(1) In general
-Notwithstanding section 1396o of this title, a State may impose a premium. A state may also waive the rules of section (i), (j), or (k) in certain conditions.`,
+		instructionText: `(2) NONAPPLICABILITY OF ALTERNATIVE COST SHARING.—Section 1916A(a)(1) of the Social Security Act (42 U.S.C. 1396o–1(a)(1)) is amended, in the second sentence, by striking “or (j)” and inserting “(j), or (k)”.`,
+		instructionLineLevels: [1],
+		expectedEditedExcerpt: "(j), or (k)",
 	},
 	{
 		citation: "7 U.S.C. 9038(a)",
 		sectionPath: "/statutes/usc/section/7/9038/a",
-		instructionText: `Section 1208(a) of the Agricultural Act of 2014 (7 U.S.C. 9038(a)) is amended, in the matter preceding paragraph (1), by striking “2026” and inserting “2032”.`,
-		body: `(a) Competitiveness program
-During the period beginning on the date of enactment of this Act and ending on July 31, 2026, the Secretary shall carry out a program—
-(1) to aid in the competitiveness;`,
-		expectedBody: `(a) Competitiveness program
-During the period beginning on the date of enactment of this Act and ending on July 31, 2032, the Secretary shall carry out a program—
-(1) to aid in the competitiveness;`,
+		instructionText: `(e) SPECIAL COMPETITIVE PROVISIONS FOR EXTRA LONG STAPLE COTTON.—Section 1208(a) of the Agricultural Act of 2014 (7 U.S.C. 9038(a)) is amended, in the matter preceding paragraph (1), by striking “2026” and inserting “2032”.`,
+		instructionLineLevels: [1],
+		expectedEditedExcerpt: "through July 31, 2032",
 	},
 	{
 		citation: "7 U.S.C. 1516(b)(2)(C)(i)",
 		sectionPath: "/statutes/usc/section/7/1516/b/2/C",
 		instructionText: `Section 516(b)(2)(C)(i) of the Federal Crop Insurance Act (7 U.S.C. 1516(b)(2)(C)(i)) is amended, in the matter preceding subclause (I), by striking “for each fiscal year” and inserting “for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter”.`,
-		body: `(C) Research and development
-(i) In general
-There are authorized to be appropriated for each fiscal year:
-(I) the amount of...`,
-		expectedBody: `(C) Research and development
-(i) In general
-There are authorized to be appropriated for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter:
-(I) the amount of...`,
-	},
-	{
-		citation: "26 U.S.C. 461(l)(1)",
-		sectionPath: "/statutes/usc/section/26/461/l",
-		instructionText: `Section 461(l)(1) is amended by striking “and before January 1, 2029,” each place it appears.`,
-		body: `(l) Limitation on excess business losses of noncorporate taxpayers
-(1) Limitation
-In the case of a taxpayer other than a corporation and before January 1, 2029, any excess business loss and before January 1, 2029, shall be treated as a net operating loss.`,
-		expectedBody: `(l) Limitation on excess business losses of noncorporate taxpayers
-(1) Limitation
-In the case of a taxpayer other than a corporation any excess business loss shall be treated as a net operating loss.`,
+		instructionLineLevels: [1],
+		expectedEditedExcerpt:
+			"for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter",
 	},
 	{
 		citation: "7 U.S.C. 9036",
 		sectionPath: "/statutes/usc/section/7/9036",
-		instructionText: `Section 1206 of the Agricultural Act of 2014 (7 U.S.C. 9036) is amended, in subsections (a) and (d), by striking “2023” each place it appears and inserting “2031”.`,
-		body: `(a) In general
-For the 2014 through 2023 crop years, the Secretary may make payments...
-(d) Application
-This section applies to the 2014 through 2023 crop years.`,
-		expectedBody: `(a) In general
-For the 2014 through 2031 crop years, the Secretary may make payments...
-(d) Application
-This section applies to the 2014 through 2031 crop years.`,
+		instructionText: `(2) PAYMENTS IN LIEU OF LDPS.—Section 1206 of the Agricultural Act of 2014 (7 U.S.C. 9036) is amended, in subsections (a) and (d), by striking “2023” each place it appears and inserting “2031”.`,
+		instructionLineLevels: [1],
+		expectedEditedExcerpt:
+			"Effective for each of the 2014 through 2031 crop years",
 	},
 	{
 		citation: "7 U.S.C. 1308-3a(d)",
 		sectionPath: "/statutes/usc/section/7/1308-3a/d",
-		instructionText: `Section 1001D(d) of the Food Security Act of 1985 (7 U.S.C. 1308–3a(d)) is amended by striking “, general partnership, or joint venture” each place it appears.`,
-		body: `(d) Limitation
-If a person, general partnership, or joint venture has an AGI exceeding $900,000, the person, general partnership, or joint venture shall be ineligible...`,
-		expectedBody: `(d) Limitation
-If a person has an AGI exceeding $900,000, the person shall be ineligible...`,
+		instructionText: `(e) EXCLUSION FROM AGI CALCULATION.—Section 1001D(d) of the Food Security Act of 1985 (7 U.S.C. 1308–3a(d)) is amended by striking “, general partnership, or joint venture” each place it appears.`,
+		instructionLineLevels: [1],
+		expectedEditedExcerpt:
+			"to an entity, the amount of the payment or benefit shall be reduced",
 	},
 ];
 
 for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
 	test(`HR1 Integration Diverse: ${sample.citation}`, () => {
 		const parser = createHandcraftedInstructionParser();
+		const instructionParagraphs = createInstructionParagraphs(
+			sample.instructionText,
+			sample.instructionLineLevels,
+		);
+		const instructionLines = instructionParagraphs.map((p) => p.text);
 		const parsed = parser.parseInstructionFromLines(
-			sample.instructionText.split("\n"),
+			instructionLines,
 			0,
+			(start, end) =>
+				resolveRangeFromParagraphs(instructionParagraphs, start, end),
 		);
 		expect(parsed).toBeTruthy();
 		if (!parsed?.ast) return;
@@ -208,18 +282,31 @@ for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
 		const translated = translateInstructionAstToEditTree(parsed.ast);
 		expect(translated).toBeTruthy();
 		if (!translated?.tree) return;
+		expect(translated.issues, sample.citation).toEqual([]);
 
 		const effect = applyAmendmentEditTreeToSection({
 			tree: translated.tree,
 			sectionPath: sample.sectionPath,
-			sectionBody: sample.body,
-			instructionText: sample.instructionText,
+			sectionBody: readFileSync(
+				fixturePathFromSectionPath(sample.sectionPath),
+				"utf8",
+			).trim(),
+			instructionText: instructionLines.join("\n"),
 		});
 
-		if (effect.status === "ok") {
-			expect(effect.renderModel.plainText).toContain(sample.expectedBody);
-		} else {
-			expect(effect.status).not.toBe("unsupported");
-		}
+		expect(effect.status, sample.citation).toBe("ok");
+		expect(
+			effect.debug.operationAttempts.length,
+			sample.citation,
+		).toBeGreaterThan(0);
+		expect(
+			effect.debug.operationAttempts.every(
+				(attempt) => attempt.outcome === "applied",
+			),
+			sample.citation,
+		).toBe(true);
+		expect(effect.renderModel.plainText, sample.citation).toContain(
+			sample.expectedEditedExcerpt,
+		);
 	});
 }

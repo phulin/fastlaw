@@ -797,6 +797,7 @@ __metadata:
     remark-gfm: "npm:^4.0.1"
     remark-parse: "npm:^11.0.0"
     remark-rehype: "npm:^11.1.2"
+    sentencex-wasm: "npm:^0.1.13"
     solid-js: "npm:^1.9.5"
     tsx: "npm:^4.21.0"
     unified: "npm:^11.0.5"
@@ -4207,6 +4208,13 @@ __metadata:
   bin:
     semver: bin/semver.js
   checksum: 10c0/5215ad0234e2845d4ea5bb9d836d42b03499546ddafb12075566899fc617f68794bb6f146076b6881d755de17d6c6cc73372555879ec7dce2c2feee947866ad2
+  languageName: node
+  linkType: hard
+
+"sentencex-wasm@npm:^0.1.13":
+  version: 0.1.13
+  resolution: "sentencex-wasm@npm:0.1.13"
+  checksum: 10c0/09befd7dedbd6b1dbab345340242480acd903b9069a77c98a6f1d91d408eb180b6d1dbb0b39e513ef135f1e921a9d810dab23701314c451ddde09df4398da370
   languageName: node
   linkType: hard
 
