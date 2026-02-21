@@ -236,9 +236,10 @@ describe("selected HR1 instruction integration", () => {
 				),
 				sample.citation,
 			).toBe(true);
-			expect(effect.segments[0]?.text.length, sample.citation).toBeGreaterThan(
-				0,
-			);
+			expect(
+				effect.renderModel.plainText.length,
+				sample.citation,
+			).toBeGreaterThan(0);
 		}
 	});
 });

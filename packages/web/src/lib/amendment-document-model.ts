@@ -1,5 +1,11 @@
+import type { Root, RootContent } from "mdast";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+import type { Node, Parent } from "unist";
 import type {
 	DocumentModel,
+	FormattingSpan,
 	HierarchyLevel,
 	HierarchyLevelType,
 	ScopeRange,
@@ -11,12 +17,350 @@ import {
 	parseMarkdownHierarchy,
 } from "./markdown-hierarchy-parser";
 
-function getLineStarts(text: string): number[] {
-	const starts = [0];
-	for (let i = 0; i < text.length; i += 1) {
-		if (text[i] === "\n") starts.push(i + 1);
+const parseProcessor = unified().use(remarkParse).use(remarkGfm);
+
+interface ParsedPlainDocument {
+	plainText: string;
+	spans: FormattingSpan[];
+	sourceToPlainOffsets: number[];
+}
+
+interface SourcePlainSegment {
+	sourceStart: number;
+	sourceEnd: number;
+	plainStart: number;
+	plainEnd: number;
+}
+
+function nodeOffsets(node: Node): { start: number; end: number } | null {
+	const start = node.position?.start?.offset;
+	const end = node.position?.end?.offset;
+	if (typeof start !== "number" || typeof end !== "number") return null;
+	if (end < start) return null;
+	return { start, end };
+}
+
+function addSpan(
+	spans: FormattingSpan[],
+	span: Omit<FormattingSpan, "metadata"> & {
+		metadata?: Record<string, unknown>;
+	},
+): void {
+	if (span.end <= span.start) return;
+	spans.push(span);
+}
+
+function renderInlineNode(
+	node: Node,
+	state: {
+		plainParts: string[];
+		plainLength: number;
+		spans: FormattingSpan[];
+		segments: SourcePlainSegment[];
+	},
+): void {
+	switch (node.type) {
+		case "text": {
+			const value = (node as Node & { value?: string }).value ?? "";
+			if (value.length === 0) return;
+			const start = state.plainLength;
+			state.plainParts.push(value);
+			state.plainLength += value.length;
+			const offsets = nodeOffsets(node);
+			if (offsets) {
+				state.segments.push({
+					sourceStart: offsets.start,
+					sourceEnd: offsets.end,
+					plainStart: start,
+					plainEnd: state.plainLength,
+				});
+			}
+			return;
+		}
+		case "inlineCode": {
+			const value = (node as Node & { value?: string }).value ?? "";
+			const start = state.plainLength;
+			if (value.length > 0) {
+				state.plainParts.push(value);
+				state.plainLength += value.length;
+			}
+			const end = state.plainLength;
+			addSpan(state.spans, { start, end, type: "inlineCode" });
+			const offsets = nodeOffsets(node);
+			if (offsets && end > start) {
+				state.segments.push({
+					sourceStart: offsets.start,
+					sourceEnd: offsets.end,
+					plainStart: start,
+					plainEnd: end,
+				});
+			}
+			return;
+		}
+		case "break": {
+			const start = state.plainLength;
+			state.plainParts.push("\n");
+			state.plainLength += 1;
+			const offsets = nodeOffsets(node);
+			if (offsets) {
+				state.segments.push({
+					sourceStart: offsets.start,
+					sourceEnd: offsets.end,
+					plainStart: start,
+					plainEnd: state.plainLength,
+				});
+			}
+			return;
+		}
+		case "strong":
+		case "emphasis":
+		case "delete":
+		case "link": {
+			const start = state.plainLength;
+			const parent = node as Parent;
+			for (const child of parent.children ?? []) {
+				renderInlineNode(child, state);
+			}
+			const end = state.plainLength;
+			if (node.type === "strong") {
+				addSpan(state.spans, { start, end, type: "strong" });
+			} else if (node.type === "emphasis") {
+				addSpan(state.spans, { start, end, type: "emphasis" });
+			} else if (node.type === "delete") {
+				addSpan(state.spans, { start, end, type: "delete" });
+			} else {
+				const href = (node as Node & { url?: string }).url;
+				addSpan(state.spans, {
+					start,
+					end,
+					type: "link",
+					metadata: href ? { href } : undefined,
+				});
+			}
+			return;
+		}
+		default: {
+			const parent = node as Parent;
+			if (!Array.isArray(parent.children)) return;
+			for (const child of parent.children) {
+				renderInlineNode(child, state);
+			}
+		}
 	}
-	return starts;
+}
+
+function addBlock(
+	node: RootContent,
+	quoteDepth: number,
+	state: {
+		plainParts: string[];
+		plainLength: number;
+		spans: FormattingSpan[];
+		segments: SourcePlainSegment[];
+		blockCount: number;
+	},
+): void {
+	if (state.blockCount > 0) {
+		state.plainParts.push("\n\n");
+		state.plainLength += 2;
+	}
+	state.blockCount += 1;
+
+	const start = state.plainLength;
+	if (node.type === "code") {
+		const value = node.value ?? "";
+		if (value.length > 0) {
+			state.plainParts.push(value);
+			state.plainLength += value.length;
+		}
+		const offsets = nodeOffsets(node);
+		if (offsets && value.length > 0) {
+			state.segments.push({
+				sourceStart: offsets.start,
+				sourceEnd: offsets.end,
+				plainStart: start,
+				plainEnd: state.plainLength,
+			});
+		}
+	} else {
+		const parent = node as Parent;
+		for (const child of parent.children ?? []) {
+			renderInlineNode(child, state);
+		}
+	}
+	const end = state.plainLength;
+
+	addSpan(state.spans, {
+		start,
+		end,
+		type: "paragraph",
+		metadata: { quoteDepth },
+	});
+	if (quoteDepth > 0) {
+		addSpan(state.spans, {
+			start,
+			end,
+			type: "blockquote",
+			metadata: { depth: quoteDepth },
+		});
+	}
+	if (node.type === "heading") {
+		addSpan(state.spans, {
+			start,
+			end,
+			type: "heading",
+			metadata: { depth: node.depth },
+		});
+	}
+}
+
+function walkBlocks(
+	nodes: RootContent[],
+	quoteDepth: number,
+	state: {
+		plainParts: string[];
+		plainLength: number;
+		spans: FormattingSpan[];
+		segments: SourcePlainSegment[];
+		blockCount: number;
+	},
+): void {
+	for (const node of nodes) {
+		if (node.type === "blockquote") {
+			walkBlocks(node.children ?? [], quoteDepth + 1, state);
+			continue;
+		}
+		if (node.type === "list") {
+			for (const item of node.children ?? []) {
+				walkBlocks(
+					(item as Parent).children as RootContent[],
+					quoteDepth,
+					state,
+				);
+			}
+			continue;
+		}
+		if (node.type === "thematicBreak") {
+			addBlock(
+				{ type: "paragraph", children: [{ type: "text", value: "---" }] },
+				quoteDepth,
+				state,
+			);
+			continue;
+		}
+		if (node.type === "table") {
+			for (const row of node.children ?? []) {
+				const rowParts: string[] = [];
+				for (const cell of (row as Parent).children ?? []) {
+					const cellState = {
+						plainParts: [] as string[],
+						plainLength: 0,
+						spans: [] as FormattingSpan[],
+						segments: [] as SourcePlainSegment[],
+					};
+					for (const child of (cell as Parent).children ?? []) {
+						renderInlineNode(child, cellState);
+					}
+					rowParts.push(cellState.plainParts.join(""));
+				}
+				addBlock(
+					{
+						type: "paragraph",
+						children: [{ type: "text", value: rowParts.join(" | ") }],
+					},
+					quoteDepth,
+					state,
+				);
+			}
+			continue;
+		}
+		if (
+			node.type === "paragraph" ||
+			node.type === "heading" ||
+			node.type === "code"
+		) {
+			addBlock(node, quoteDepth, state);
+			continue;
+		}
+		const parent = node as Parent;
+		if (Array.isArray(parent.children)) {
+			walkBlocks(parent.children as RootContent[], quoteDepth, state);
+		}
+	}
+}
+
+function buildOffsetMaps(
+	sourceText: string,
+	plainTextLength: number,
+	segments: SourcePlainSegment[],
+): { sourceToPlainOffsets: number[] } {
+	const sourceToPlainOffsets = new Array<number>(sourceText.length + 1).fill(0);
+	const sorted = [...segments].sort(
+		(left, right) =>
+			left.sourceStart - right.sourceStart ||
+			left.plainStart - right.plainStart,
+	);
+
+	let sourceCursor = 0;
+	let plainCursor = 0;
+	for (const segment of sorted) {
+		const sourceStart = Math.max(
+			0,
+			Math.min(sourceText.length, segment.sourceStart),
+		);
+		const sourceEnd = Math.max(
+			sourceStart,
+			Math.min(sourceText.length, segment.sourceEnd),
+		);
+		for (let index = sourceCursor; index <= sourceStart; index += 1) {
+			sourceToPlainOffsets[index] = plainCursor;
+		}
+		const plainSegmentLength = Math.max(
+			0,
+			segment.plainEnd - segment.plainStart,
+		);
+		for (let index = sourceStart; index <= sourceEnd; index += 1) {
+			const relative = index - sourceStart;
+			sourceToPlainOffsets[index] =
+				segment.plainStart + Math.min(relative, plainSegmentLength);
+		}
+		sourceCursor = Math.max(sourceCursor, sourceEnd);
+		plainCursor = Math.max(plainCursor, segment.plainEnd);
+	}
+
+	for (let index = sourceCursor; index <= sourceText.length; index += 1) {
+		sourceToPlainOffsets[index] = plainCursor;
+	}
+	if (sourceToPlainOffsets[sourceText.length] !== plainTextLength) {
+		sourceToPlainOffsets[sourceText.length] = plainTextLength;
+	}
+
+	return { sourceToPlainOffsets };
+}
+
+export function parseMarkdownToPlainDocument(
+	sourceText: string,
+): ParsedPlainDocument {
+	const tree = parseProcessor.parse(sourceText) as Root;
+	const state = {
+		plainParts: [] as string[],
+		plainLength: 0,
+		spans: [] as FormattingSpan[],
+		segments: [] as SourcePlainSegment[],
+		blockCount: 0,
+	};
+	walkBlocks(tree.children ?? [], 0, state);
+	const plainText = state.plainParts.join("");
+	const { sourceToPlainOffsets } = buildOffsetMaps(
+		sourceText,
+		plainText.length,
+		state.segments,
+	);
+	return {
+		plainText,
+		spans: state.spans,
+		sourceToPlainOffsets,
+	};
 }
 
 function rankToHierarchyType(rank: number): HierarchyLevelType {
@@ -57,7 +401,8 @@ function targetLevelFromNode(node: HierarchyNode): number {
 }
 
 function scopeRangeFromNode(
-	sourceText: string,
+	sourceToPlainOffsets: number[],
+	sourceTextLength: number,
 	lineStarts: number[],
 	node: HierarchyNode,
 	paragraphLineStarts: number[],
@@ -65,11 +410,15 @@ function scopeRangeFromNode(
 	const startLine = paragraphLineStarts[node.startParagraph];
 	const endLine = paragraphLineStarts[node.endParagraph];
 	if (typeof startLine !== "number") return null;
-	const start = lineStarts[startLine] ?? 0;
-	const end =
+	const sourceStart = lineStarts[startLine] ?? 0;
+	const sourceEnd =
 		typeof endLine === "number"
-			? (lineStarts[endLine] ?? sourceText.length)
-			: sourceText.length;
+			? (lineStarts[endLine] ?? sourceTextLength)
+			: sourceTextLength;
+	const safeStart = Math.max(0, Math.min(sourceTextLength, sourceStart));
+	const safeEnd = Math.max(safeStart, Math.min(sourceTextLength, sourceEnd));
+	const start = sourceToPlainOffsets[safeStart] ?? 0;
+	const end = sourceToPlainOffsets[safeEnd] ?? start;
 	return {
 		start,
 		end,
@@ -77,8 +426,17 @@ function scopeRangeFromNode(
 	};
 }
 
+function getLineStarts(text: string): number[] {
+	const starts = [0];
+	for (let i = 0; i < text.length; i += 1) {
+		if (text[i] === "\n") starts.push(i + 1);
+	}
+	return starts;
+}
+
 interface BuildNodesArgs {
-	sourceText: string;
+	sourceTextLength: number;
+	sourceToPlainOffsets: number[];
 	lineStarts: number[];
 	paragraphLineStarts: number[];
 	nodes: HierarchyNode[];
@@ -103,7 +461,8 @@ function buildNodes(args: BuildNodesArgs): string[] {
 		const nodeId = `${idPath}#${siblingCount}`;
 
 		const range = scopeRangeFromNode(
-			args.sourceText,
+			args.sourceToPlainOffsets,
+			args.sourceTextLength,
 			args.lineStarts,
 			node,
 			args.paragraphLineStarts,
@@ -125,7 +484,8 @@ function buildNodes(args: BuildNodesArgs): string[] {
 		builtNodeIds.push(nodeId);
 
 		const childIds = buildNodes({
-			sourceText: args.sourceText,
+			sourceTextLength: args.sourceTextLength,
+			sourceToPlainOffsets: args.sourceToPlainOffsets,
 			lineStarts: args.lineStarts,
 			paragraphLineStarts: args.paragraphLineStarts,
 			nodes: node.sublevels,
@@ -142,27 +502,30 @@ function buildNodes(args: BuildNodesArgs): string[] {
 }
 
 export function buildAmendmentDocumentModel(sourceText: string): DocumentModel {
-	const parsed = parseMarkdownHierarchy(sourceText);
+	const parsedHierarchy = parseMarkdownHierarchy(sourceText);
+	const parsedPlain = parseMarkdownToPlainDocument(sourceText);
 	const lineStarts = getLineStarts(sourceText);
-	const paragraphLineStarts = parsed.paragraphs.map(
+	const paragraphLineStarts = parsedHierarchy.paragraphs.map(
 		(paragraph) => paragraph.startLine,
 	);
 
 	const nodesById = new Map<string, StructuralNode>();
 	const rootNodeIds = buildNodes({
-		sourceText,
+		sourceTextLength: sourceText.length,
+		sourceToPlainOffsets: parsedPlain.sourceToPlainOffsets,
 		lineStarts,
 		paragraphLineStarts,
-		nodes: parsed.levels,
+		nodes: parsedHierarchy.levels,
 		parentPath: [],
 		nodesById,
 	});
 
 	return {
-		sourceText,
+		plainText: parsedPlain.plainText,
+		spans: parsedPlain.spans,
 		rootRange: {
 			start: 0,
-			end: sourceText.length,
+			end: parsedPlain.plainText.length,
 			targetLevel: null,
 		},
 		nodesById,

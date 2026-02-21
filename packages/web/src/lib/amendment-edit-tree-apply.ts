@@ -2,6 +2,7 @@ import { buildAmendmentDocumentModel } from "./amendment-document-model";
 import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
 import type {
 	DocumentModel,
+	FormattingSpan,
 	HierarchyLevel,
 	OperationMatchAttempt,
 	ResolutionIssue,
@@ -21,7 +22,7 @@ import {
 	textSearchFromEditTarget,
 	UltimateEditKind,
 } from "./amendment-edit-tree";
-import { type MarkdownReplacementRange, renderMarkdown } from "./markdown";
+import { renderMarkdown } from "./markdown";
 
 interface ApplyEditTreeArgs {
 	tree: InstructionSemanticTree;
@@ -75,11 +76,14 @@ export interface AmendmentApplySummary {
 export interface AmendmentEffect {
 	status: "ok" | "unsupported";
 	sectionPath: string;
+	renderModel: {
+		plainText: string;
+		spans: FormattingSpan[];
+	};
 	segments: AmendmentEffectSegment[];
 	changes: Array<{ deleted: string; inserted: string }>;
 	deleted: string[];
 	inserted: string[];
-	replacements?: MarkdownReplacementRange[];
 	annotatedHtml?: string;
 	applySummary: AmendmentApplySummary;
 	debug: AmendmentEffectDebug;
@@ -882,6 +886,7 @@ function buildApplySummary(
 
 function makeUnsupportedResult(
 	args: ApplyEditTreeArgs,
+	renderModel: { plainText: string; spans: FormattingSpan[] },
 	operationCount: number,
 	operationAttempts: OperationMatchAttempt[],
 	reason: string,
@@ -898,11 +903,11 @@ function makeUnsupportedResult(
 	return {
 		status: "unsupported",
 		sectionPath: args.sectionPath,
+		renderModel,
 		segments: [{ kind: "unchanged", text: args.sectionBody }],
 		changes: [],
 		deleted: [],
 		inserted: [],
-		replacements: [],
 		annotatedHtml: renderMarkdown(args.sectionBody),
 		applySummary,
 		debug: {
@@ -946,6 +951,7 @@ export function applyAmendmentEditTreeToSection(
 	if (walked.resolved.length === 0) {
 		return makeUnsupportedResult(
 			args,
+			{ plainText: model.plainText, spans: model.spans },
 			0,
 			[],
 			walked.unsupportedReasons[0] ?? "no_edit_tree_operations",
@@ -953,26 +959,25 @@ export function applyAmendmentEditTreeToSection(
 		);
 	}
 
-	const { patches, attempts } = planEdits(
-		model,
-		args.sectionBody,
-		walked.resolved,
-	);
-	const applied = applyPlannedPatchesTransaction(args.sectionBody, patches);
-	const workingText = applied.text;
-	const replacements = applied.replacements;
+	const { patches, attempts } = planEdits(model, walked.resolved);
+	const applied = applyPlannedPatchesTransaction(model, patches);
+	const workingText = applied.plainText;
 
 	const changes = patches.map((patch) => ({
-		deleted: patch.deleted,
-		inserted: `${patch.insertedPrefix ?? ""}${patch.inserted.text}${patch.insertedSuffix ?? ""}`,
+		deleted: patch.deletedPlain,
+		inserted: `${patch.insertedPrefixPlain ?? ""}${patch.insertedPlain}${
+			patch.insertedSuffixPlain ?? ""
+		}`,
 	}));
 	const deleted = patches
-		.map((patch) => patch.deleted)
+		.map((patch) => patch.deletedPlain)
 		.filter((value) => value.length > 0);
 	const inserted = patches
 		.map(
 			(patch) =>
-				`${patch.insertedPrefix ?? ""}${patch.inserted.text}${patch.insertedSuffix ?? ""}`,
+				`${patch.insertedPrefixPlain ?? ""}${patch.insertedPlain}${
+					patch.insertedSuffixPlain ?? ""
+				}`,
 		)
 		.filter((value) => value.length > 0);
 	const applySummary = buildApplySummary(attempts, walked.issues);
@@ -980,6 +985,7 @@ export function applyAmendmentEditTreeToSection(
 	if (changes.length === 0) {
 		return makeUnsupportedResult(
 			args,
+			{ plainText: model.plainText, spans: model.spans },
 			walked.resolved.length,
 			attempts,
 			walked.unsupportedReasons[0] ??
@@ -996,12 +1002,12 @@ export function applyAmendmentEditTreeToSection(
 	return {
 		status: "ok",
 		sectionPath: args.sectionPath,
+		renderModel: { plainText: applied.plainText, spans: applied.spans },
 		segments: [{ kind: "unchanged", text: workingText }],
 		changes,
 		deleted,
 		inserted,
-		replacements,
-		annotatedHtml: renderMarkdown(workingText, { replacements }),
+		annotatedHtml: renderMarkdown(workingText),
 		applySummary,
 		debug: {
 			sectionTextLength: args.sectionBody.length,

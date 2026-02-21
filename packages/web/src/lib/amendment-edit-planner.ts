@@ -1,6 +1,10 @@
-import { getScopeRangeFromNodeId } from "./amendment-document-model";
+import {
+	getScopeRangeFromNodeId,
+	parseMarkdownToPlainDocument,
+} from "./amendment-document-model";
 import type {
 	DocumentModel,
+	FormattingSpan,
 	OperationMatchAttempt,
 	PlanEditsResult,
 	PlannedPatch,
@@ -15,7 +19,7 @@ import {
 	UltimateEditKind,
 } from "./amendment-edit-tree";
 import { formatInsertedBlockContent } from "./inserted-block-format";
-import { ParagraphRange } from "./types";
+import type { ParagraphRange } from "./types";
 
 function previewRange(text: string, range: ScopeRange | null): string {
 	if (!range) return "";
@@ -44,14 +48,6 @@ function paragraphTexts(range: ParagraphRange): string[] {
 		}
 		return p.text;
 	});
-}
-
-function emptyInserted(): TextWithProvenance {
-	return { text: "", sourceLocation: new ParagraphRange([], 0, 0) };
-}
-
-function syntheticInserted(text: string): TextWithProvenance {
-	return { text, sourceLocation: new ParagraphRange([], 0, 0) };
 }
 
 function formatContentRanges(
@@ -100,14 +96,49 @@ function formatReplacementContent(
 
 function multilineReplacementSuffix(
 	inserted: TextWithProvenance,
-	sourceText: string,
+	text: string,
 	rangeEnd: number,
 ): string {
 	if (!inserted.text.includes("\n")) return "";
 	if (inserted.text.endsWith("\n")) return "";
-	const nextChar = sourceText[rangeEnd] ?? "";
+	const nextChar = text[rangeEnd] ?? "";
 	if (nextChar.length === 0 || nextChar === "\n") return "";
 	return "\n";
+}
+
+function normalizeInsertedSpans(
+	spans: FormattingSpan[],
+	insertedPlain: string,
+): FormattingSpan[] {
+	if (insertedPlain.length === 0) return [];
+	const hasMultiline = insertedPlain.includes("\n");
+	return spans
+		.filter((span) => {
+			if (span.type === "insertion" || span.type === "deletion") return false;
+			if (!hasMultiline) {
+				return (
+					span.type !== "paragraph" &&
+					span.type !== "blockquote" &&
+					span.type !== "heading"
+				);
+			}
+			return true;
+		})
+		.map((span) => ({ ...span }));
+}
+
+function parseInsertedText(sourceText: string): {
+	insertedPlain: string;
+	insertedSpans: FormattingSpan[];
+} {
+	if (sourceText.length === 0) {
+		return { insertedPlain: "", insertedSpans: [] };
+	}
+	const parsed = parseMarkdownToPlainDocument(sourceText);
+	return {
+		insertedPlain: parsed.plainText,
+		insertedSpans: normalizeInsertedSpans(parsed.spans, parsed.plainText),
+	};
 }
 
 function formatBlockInsertionContent(
@@ -192,10 +223,26 @@ function findAllOccurrences(haystack: string, needle: string): number[] {
 	return indexes;
 }
 
+function normalizeInlineDeletionRange(
+	text: string,
+	start: number,
+	end: number,
+): { start: number; end: number } {
+	if (start >= end) return { start, end };
+	const deleted = text.slice(start, end);
+	if (deleted.includes("\n")) return { start, end };
+	const beforeChar = text[start - 1] ?? "";
+	const afterChar = text[end] ?? "";
+	if (beforeChar === " " && afterChar === " ") {
+		return { start: start - 1, end };
+	}
+	return { start, end };
+}
+
 function buildAttempt(
 	operation: ResolvedInstructionOperation,
 	range: ScopeRange | null,
-	sourceText: string,
+	plainText: string,
 ): OperationMatchAttempt {
 	return {
 		operationType: operation.edit.kind,
@@ -208,7 +255,7 @@ function buildAttempt(
 					start: range.start,
 					end: range.end,
 					length: range.end - range.start,
-					preview: previewRange(sourceText, range),
+					preview: previewRange(plainText, range),
 				}
 			: null,
 		searchText: null,
@@ -221,12 +268,12 @@ function buildAttempt(
 
 function planPatchForOperation(
 	model: DocumentModel,
-	sourceText: string,
 	operation: ResolvedInstructionOperation,
 ): { patches: PlannedPatch[]; attempt: OperationMatchAttempt } {
+	const plainText = model.plainText;
 	const baseRange = getScopeRangeFromNodeId(model, operation.resolvedTargetId);
 	let range = baseRange;
-	const attempt = buildAttempt(operation, range, sourceText);
+	const attempt = buildAttempt(operation, range, plainText);
 
 	if (operation.hasExplicitTargetPath && !operation.resolvedTargetId) {
 		attempt.outcome = "scope_unresolved";
@@ -256,7 +303,7 @@ function planPatchForOperation(
 			start: range.start,
 			end: range.end,
 			length: range.end - range.start,
-			preview: previewRange(sourceText, range),
+			preview: previewRange(plainText, range),
 		};
 	}
 
@@ -279,26 +326,27 @@ function planPatchForOperation(
 			start: range.start,
 			end: range.end,
 			length: range.end - range.start,
-			preview: previewRange(sourceText, range),
+			preview: previewRange(plainText, range),
 		};
 	}
 
 	if (range && typeof operation.sentenceOrdinal === "number") {
 		const sentenceRange = resolveSentenceOrdinalRange(
-			sourceText.slice(range.start, range.end),
+			plainText.slice(range.start, range.end),
 			operation.sentenceOrdinal,
 		);
 		if (sentenceRange) {
+			const baseStart = range.start;
 			range = {
 				...range,
-				start: range.start + sentenceRange.start,
-				end: range.start + sentenceRange.end,
+				start: baseStart + sentenceRange.start,
+				end: baseStart + sentenceRange.end,
 			};
 			attempt.scopedRange = {
 				start: range.start,
 				end: range.end,
 				length: range.end - range.start,
-				preview: previewRange(sourceText, range),
+				preview: previewRange(plainText, range),
 			};
 		} else {
 			range = { ...range, start: range.end };
@@ -311,8 +359,31 @@ function planPatchForOperation(
 		}
 	}
 
-	const scopedText = range ? sourceText.slice(range.start, range.end) : "";
+	const scopedText = range ? plainText.slice(range.start, range.end) : "";
 	const patches: PlannedPatch[] = [];
+	const pushPatch = (args: {
+		start: number;
+		end: number;
+		deleted: string;
+		inserted?: string;
+		insertedPrefixPlain?: string;
+		insertedSuffixPlain?: string;
+		insertAt?: number;
+	}) => {
+		const inserted = parseInsertedText(args.inserted ?? "");
+		patches.push({
+			operationIndex: operation.operationIndex,
+			start: args.start,
+			end: args.end,
+			insertAt:
+				args.insertAt ?? (args.start < args.end ? args.end : args.start),
+			deletedPlain: args.deleted,
+			insertedPlain: inserted.insertedPlain,
+			insertedSpans: inserted.insertedSpans,
+			insertedPrefixPlain: args.insertedPrefixPlain,
+			insertedSuffixPlain: args.insertedSuffixPlain,
+		});
+	};
 
 	switch (operation.edit.kind) {
 		case UltimateEditKind.StrikeInsert: {
@@ -339,15 +410,16 @@ function planPatchForOperation(
 							replacementContent,
 							range.targetLevel ?? 0,
 						);
-						patches.push({
-							operationIndex: operation.operationIndex,
+						pushPatch({
 							start: range.start,
 							end: range.end,
 							deleted: scopedText,
-							inserted: formatted,
-							insertedSuffix:
-								multilineReplacementSuffix(formatted, sourceText, range.end) ||
-								undefined,
+							inserted: formatted.text,
+							insertedSuffixPlain: multilineReplacementSuffix(
+								formatted,
+								plainText,
+								range.end,
+							),
 						});
 						break;
 					}
@@ -357,15 +429,16 @@ function planPatchForOperation(
 						replacementContent,
 						range.targetLevel ?? 0,
 					);
-					patches.push({
-						operationIndex: operation.operationIndex,
+					pushPatch({
 						start,
 						end,
-						deleted: sourceText.slice(start, end),
-						inserted: formatted,
-						insertedSuffix:
-							multilineReplacementSuffix(formatted, sourceText, end) ||
-							undefined,
+						deleted: plainText.slice(start, end),
+						inserted: formatted.text,
+						insertedSuffixPlain: multilineReplacementSuffix(
+							formatted,
+							plainText,
+							end,
+						),
 					});
 					break;
 				}
@@ -373,15 +446,16 @@ function planPatchForOperation(
 					replacementContent,
 					range.targetLevel ?? 0,
 				);
-				patches.push({
-					operationIndex: operation.operationIndex,
+				pushPatch({
 					start: range.start,
 					end: range.end,
 					deleted: scopedText,
-					inserted: formatted,
-					insertedSuffix:
-						multilineReplacementSuffix(formatted, sourceText, range.end) ||
-						undefined,
+					inserted: formatted.text,
+					insertedSuffixPlain: multilineReplacementSuffix(
+						formatted,
+						plainText,
+						range.end,
+					),
 				});
 				break;
 			}
@@ -397,23 +471,21 @@ function planPatchForOperation(
 					scopedText,
 					strikingContent,
 				)) {
-					patches.push({
-						operationIndex: operation.operationIndex,
+					pushPatch({
 						start: range.start + occurrenceIndex,
 						end: range.start + occurrenceIndex + strikingContent.length,
 						deleted: strikingContent,
-						inserted: replacementContent,
+						inserted: replacementContent.text,
 					});
 				}
 				break;
 			}
 
-			patches.push({
-				operationIndex: operation.operationIndex,
+			pushPatch({
 				start: range.start + localIndex,
 				end: range.start + localIndex + strikingContent.length,
 				deleted: strikingContent,
-				inserted: replacementContent,
+				inserted: replacementContent.text,
 			});
 			break;
 		}
@@ -425,15 +497,16 @@ function planPatchForOperation(
 				replacementContent,
 				range.targetLevel ?? 0,
 			);
-			patches.push({
-				operationIndex: operation.operationIndex,
+			pushPatch({
 				start: range.start,
 				end: range.end,
 				deleted: scopedText,
-				inserted: formatted,
-				insertedSuffix:
-					multilineReplacementSuffix(formatted, sourceText, range.end) ||
-					undefined,
+				inserted: formatted.text,
+				insertedSuffixPlain: multilineReplacementSuffix(
+					formatted,
+					plainText,
+					range.end,
+				),
 			});
 			break;
 		}
@@ -463,32 +536,26 @@ function planPatchForOperation(
 						range.targetLevel !== undefined &&
 						throughRange.targetLevel === range.targetLevel;
 					if (!sameTargetLevel) {
-						patches.push({
-							operationIndex: operation.operationIndex,
+						pushPatch({
 							start: range.start,
 							end: range.end,
 							deleted: scopedText,
-							inserted: emptyInserted(),
 						});
 						break;
 					}
 					const start = Math.min(range.start, throughRange.start);
 					const end = Math.max(range.end, throughRange.end);
-					patches.push({
-						operationIndex: operation.operationIndex,
+					pushPatch({
 						start,
 						end,
-						deleted: sourceText.slice(start, end),
-						inserted: emptyInserted(),
+						deleted: plainText.slice(start, end),
 					});
 					break;
 				}
-				patches.push({
-					operationIndex: operation.operationIndex,
+				pushPatch({
 					start: range.start,
 					end: range.end,
 					deleted: scopedText,
-					inserted: emptyInserted(),
 				});
 				break;
 			}
@@ -504,12 +571,15 @@ function planPatchForOperation(
 					scopedText,
 					strikingContent,
 				)) {
-					patches.push({
-						operationIndex: operation.operationIndex,
-						start: range.start + occurrenceIndex,
-						end: range.start + occurrenceIndex + strikingContent.length,
-						deleted: strikingContent,
-						inserted: emptyInserted(),
+					const patchRange = normalizeInlineDeletionRange(
+						plainText,
+						range.start + occurrenceIndex,
+						range.start + occurrenceIndex + strikingContent.length,
+					);
+					pushPatch({
+						start: patchRange.start,
+						end: patchRange.end,
+						deleted: plainText.slice(patchRange.start, patchRange.end),
 					});
 				}
 				break;
@@ -537,21 +607,24 @@ function planPatchForOperation(
 			let patchStart = range.start + localStart;
 			let patchEnd = range.start + localEnd;
 			if (throughContent || throughPunctuation) {
-				const beforeChar = sourceText[patchStart - 1] ?? "";
-				const afterChar = sourceText[patchEnd] ?? "";
+				const beforeChar = plainText[patchStart - 1] ?? "";
+				const afterChar = plainText[patchEnd] ?? "";
 				if (patchStart === 0 && afterChar === " ") {
 					patchEnd += 1;
 				} else if (patchStart > 0 && beforeChar === " " && afterChar === " ") {
 					patchStart -= 1;
 				}
 			}
+			const patchRange = normalizeInlineDeletionRange(
+				plainText,
+				patchStart,
+				patchEnd,
+			);
 
-			patches.push({
-				operationIndex: operation.operationIndex,
-				start: patchStart,
-				end: patchEnd,
-				deleted: sourceText.slice(patchStart, patchEnd),
-				inserted: emptyInserted(),
+			pushPatch({
+				start: patchRange.start,
+				end: patchRange.end,
+				deleted: plainText.slice(patchRange.start, patchRange.end),
 			});
 			break;
 		}
@@ -600,13 +673,12 @@ function planPatchForOperation(
 					: formattedText.endsWith("\n")
 						? ""
 						: "\n";
-				patches.push({
-					operationIndex: operation.operationIndex,
+				pushPatch({
 					start: anchorStart,
 					end: anchorStart,
 					deleted: "",
-					inserted: formatted,
-					insertedSuffix: suffix || undefined,
+					inserted: formatted.text,
+					insertedSuffixPlain: suffix,
 				});
 				break;
 			}
@@ -650,54 +722,51 @@ function planPatchForOperation(
 					? /[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(formattedText)
 						? " "
 						: ""
-					: sourceText[anchorEnd - 1] === "\n" || anchorEnd === 0
+					: plainText[anchorEnd - 1] === "\n" || anchorEnd === 0
 						? ""
 						: "\n";
-				patches.push({
-					operationIndex: operation.operationIndex,
+				pushPatch({
 					start: anchorEnd,
 					end: anchorEnd,
 					deleted: "",
-					inserted: formatted,
-					insertedPrefix: prefix || undefined,
+					inserted: formatted.text,
+					insertedPrefixPlain: prefix,
 				});
 				break;
 			}
 
 			if (operation.addAtEnd) {
 				const insertAt = range.end;
-				const beforeChar = sourceText[insertAt - 1] ?? "";
-				const afterChar = sourceText[insertAt] ?? "";
+				const beforeChar = plainText[insertAt - 1] ?? "";
+				const afterChar = plainText[insertAt] ?? "";
 				const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
 				const formatted = formatBlockInsertionContent(
 					content,
 					range.targetLevel ?? 0,
 				);
 				const suffix = afterChar && afterChar !== "\n" ? "\n\n" : "\n";
-				patches.push({
-					operationIndex: operation.operationIndex,
+				pushPatch({
 					start: insertAt,
 					end: insertAt,
 					deleted: "",
-					inserted: formatted,
-					insertedPrefix: prefix || undefined,
-					insertedSuffix: suffix,
+					inserted: formatted.text,
+					insertedPrefixPlain: prefix,
+					insertedSuffixPlain: suffix,
 				});
 				break;
 			}
 
 			// Plain insert at end of scope range
 			const insertAt = range.end;
-			const beforeChar = sourceText[insertAt - 1] ?? "";
+			const beforeChar = plainText[insertAt - 1] ?? "";
 			const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
 			const formatted = formatInsertionContent(content, range.targetLevel ?? 0);
-			patches.push({
-				operationIndex: operation.operationIndex,
+			pushPatch({
 				start: insertAt,
 				end: insertAt,
 				deleted: "",
-				inserted: formatted,
-				insertedPrefix: prefix || undefined,
+				inserted: formatted.text,
+				insertedPrefixPlain: prefix,
 			});
 			break;
 		}
@@ -717,12 +786,11 @@ function planPatchForOperation(
 			attempt.searchTextKind = "striking";
 			attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
 			if (localIndex < 0) break;
-			patches.push({
-				operationIndex: operation.operationIndex,
+			pushPatch({
 				start: range.start + localIndex,
 				end: range.start + localIndex + marker.length,
 				deleted: marker,
-				inserted: syntheticInserted(replacement),
+				inserted: replacement,
 			});
 			break;
 		}
@@ -739,9 +807,7 @@ function planPatchForOperation(
 			if (fromRanges.length !== operation.edit.from.length) break;
 			fromRanges.sort((left, right) => left.start - right.start);
 			const movedBlock = fromRanges
-				.map((resolved) =>
-					sourceText.slice(resolved.start, resolved.end).trim(),
-				)
+				.map((resolved) => plainText.slice(resolved.start, resolved.end).trim())
 				.join("\n");
 			if (movedBlock.length === 0) break;
 			if (operation.resolvedMoveAnchorId === null) break;
@@ -753,7 +819,7 @@ function planPatchForOperation(
 			const originalInsertIndex = operation.edit.before
 				? anchorRange.start
 				: anchorRange.end;
-			let textWithoutMoved = sourceText;
+			let textWithoutMoved = plainText;
 			for (let index = fromRanges.length - 1; index >= 0; index -= 1) {
 				const segment = fromRanges[index];
 				if (!segment) continue;
@@ -782,12 +848,11 @@ function planPatchForOperation(
 					? ""
 					: "\n";
 			const movedText = `${textWithoutMoved.slice(0, adjustedInsertIndex)}${prefix}${movedBlock}${suffix}${textWithoutMoved.slice(adjustedInsertIndex)}`;
-			patches.push({
-				operationIndex: operation.operationIndex,
+			pushPatch({
 				start: 0,
-				end: sourceText.length,
-				deleted: sourceText,
-				inserted: syntheticInserted(movedText),
+				end: plainText.length,
+				deleted: plainText,
+				inserted: movedText,
 			});
 			break;
 		}
@@ -798,18 +863,13 @@ function planPatchForOperation(
 
 export function planEdits(
 	model: DocumentModel,
-	sourceText: string,
 	operations: ResolvedInstructionOperation[],
 ): PlanEditsResult {
 	const attempts: OperationMatchAttempt[] = [];
 	const tentativePatches: PlannedPatch[] = [];
 
 	for (const operation of operations) {
-		const { patches, attempt } = planPatchForOperation(
-			model,
-			sourceText,
-			operation,
-		);
+		const { patches, attempt } = planPatchForOperation(model, operation);
 		attempts.push(attempt);
 		tentativePatches.push(...patches);
 	}

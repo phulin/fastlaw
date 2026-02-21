@@ -32,6 +32,7 @@ const buildUnsupportedEffect = (
 	return {
 		status: "unsupported",
 		sectionPath,
+		renderModel: { plainText: sectionBodyText, spans: [] },
 		segments: [{ kind: "unchanged", text: sectionBodyText }],
 		changes: [],
 		deleted: [],

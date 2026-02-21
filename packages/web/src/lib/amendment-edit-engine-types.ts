@@ -1,5 +1,4 @@
-import type { TextWithProvenance, UltimateEdit } from "./amendment-edit-tree";
-import type { MarkdownReplacementRange } from "./markdown";
+import type { UltimateEdit } from "./amendment-edit-tree";
 
 export type HierarchyLevelType =
 	| "section"
@@ -22,6 +21,26 @@ export interface ScopeRange {
 	targetLevel: number | null;
 }
 
+export type FormattingSpanType =
+	| "strong"
+	| "emphasis"
+	| "delete"
+	| "paragraph"
+	| "heading"
+	| "blockquote"
+	| "inlineCode"
+	| "link"
+	| "insertion"
+	| "deletion";
+
+export interface FormattingSpan {
+	start: number;
+	end: number;
+	type: FormattingSpanType;
+	/** For links: the href. For headings: the depth. Etc. */
+	metadata?: Record<string, unknown>;
+}
+
 export interface StructuralNode {
 	id: string;
 	kind: HierarchyLevelType;
@@ -34,7 +53,8 @@ export interface StructuralNode {
 }
 
 export interface DocumentModel {
-	sourceText: string;
+	plainText: string;
+	spans: FormattingSpan[];
 	rootRange: ScopeRange;
 	nodesById: Map<string, StructuralNode>;
 	rootNodeIds: string[];
@@ -106,10 +126,12 @@ export interface PlannedPatch {
 	operationIndex: number;
 	start: number;
 	end: number;
-	deleted: string;
-	inserted: TextWithProvenance;
-	insertedPrefix?: string;
-	insertedSuffix?: string;
+	insertAt: number;
+	deletedPlain: string;
+	insertedPlain: string;
+	insertedSpans: FormattingSpan[];
+	insertedPrefixPlain?: string;
+	insertedSuffixPlain?: string;
 }
 
 export interface PlanEditsResult {
@@ -118,6 +140,6 @@ export interface PlanEditsResult {
 }
 
 export interface ApplyPlannedPatchesResult {
-	text: string;
-	replacements: MarkdownReplacementRange[];
+	plainText: string;
+	spans: FormattingSpan[];
 }
