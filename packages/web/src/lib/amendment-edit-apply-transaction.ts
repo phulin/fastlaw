@@ -44,15 +44,19 @@ function splitContainerSpansAroundInsertion(
 	const result: FormattingSpan[] = [];
 	for (const span of spans) {
 		if (span.start >= span.end) continue;
-		if (span.end <= insertAt || span.start >= insertAt) {
+		if (span.end <= insertAt) {
 			result.push({ ...span });
 			continue;
 		}
-		if (
-			span.type === "paragraph" ||
-			span.type === "blockquote" ||
-			span.type === "heading"
-		) {
+		if (span.start >= insertAt) {
+			result.push({
+				...span,
+				start: span.start + insertedLength,
+				end: span.end + insertedLength,
+			});
+			continue;
+		}
+		if (span.type === "paragraph" || span.type === "heading") {
 			const left = { ...span, end: insertAt };
 			const right = {
 				...span,
@@ -95,13 +99,7 @@ function normalizeParagraphSpanContainment(
 			continue;
 		}
 
-		previous.end = Math.max(previous.start, next.start);
-		if (previous.end <= previous.start) {
-			normalized.pop();
-		}
-		if (next.end > next.start) {
-			normalized.push(next);
-		}
+		previous.end = Math.max(previous.end, next.end);
 	}
 
 	return [...nonParagraphs, ...normalized];

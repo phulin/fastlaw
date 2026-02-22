@@ -2,6 +2,8 @@ import type { JSX } from "solid-js";
 import type { FormattingSpan } from "./amendment-edit-engine-types";
 import type { AmendmentEffect } from "./amendment-edit-tree-apply";
 
+const PARAGRAPH_CONTEXT_WINDOW = 3;
+
 function headingDepthForParagraph(
 	paragraph: FormattingSpan,
 	spans: FormattingSpan[],
@@ -17,24 +19,12 @@ function headingDepthForParagraph(
 	return null;
 }
 
-function getQuoteDepthForParagraph(
-	paragraph: FormattingSpan,
-	spans: FormattingSpan[],
-): number {
+function getQuoteDepthForParagraph(paragraph: FormattingSpan): number {
 	const explicitDepth = paragraph.metadata?.quoteDepth;
 	if (typeof explicitDepth === "number" && Number.isFinite(explicitDepth)) {
 		return explicitDepth;
 	}
-	let maxDepth = 0;
-	for (const span of spans) {
-		if (span.type !== "blockquote") continue;
-		if (span.start > paragraph.start || span.end < paragraph.end) continue;
-		const depth = span.metadata?.depth;
-		if (typeof depth === "number" && depth > maxDepth) {
-			maxDepth = depth;
-		}
-	}
-	return maxDepth;
+	return 0;
 }
 
 function inlinePriority(type: FormattingSpan["type"]): number {
@@ -70,21 +60,6 @@ function isInlineSpan(span: FormattingSpan): boolean {
 		default:
 			return false;
 	}
-}
-
-function renderTextWithBreaks(value: string): JSX.Element {
-	const lines = value.split("\n");
-	if (lines.length === 1) return value;
-	return (
-		<>
-			{lines.map((line, index) => (
-				<>
-					{index > 0 ? <br /> : null}
-					{line}
-				</>
-			))}
-		</>
-	);
 }
 
 function wrapInline(span: FormattingSpan, child: JSX.Element): JSX.Element {
@@ -156,9 +131,9 @@ function renderParagraphContent(
 					left.start - right.start ||
 					right.end - left.end,
 			);
-		const wrapped = activeSpans.reduceRight(
+		const wrapped = activeSpans.reduceRight<JSX.Element>(
 			(content, span) => wrapInline(span, content),
-			renderTextWithBreaks(segmentText),
+			segmentText,
 		);
 		pieces.push(wrapped);
 	}
@@ -174,7 +149,7 @@ function renderParagraphBlock(
 	const content = renderParagraphContent(paragraph, plainText, spans);
 	const quoteDepth = Math.max(
 		0,
-		Math.min(5, getQuoteDepthForParagraph(paragraph, spans)),
+		Math.min(5, getQuoteDepthForParagraph(paragraph)),
 	);
 	const className = quoteDepth > 0 ? `indent${quoteDepth}` : undefined;
 	const headingDepth = headingDepthForParagraph(paragraph, spans);
@@ -233,9 +208,14 @@ export function renderAmendedSnippet(effect: AmendmentEffect): JSX.Element {
 	const visibleIndices = new Set<number>();
 	if (modifiedParagraphIndices.size > 0) {
 		for (const index of modifiedParagraphIndices) {
-			visibleIndices.add(index);
-			if (index > 0) visibleIndices.add(index - 1);
-			if (index < resolvedParagraphs.length - 1) visibleIndices.add(index + 1);
+			const start = Math.max(0, index - PARAGRAPH_CONTEXT_WINDOW);
+			const end = Math.min(
+				resolvedParagraphs.length - 1,
+				index + PARAGRAPH_CONTEXT_WINDOW,
+			);
+			for (let visibleIndex = start; visibleIndex <= end; visibleIndex += 1) {
+				visibleIndices.add(visibleIndex);
+			}
 		}
 	} else {
 		for (let i = 0; i < Math.min(3, resolvedParagraphs.length); i++) {

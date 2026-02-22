@@ -13,6 +13,7 @@ interface AnnotationLayerProps {
 	items: { item: PageItem; globalTop: number; pageNumber: number }[];
 	totalHeight: number;
 	width: number; // The width of the annotation column
+	isInstructionClickEnabled: boolean;
 	onInstructionClick: (instructionItem: InstructionPageItem) => void;
 }
 
@@ -267,51 +268,58 @@ export function AnnotationLayer(props: AnnotationLayerProps) {
 									props.items,
 									index(),
 								);
+								const content =
+									instructionItem.amendmentEffect?.status === "ok" ? (
+										<div
+											class={`pdf-amend-color-${instructionItem.colorIndex}`}
+										>
+											<AmendedSnippet
+												effect={instructionItem.amendmentEffect}
+												instructionHeader={getInstructionLocationHeader(
+													instructionItem.instruction,
+													locationMarkers,
+												)}
+											/>
+										</div>
+									) : (
+										<div
+											class={`pdf-amend-color-${instructionItem.colorIndex}`}
+										>
+											<div class="pdf-amended-snippet">
+												<header class="pdf-amended-snippet-header">
+													<h4>
+														{getInstructionLocationHeader(
+															instructionItem.instruction,
+															locationMarkers,
+														)}
+													</h4>
+													<span class="pdf-amended-snippet-status-badge">
+														Application failed
+													</span>
+												</header>
+												<div
+													class="pdf-amended-snippet-instruction markdown"
+													innerHTML={renderMarkdown(
+														renderInstructionMarkdown(
+															instructionItem.instruction,
+														),
+													)}
+												/>
+											</div>
+										</div>
+									);
+
+								if (!props.isInstructionClickEnabled) {
+									return <div class="pdf-instruction-button">{content}</div>;
+								}
+
 								return (
 									<button
 										type="button"
 										class="pdf-instruction-button"
 										onClick={() => props.onInstructionClick(instructionItem)}
 									>
-										{instructionItem.amendmentEffect?.status === "ok" ? (
-											<div
-												class={`pdf-amend-color-${instructionItem.colorIndex}`}
-											>
-												<AmendedSnippet
-													effect={instructionItem.amendmentEffect}
-													instructionHeader={getInstructionLocationHeader(
-														instructionItem.instruction,
-														locationMarkers,
-													)}
-												/>
-											</div>
-										) : (
-											<div
-												class={`pdf-amend-color-${instructionItem.colorIndex}`}
-											>
-												<div class="pdf-amended-snippet">
-													<header class="pdf-amended-snippet-header">
-														<h4>
-															{getInstructionLocationHeader(
-																instructionItem.instruction,
-																locationMarkers,
-															)}
-														</h4>
-														<span class="pdf-amended-snippet-status-badge">
-															Application failed
-														</span>
-													</header>
-													<div
-														class="pdf-amended-snippet-instruction markdown"
-														innerHTML={renderMarkdown(
-															renderInstructionMarkdown(
-																instructionItem.instruction,
-															),
-														)}
-													/>
-												</div>
-											</div>
-										)}
+										{content}
 									</button>
 								);
 							})()}

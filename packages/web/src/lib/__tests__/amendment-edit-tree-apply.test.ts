@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import { buildAmendmentDocumentModel } from "../amendment-document-model";
 import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
-import type { ResolvedInstructionOperation } from "../amendment-edit-engine-types";
+import type {
+	DocumentModel,
+	PlannedPatch,
+	ResolvedInstructionOperation,
+} from "../amendment-edit-engine-types";
 import { planEdits } from "../amendment-edit-planner";
 import {
 	type InstructionSemanticTree,
@@ -1605,6 +1609,43 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 });
 
 describe("applyAmendmentEditTreeToSection integration", () => {
+	it("shifts post-insertion spans when inserted text has paragraph spans", () => {
+		const model: DocumentModel = {
+			plainText: "AAA\n(c) Enforcement\nZZZ",
+			spans: [
+				{ type: "paragraph", start: 0, end: 3 },
+				{ type: "paragraph", start: 4, end: 19 },
+				{ type: "heading", start: 4, end: 19 },
+			],
+			rootRange: { start: 0, end: 22, targetLevel: null },
+			nodesById: new Map(),
+			rootNodeIds: [],
+		};
+
+		const patch: PlannedPatch = {
+			operationIndex: 0,
+			start: 4,
+			end: 4,
+			insertAt: 4,
+			deletedPlain: "",
+			insertedPlain: "(4)\nbody",
+			insertedSpans: [
+				{ type: "paragraph", start: 0, end: 3 },
+				{ type: "paragraph", start: 4, end: 8 },
+			],
+		};
+
+		const applied = applyPlannedPatchesTransaction(model, [patch]);
+		const headingSpan = applied.spans.find((span) => span.type === "heading");
+
+		expect(headingSpan).toBeDefined();
+		expect(headingSpan?.start).toBe(12);
+		expect(headingSpan?.end).toBe(27);
+		expect(
+			applied.plainText.slice(headingSpan?.start ?? 0, headingSpan?.end ?? 0),
+		).toBe("(c) Enforcement");
+	});
+
 	it("applies HR1 sec. 10103 and 10104 semantic trees against the USC 7/2014 markdown fixture", () => {
 		const parser = createHandcraftedInstructionParser();
 		const sectionBody = readFileSync(USC_2014_PRE_FIXTURE_PATH, "utf8").trim();

@@ -29,7 +29,6 @@ export type FormattingSpanType =
 	| "delete"
 	| "paragraph"
 	| "heading"
-	| "blockquote"
 	| "inlineCode"
 	| "link"
 	| "insertion"

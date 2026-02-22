@@ -202,11 +202,7 @@ function normalizeInsertedSpans(
 		.filter((span) => {
 			if (span.type === "insertion" || span.type === "deletion") return false;
 			if (!hasMultiline) {
-				return (
-					span.type !== "paragraph" &&
-					span.type !== "blockquote" &&
-					span.type !== "heading"
-				);
+				return span.type !== "paragraph" && span.type !== "heading";
 			}
 			return true;
 		})

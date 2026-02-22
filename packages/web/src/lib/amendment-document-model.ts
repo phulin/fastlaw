@@ -198,14 +198,6 @@ function addBlock(
 		type: "paragraph",
 		metadata: { quoteDepth },
 	});
-	if (quoteDepth > 0) {
-		addSpan(state.spans, {
-			start,
-			end,
-			type: "blockquote",
-			metadata: { depth: quoteDepth },
-		});
-	}
 	if (node.type === "heading") {
 		addSpan(state.spans, {
 			start,
@@ -403,24 +395,24 @@ function targetLevelFromNode(node: HierarchyNode): number {
 }
 
 function scopeRangeFromNode(
-	sourceToPlainOffsets: number[],
-	sourceTextLength: number,
-	lineStarts: number[],
+	paragraphs: Array<ParsedParagraph & { plainStart: number; plainEnd: number }>,
 	node: HierarchyNode,
-	paragraphLineStarts: number[],
 ): ScopeRange | null {
-	const startLine = paragraphLineStarts[node.startParagraph];
-	const endLine = paragraphLineStarts[node.endParagraph];
-	if (typeof startLine !== "number") return null;
-	const sourceStart = lineStarts[startLine] ?? 0;
-	const sourceEnd =
-		typeof endLine === "number"
-			? (lineStarts[endLine] ?? sourceTextLength)
-			: sourceTextLength;
-	const safeStart = Math.max(0, Math.min(sourceTextLength, sourceStart));
-	const safeEnd = Math.max(safeStart, Math.min(sourceTextLength, sourceEnd));
-	const start = sourceToPlainOffsets[safeStart] ?? 0;
-	const end = sourceToPlainOffsets[safeEnd] ?? start;
+	const startParagraph = paragraphs[node.startParagraph];
+	if (!startParagraph) return null;
+	const inclusiveEndParagraphIndex = Math.max(
+		node.startParagraph,
+		node.endParagraph - 1,
+	);
+	const endParagraph = paragraphs[inclusiveEndParagraphIndex] ?? startParagraph;
+	const nextParagraph = paragraphs[node.endParagraph];
+	const start = startParagraph.plainStart;
+	const end = Math.max(
+		start,
+		typeof nextParagraph?.plainStart === "number"
+			? nextParagraph.plainStart
+			: endParagraph.plainEnd,
+	);
 	return {
 		start,
 		end,
@@ -437,10 +429,7 @@ function getLineStarts(text: string): number[] {
 }
 
 interface BuildNodesArgs {
-	sourceTextLength: number;
-	sourceToPlainOffsets: number[];
-	lineStarts: number[];
-	paragraphLineStarts: number[];
+	paragraphs: Array<ParsedParagraph & { plainStart: number; plainEnd: number }>;
 	nodes: HierarchyNode[];
 	parentPath: HierarchyLevel[];
 	nodesById: Map<string, StructuralNode>;
@@ -462,13 +451,7 @@ function buildNodes(args: BuildNodesArgs): string[] {
 			.join("/");
 		const nodeId = `${idPath}#${siblingCount}`;
 
-		const range = scopeRangeFromNode(
-			args.sourceToPlainOffsets,
-			args.sourceTextLength,
-			args.lineStarts,
-			node,
-			args.paragraphLineStarts,
-		);
+		const range = scopeRangeFromNode(args.paragraphs, node);
 		if (!range) continue;
 
 		const path = buildPath(args.parentPath, kind, node.marker);
@@ -486,10 +469,7 @@ function buildNodes(args: BuildNodesArgs): string[] {
 		builtNodeIds.push(nodeId);
 
 		const childIds = buildNodes({
-			sourceTextLength: args.sourceTextLength,
-			sourceToPlainOffsets: args.sourceToPlainOffsets,
-			lineStarts: args.lineStarts,
-			paragraphLineStarts: args.paragraphLineStarts,
+			paragraphs: args.paragraphs,
 			nodes: node.sublevels,
 			parentPath: path,
 			nodesById: args.nodesById,
@@ -510,7 +490,9 @@ export function buildAmendmentDocumentModel(
 	const plain = parsedPlain ?? parseMarkdownToPlainDocument(sourceText);
 	const lineStarts = getLineStarts(sourceText);
 
-	const paragraphs: ParsedParagraph[] = [];
+	const paragraphs: Array<
+		ParsedParagraph & { plainStart: number; plainEnd: number }
+	> = [];
 	let paragraphIndex = 0;
 
 	let sourceOffsetCursor = 0;
@@ -556,16 +538,20 @@ export function buildAmendmentDocumentModel(
 						text: lineText,
 						quoteDepth: (span.metadata?.quoteDepth as number) ?? 0,
 						leadingLabels: labels,
+						plainStart: currentPlainOffset,
+						plainEnd: currentPlainOffset + lineText.length,
 					});
 				} else {
 					const prev = paragraphs[paragraphs.length - 1];
 					if (prev) {
 						prev.text += `\n${lineText}`;
 						prev.endLine = currentLine + 1;
+						prev.plainEnd = currentPlainOffset + lineText.length;
 					}
 				}
 
-				currentPlainOffset += lineText.length + 1;
+				const hasFollowingLine = i < lines.length - 1;
+				currentPlainOffset += lineText.length + (hasFollowingLine ? 1 : 0);
 			}
 		}
 	}
@@ -573,10 +559,7 @@ export function buildAmendmentDocumentModel(
 
 	const nodesById = new Map<string, StructuralNode>();
 	const rootNodeIds = buildNodes({
-		sourceTextLength: sourceText.length,
-		sourceToPlainOffsets: plain.sourceToPlainOffsets,
-		lineStarts,
-		paragraphLineStarts: paragraphs.map((p) => p.startLine),
+		paragraphs,
 		nodes: parsedHierarchy.levels,
 		parentPath: [],
 		nodesById,

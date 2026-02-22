@@ -51,6 +51,13 @@ export interface TranslationResult {
 	issues: TranslationIssue[];
 }
 
+export interface TranslationOptions {
+	fallbackCodeReference?: Extract<
+		TargetScopeSegment,
+		{ kind: "code_reference" }
+	>;
+}
+
 const SCOPE_ORDER: ScopeKind[] = [
 	ScopeKind.Section,
 	ScopeKind.Subsection,
@@ -81,9 +88,14 @@ const INTERNAL_REVENUE_CODE_RE = /\bInternal Revenue Code of 1986\b/i;
 
 export function translateInstructionAstToEditTree(
 	ast: InstructionAst,
+	options: TranslationOptions = {},
 ): TranslationResult {
 	const issues: TranslationIssue[] = [];
-	const targetScopePath = extractTargetScopePath(ast.parent, issues);
+	const targetScopePath = extractTargetScopePath(
+		ast.parent,
+		issues,
+		options.fallbackCodeReference,
+	);
 	const baseStructuralScope =
 		structuralScopeFromTargetScopePath(targetScopePath);
 	const baseWrappers: WrapperSpec[] = baseStructuralScope.map((scope) => ({
@@ -1165,6 +1177,10 @@ function structuralScopeFromTargetScopePath(
 function extractTargetScopePath(
 	parentNode: RuleAst<GrammarAstNodeType.Parent>,
 	issues: TranslationIssue[],
+	fallbackCodeReference?: Extract<
+		TargetScopeSegment,
+		{ kind: "code_reference" }
+	>,
 ): TargetScopeSegment[] | undefined {
 	const uscScope = extractUscScopePath(parentNode);
 	if (uscScope) return uscScope;
@@ -1175,7 +1191,9 @@ function extractTargetScopePath(
 	);
 	const codificationReference = extractCodificationReference(parentNode);
 	const contextReference =
-		codificationReference ?? extractCodeOrActReference(parentNode);
+		codificationReference ??
+		extractCodeOrActReference(parentNode) ??
+		fallbackCodeReference;
 
 	if (!contextReference || !hasSection) {
 		issues.push({

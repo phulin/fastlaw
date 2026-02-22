@@ -8,6 +8,7 @@ import {
 import type { NodeContent, Paragraph } from "../types";
 import {
 	discoverParsedInstructionSpans,
+	discoverTitleScopedCodeReferenceDefaults,
 	formatTargetScopePath,
 	getSectionBodyText,
 	getUscCitationFromScopePath,
@@ -68,6 +69,8 @@ export const buildPageItemsFromParagraphs = async ({
 	{ item: PageItem; pageNumber: number }[]
 > => {
 	const instructionSpans = discoverParsedInstructionSpans(paragraphs);
+	const defaultCodeReferenceByParagraph =
+		discoverTitleScopedCodeReferenceDefaults(paragraphs);
 	const sectionPathByInstructionIndex = new Map<number, string>();
 	const unresolvedPaths: string[] = [];
 	const translatedEditTreeByInstructionIndex = new Map<
@@ -76,8 +79,19 @@ export const buildPageItemsFromParagraphs = async ({
 	>();
 
 	for (const [index, span] of instructionSpans.entries()) {
+		const fallbackCodeReferenceLabel = defaultCodeReferenceByParagraph.get(
+			span.startParagraphIndex,
+		);
 		const translatedEditTree = translateInstructionAstToEditTree(
 			span.parsedInstruction.ast,
+			fallbackCodeReferenceLabel
+				? {
+						fallbackCodeReference: {
+							kind: "code_reference",
+							label: fallbackCodeReferenceLabel,
+						},
+					}
+				: undefined,
 		);
 		translatedEditTreeByInstructionIndex.set(index, translatedEditTree);
 		const sectionPath = getUscSectionPathFromScopePath(

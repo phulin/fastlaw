@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
+import type { FormattingSpan } from "../amendment-edit-engine-types";
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
 import { type Paragraph, ParagraphRange } from "../types";
@@ -15,6 +16,7 @@ interface SelectedInstructionBlock {
 	instructionLineLevels: number[];
 	expectedEditedExcerpt: string;
 	expectedMarkedEditSnippet?: string;
+	expectedStatus?: "ok" | "unsupported";
 }
 
 interface LeveledLine {
@@ -95,23 +97,35 @@ const resolveRangeFromParagraphs = (
 	let endIndex = paragraphs.length - 1;
 	let startFirst = 0;
 	let endLast = 0;
+	let foundStart = false;
 
 	for (let i = 0; i < paragraphs.length; i += 1) {
 		const paragraph = paragraphs[i];
 		if (!paragraph) continue;
 		const lineStart = cursor;
 		const lineEnd = lineStart + paragraph.text.length;
+		const isLastParagraph = i === paragraphs.length - 1;
 
-		if (start >= lineStart && start <= lineEnd) {
-			startIndex = i;
-			startFirst = start - lineStart;
+		if (!foundStart) {
+			if (start < lineEnd || (start === lineEnd && isLastParagraph)) {
+				startIndex = i;
+				startFirst = Math.max(
+					0,
+					Math.min(paragraph.text.length, start - lineStart),
+				);
+				foundStart = true;
+			} else if (start === lineEnd && !isLastParagraph) {
+				startIndex = i + 1;
+				startFirst = 0;
+				foundStart = true;
+			}
 		}
 		if (end >= lineStart && end <= lineEnd) {
 			endIndex = i;
 			endLast = end - lineStart;
 			break;
 		}
-		cursor = lineEnd + 1;
+		cursor = lineEnd + (isLastParagraph ? 0 : 1);
 	}
 
 	return new ParagraphRange(
@@ -119,6 +133,72 @@ const resolveRangeFromParagraphs = (
 		startFirst,
 		endLast,
 	);
+};
+
+const isWordChar = (char: string | undefined): boolean =>
+	typeof char === "string" && /^[A-Za-z0-9]$/.test(char);
+
+const sliceWithMarker = (text: string, offset: number, radius = 36): string => {
+	const start = Math.max(0, offset - radius);
+	const end = Math.min(text.length, offset + radius);
+	const head = text.slice(start, offset);
+	const tail = text.slice(offset, end);
+	return `${head}<<<${tail}`;
+};
+
+const paragraphSpans = (spans: FormattingSpan[]): FormattingSpan[] =>
+	spans
+		.filter((span) => span.type === "paragraph")
+		.sort((left, right) => left.start - right.start || left.end - right.end);
+
+const assertParagraphSpanOffsets = (
+	plainText: string,
+	spans: FormattingSpan[],
+	citation: string,
+): void => {
+	const paragraphs = paragraphSpans(spans);
+	expect(
+		paragraphs.length,
+		`${citation}: missing paragraph spans`,
+	).toBeGreaterThan(0);
+
+	for (const [index, span] of paragraphs.entries()) {
+		expect(
+			span.start,
+			`${citation}: paragraph ${index} start out of bounds`,
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			span.end,
+			`${citation}: paragraph ${index} end out of bounds`,
+		).toBeLessThanOrEqual(plainText.length);
+		expect(
+			span.end,
+			`${citation}: paragraph ${index} has empty/negative range`,
+		).toBeGreaterThan(span.start);
+	}
+
+	for (let index = 1; index < paragraphs.length; index += 1) {
+		const previous = paragraphs[index - 1];
+		const current = paragraphs[index];
+		if (!previous || !current) continue;
+
+		expect(
+			current.start,
+			`${citation}: paragraph ${index - 1} overlaps paragraph ${index}`,
+		).toBeGreaterThanOrEqual(previous.end);
+
+		if (current.start === previous.end) {
+			const previousLast = plainText[previous.end - 1];
+			const currentFirst = plainText[current.start];
+			expect(
+				isWordChar(previousLast) && isWordChar(currentFirst),
+				`${citation}: paragraph boundary splits token at ${current.start}; previous=[${previous.start},${previous.end}) "${plainText.slice(previous.start, Math.min(previous.end, previous.start + 120))}"; current=[${current.start},${current.end}) "${plainText.slice(current.start, Math.min(current.end, current.start + 120))}"; context="${sliceWithMarker(
+					plainText,
+					current.start,
+				)}"`,
+			).toBe(false);
+		}
+	}
 };
 
 const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
@@ -277,6 +357,18 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 			"Effective for each of the 2014 through ~~2023~~++2031++ crop years",
 	},
 	{
+		citation: "7 U.S.C. 2025(a)",
+		sectionPath: "/statutes/usc/section/7/2025",
+		instructionText:
+			"Section 16(a) of the Food and Nutrition Act of 2008 (7 U.S.C. 2025(a)) is amended in the matter preceding paragraph (1) by striking “agency an amount equal to 50 per centum” and inserting “agency, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent,”.",
+		instructionLineLevels: [1],
+		expectedEditedExcerpt:
+			"agency, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent, of all administrative costs involved",
+		expectedMarkedEditSnippet:
+			"agency~~ an amount equal to 50 per centum~~++, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent,++ of all administrative costs involved",
+		expectedStatus: "unsupported",
+	},
+	{
 		citation: "7 U.S.C. 1308-3a(d)",
 		sectionPath: "/statutes/usc/section/7/1308-3a/d",
 		instructionText: `(e) EXCLUSION FROM AGI CALCULATION.—Section 1001D(d) of the Food Security Act of 1985 (7 U.S.C. 1308–3a(d)) is amended by striking “, general partnership, or joint venture” each place it appears.`,
@@ -320,7 +412,11 @@ for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
 			instructionText: instructionLines.join("\n"),
 		});
 
-		expect(effect.status, sample.citation).toBe("ok");
+		const expectedStatus = sample.expectedStatus ?? "ok";
+		expect(effect.status, sample.citation).toBe(expectedStatus);
+		if (expectedStatus !== "ok") {
+			return;
+		}
 		expect(
 			effect.debug.operationAttempts.length,
 			sample.citation,
@@ -331,6 +427,11 @@ for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
 			),
 			sample.citation,
 		).toBe(true);
+		assertParagraphSpanOffsets(
+			effect.renderModel.plainText,
+			effect.renderModel.spans,
+			sample.citation,
+		);
 		if (sample.expectedMarkedEditSnippet) {
 			expectEffectToContainMarkedText(effect, sample.expectedMarkedEditSnippet);
 		} else {

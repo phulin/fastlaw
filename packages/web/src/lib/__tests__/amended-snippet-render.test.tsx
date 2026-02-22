@@ -48,6 +48,26 @@ function renderEffect(plainText: string, spans: FormattingSpan[]): string {
 		.replace(/></g, ">\n<");
 }
 
+function buildParagraphTextAndSpans(paragraphs: string[]): {
+	plainText: string;
+	spans: FormattingSpan[];
+} {
+	let offset = 0;
+	const spans: FormattingSpan[] = [];
+	const parts: string[] = [];
+	for (const paragraph of paragraphs) {
+		parts.push(paragraph);
+		const start = offset;
+		const end = start + paragraph.length;
+		spans.push({ start, end, type: "paragraph" });
+		offset = end + 2;
+	}
+	return {
+		plainText: parts.join("\n\n"),
+		spans,
+	};
+}
+
 describe("renderAmendedSnippet", () => {
 	it("renders multiple paragraph spans as paragraph blocks", () => {
 		const plainText = "Alpha\n\nBeta";
@@ -80,19 +100,13 @@ describe("renderAmendedSnippet", () => {
 		expect(html).toContain('<h3 class="indent2">Header</h3>');
 	});
 
-	it("renders quote depth from blockquote spans when paragraph metadata is absent", () => {
+	it("does not render quote depth class without paragraph metadata", () => {
 		const plainText = "Quoted";
 		const html = renderEffect(plainText, [
 			{ start: 0, end: plainText.length, type: "paragraph" },
-			{
-				start: 0,
-				end: plainText.length,
-				type: "blockquote",
-				metadata: { depth: 4 },
-			},
 		]);
 
-		expect(html).toContain('<p class="indent4">Quoted</p>');
+		expect(html).toContain("<p>Quoted</p>");
 	});
 
 	it("renders inline strong, emphasis, code, insertion and deletion spans", () => {
@@ -142,13 +156,14 @@ describe("renderAmendedSnippet", () => {
 		);
 	});
 
-	it("renders hard line breaks as br tags", () => {
+	it("does not inject br tags for hard line breaks", () => {
 		const plainText = "line 1\nline 2";
 		const html = renderEffect(plainText, [
 			{ start: 0, end: plainText.length, type: "paragraph" },
 		]);
 
-		expect(html).toContain("line 1<br>line 2");
+		expect(html).toContain("<p>line 1\nline 2</p>");
+		expect(html).not.toContain("<br>");
 	});
 
 	it("renders insertion when insertion span overlaps paragraph boundary", () => {
@@ -179,5 +194,36 @@ describe("renderAmendedSnippet", () => {
 
 		expect(html).toContain("&lt;script>alert(1)&lt;/script>");
 		expect(html).not.toContain("<script>alert(1)</script>");
+	});
+
+	it("includes three paragraphs of context before and after edited content", () => {
+		const paragraphLabels = [
+			"P1",
+			"P2",
+			"P3",
+			"P4",
+			"P5 edited",
+			"P6",
+			"P7",
+			"P8",
+			"P9",
+		];
+		const { plainText, spans } = buildParagraphTextAndSpans(paragraphLabels);
+		const editedStart = plainText.indexOf("edited");
+		const editedEnd = editedStart + "edited".length;
+		const html = renderEffect(plainText, [
+			...spans,
+			{ start: editedStart, end: editedEnd, type: "insertion" },
+		]);
+
+		expect(html).toContain("<p>P2</p>");
+		expect(html).toContain("<p>P3</p>");
+		expect(html).toContain("<p>P4</p>");
+		expect(html).toContain("<p>P5 <ins>edited</ins></p>");
+		expect(html).toContain("<p>P6</p>");
+		expect(html).toContain("<p>P7</p>");
+		expect(html).toContain("<p>P8</p>");
+		expect(html).not.toContain("<p>P1</p>");
+		expect(html).not.toContain("<p>P9</p>");
 	});
 });

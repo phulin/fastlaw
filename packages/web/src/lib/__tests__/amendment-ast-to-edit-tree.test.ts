@@ -76,6 +76,22 @@ describe("translateInstructionAstToEditTree", () => {
 		expect(result.tree.targetSection).toBe("45D");
 	});
 
+	it("uses fallback code reference for title-less section amendments", () => {
+		const ast = parseInstructionAst(
+			"Section 45D(a) is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast, {
+			fallbackCodeReference: { kind: "code_reference", label: "26 U.S.C." },
+		});
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "code_reference", label: "26 U.S.C." },
+			{ kind: ScopeKind.Section, label: "45D" },
+			{ kind: ScopeKind.Subsection, label: "a" },
+		]);
+		expect(result.tree.targetSection).toBe("45D");
+	});
+
 	it("accepts codification USC citations without periods", () => {
 		const ast = parseInstructionAst(
 			"Section 3 of the Food and Nutrition Act of 2008 (7 USC 2014) is amended by striking “A”.",

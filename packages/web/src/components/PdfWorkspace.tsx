@@ -9,6 +9,7 @@ import "../styles/pdf-virtualizer.css";
 interface PdfWorkspaceProps {
 	status: "idle" | "processing" | "rendering" | "rendered" | "error";
 	isVirtualDebugEnabled: boolean;
+	isInstructionClickEnabled: boolean;
 	pageRowCount: number;
 	virtualRangeLabel: string;
 	virtualIndexes: number[];
@@ -112,6 +113,7 @@ export function PdfWorkspace(props: PdfWorkspaceProps) {
 					items={props.visibleItems}
 					totalHeight={props.totalSize}
 					width={0}
+					isInstructionClickEnabled={props.isInstructionClickEnabled}
 					onInstructionClick={props.onInstructionClick}
 				/>
 			</div>

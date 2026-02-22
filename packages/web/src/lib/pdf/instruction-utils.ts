@@ -11,6 +11,11 @@ const EN_DASH = /\u2013/g;
 const BILL_SECTION_RE = /^SEC\.\s+\d+/i;
 const BILL_DIVISION_RE =
 	/^(?:TITLE|Subtitle|CHAPTER|SUBCHAPTER|PART)\s+[A-Z0-9]+[\s.—-]/i;
+const TITLE_HEADING_RE = /^TITLE\s+([A-Z0-9IVXLCDM]+)/i;
+const TITLE_WIDE_REFERENCE_RE =
+	/\bwhenever\s+in\s+this\s+title\b[\s\S]*\breference\s+shall\s+be\s+considered\s+to\s+be\s+made\s+to\b/i;
+const TITLE_UNDERLYING_RE = /title\s+(\d+),\s+United States Code/i;
+const INTERNAL_REVENUE_CODE_RE = /\bInternal Revenue Code of 1986\b/i;
 const instructionParser = new HandcraftedInstructionParser(
 	amendmentGrammarSource,
 );
@@ -130,20 +135,30 @@ export const discoverParsedInstructionSpans = (
 				const pLen = sourceParagraphs[i].text.length;
 				const pStart = currentOffset;
 				const pEnd = currentOffset + pLen;
+				const isLastParagraph = i === sourceParagraphs.length - 1;
 
-				if (startParaIdx === -1 && start <= pEnd) {
-					startParaIdx = i;
-					startFirstOffset = Math.max(0, start - pStart);
+				if (startParaIdx === -1) {
+					if (start < pEnd || (start === pEnd && isLastParagraph)) {
+						startParaIdx = i;
+						startFirstOffset = Math.max(0, Math.min(pLen, start - pStart));
+					} else if (start === pEnd && !isLastParagraph) {
+						startParaIdx = i + 1;
+						startFirstOffset = 0;
+					}
 				}
 				if (end > pStart) {
 					endParaIdx = i;
 					endLastOffset = Math.min(pLen, end - pStart);
 				}
 
-				currentOffset += pLen + 1; // +1 for the "\n"
+				currentOffset += pLen + (isLastParagraph ? 0 : 1); // "\n" separator between paragraphs only
 			}
 
 			if (startParaIdx === -1) return new ParagraphRange([], 0, 0);
+			if (startParaIdx >= sourceParagraphs.length) {
+				startParaIdx = sourceParagraphs.length - 1;
+				startFirstOffset = sourceParagraphs[startParaIdx]?.text.length ?? 0;
+			}
 			if (endParaIdx === -1) endParaIdx = startParaIdx;
 
 			const rangeParagraphs = sourceParagraphs.slice(
@@ -200,3 +215,44 @@ export const discoverParsedInstructionSpans = (
 	}
 	return spans;
 };
+
+export const discoverTitleScopedCodeReferenceDefaults = (
+	paragraphs: readonly Paragraph[],
+): Map<number, string> => {
+	const defaultByTitle = new Map<string, string>();
+	const titleByParagraphIndex = new Map<number, string>();
+	let currentTitle: string | null = null;
+
+	for (const [index, paragraph] of paragraphs.entries()) {
+		const text = paragraph.text.trim();
+		const titleMatch = text.match(TITLE_HEADING_RE);
+		if (titleMatch?.[1]) {
+			currentTitle = titleMatch[1].toUpperCase();
+		}
+		if (currentTitle) {
+			titleByParagraphIndex.set(index, currentTitle);
+		}
+
+		const codeReference = parseTitleScopedCodeReference(text);
+		if (currentTitle && codeReference) {
+			defaultByTitle.set(currentTitle, codeReference);
+		}
+	}
+
+	const defaultsByParagraph = new Map<number, string>();
+	for (const [index, title] of titleByParagraphIndex.entries()) {
+		const codeReference = defaultByTitle.get(title);
+		if (codeReference) {
+			defaultsByParagraph.set(index, codeReference);
+		}
+	}
+	return defaultsByParagraph;
+};
+
+function parseTitleScopedCodeReference(text: string): string | null {
+	if (!TITLE_WIDE_REFERENCE_RE.test(text)) return null;
+	const titleMatch = text.match(TITLE_UNDERLYING_RE);
+	if (titleMatch?.[1]) return `${titleMatch[1]} U.S.C.`;
+	if (INTERNAL_REVENUE_CODE_RE.test(text)) return "26 U.S.C.";
+	return null;
+}

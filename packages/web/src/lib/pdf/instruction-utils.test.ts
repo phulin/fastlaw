@@ -3,6 +3,7 @@ import { ScopeKind, type TargetScopeSegment } from "../amendment-edit-tree";
 import type { Paragraph } from "../types";
 import {
 	discoverParsedInstructionSpans,
+	discoverTitleScopedCodeReferenceDefaults,
 	getUscSectionPathFromScopePath,
 } from "./instruction-utils";
 
@@ -71,5 +72,37 @@ describe("discoverParsedInstructionSpans", () => {
 
 		expect(spans.length).toBe(1);
 		expect(spans[0]?.billSection).toBe("TITLE I—AGRICULTURE");
+	});
+});
+
+describe("discoverTitleScopedCodeReferenceDefaults", () => {
+	it("maps title-wide Internal Revenue Code references to 26 U.S.C.", () => {
+		const paragraphs = [
+			makeParagraph("TITLE VII—FINANCE"),
+			makeParagraph(
+				"(a) REFERENCES.—Except as otherwise expressly provided, whenever in this title, an amendment or repeal is expressed in terms of an amendment to, or repeal of, a section or other provision, the reference shall be considered to be made to a section or other provision of the Internal Revenue Code of 1986.",
+			),
+			makeParagraph("SEC. 70002. SOME CHANGE."),
+			makeParagraph("Section 45D(a) is amended by striking “A”."),
+		];
+
+		const defaults = discoverTitleScopedCodeReferenceDefaults(paragraphs);
+
+		expect(defaults.get(3)).toBe("26 U.S.C.");
+	});
+
+	it("does not leak defaults into later titles without their own rule", () => {
+		const paragraphs = [
+			makeParagraph("TITLE VII—FINANCE"),
+			makeParagraph(
+				"(a) REFERENCES.—Except as otherwise expressly provided, whenever in this title, an amendment or repeal is expressed in terms of an amendment to, or repeal of, a section or other provision, the reference shall be considered to be made to a section or other provision of the Internal Revenue Code of 1986.",
+			),
+			makeParagraph("TITLE VIII—OTHER"),
+			makeParagraph("Section 45D(a) is amended by striking “A”."),
+		];
+
+		const defaults = discoverTitleScopedCodeReferenceDefaults(paragraphs);
+
+		expect(defaults.has(3)).toBe(false);
 	});
 });

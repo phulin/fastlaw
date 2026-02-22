@@ -3,6 +3,7 @@ import { createVirtualizer } from "@tanstack/solid-virtual";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
 	batch,
+	type Component,
 	createEffect,
 	createMemo,
 	createSignal,
@@ -12,7 +13,6 @@ import {
 } from "solid-js";
 import type { PageLayout } from "./components/AnnotationLayer";
 import { Header } from "./components/Header";
-import { InstructionDebugModal } from "./components/InstructionDebugModal";
 import type { InstructionPageItem, PageItem } from "./components/PageRow";
 import { PdfUploadDropzone } from "./components/PdfUploadDropzone";
 import { PdfWorkspace } from "./components/PdfWorkspace";
@@ -27,6 +27,7 @@ const NUM_AMEND_COLORS = 6;
 const VIRTUAL_DEBUG_SEARCH_PARAM = "virtualDebug";
 const DEFAULT_ITEM_SIZE = 1078;
 const PAGE_WINDOW_RADIUS = 12;
+const IS_DEVELOPMENT_BUILD = import.meta.env.DEV;
 
 const normalizeHashKey = (hash: string) => hash.slice(0, HASH_PREFIX_LENGTH);
 
@@ -121,6 +122,13 @@ export default function PdfApp() {
 	const [isVirtualDebugEnabled, setIsVirtualDebugEnabled] = createSignal(false);
 	const [selectedInstructionItem, setSelectedInstructionItem] =
 		createSignal<InstructionPageItem | null>(null);
+	const [instructionDebugModalComponent, setInstructionDebugModalComponent] =
+		createSignal<
+			Component<{
+				item: InstructionPageItem | null;
+				onClose: () => void;
+			}>
+		>();
 	const [uscSourceVersions, setUscSourceVersions] = createSignal<
 		SourceVersionRecord[]
 	>([]);
@@ -368,6 +376,12 @@ export default function PdfApp() {
 	};
 
 	onMount(async () => {
+		if (IS_DEVELOPMENT_BUILD) {
+			void import("./components/InstructionDebugModal").then((module) => {
+				setInstructionDebugModalComponent(() => module.InstructionDebugModal);
+			});
+		}
+
 		if (typeof window !== "undefined") {
 			const search = new URLSearchParams(window.location.search);
 			setIsVirtualDebugEnabled(search.get(VIRTUAL_DEBUG_SEARCH_PARAM) === "1");
@@ -630,6 +644,7 @@ export default function PdfApp() {
 					<PdfWorkspace
 						status={status()}
 						isVirtualDebugEnabled={isVirtualDebugEnabled()}
+						isInstructionClickEnabled={IS_DEVELOPMENT_BUILD}
 						pageRowCount={pageRows().length}
 						virtualRangeLabel={virtualRangeLabel()}
 						virtualIndexes={virtualIndexes()}
@@ -647,10 +662,17 @@ export default function PdfApp() {
 						onPageRenderSuccess={handlePageRenderSuccess}
 						onPageRenderError={handlePageRenderError}
 					/>
-					<InstructionDebugModal
-						item={selectedInstructionItem()}
-						onClose={() => setSelectedInstructionItem(null)}
-					/>
+					<Show
+						when={IS_DEVELOPMENT_BUILD && instructionDebugModalComponent()}
+						keyed
+					>
+						{(InstructionDebugModal) => (
+							<InstructionDebugModal
+								item={selectedInstructionItem()}
+								onClose={() => setSelectedInstructionItem(null)}
+							/>
+						)}
+					</Show>
 				</main>
 			</div>
 		</MetaProvider>
