@@ -1,4 +1,7 @@
-import { buildAmendmentDocumentModel } from "./amendment-document-model";
+import {
+	buildAmendmentDocumentModel,
+	type PlainDocument,
+} from "./amendment-document-model";
 import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
 import type {
 	ClassificationOverride,
@@ -29,6 +32,7 @@ interface ApplyEditTreeArgs {
 	tree: InstructionSemanticTree;
 	sectionPath: string;
 	sectionBody: string;
+	parsedDocument?: PlainDocument;
 	instructionText?: string;
 	classificationOverrides?: ClassificationOverride[];
 }
@@ -1048,7 +1052,10 @@ function makeUnsupportedResult(
 export function applyAmendmentEditTreeToSection(
 	args: ApplyEditTreeArgs,
 ): AmendmentEffect {
-	const model = buildAmendmentDocumentModel(args.sectionBody);
+	const model = buildAmendmentDocumentModel(
+		args.sectionBody,
+		args.parsedDocument,
+	);
 	const counter = { index: 0 };
 	const walked = walkTree(
 		model,

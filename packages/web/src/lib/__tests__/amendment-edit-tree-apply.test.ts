@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import { buildAmendmentDocumentModel } from "../amendment-document-model";
 import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";

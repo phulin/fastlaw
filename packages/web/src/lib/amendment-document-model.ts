@@ -13,13 +13,15 @@ import type {
 } from "./amendment-edit-engine-types";
 import { ScopeKind } from "./amendment-edit-tree";
 import {
+	buildHierarchyFromParagraphs,
+	extractLeadingLabels,
 	type HierarchyNode,
-	parseMarkdownHierarchy,
+	type ParsedParagraph,
 } from "./markdown-hierarchy-parser";
 
 const parseProcessor = unified().use(remarkParse).use(remarkGfm);
 
-interface ParsedPlainDocument {
+export interface PlainDocument {
 	plainText: string;
 	spans: FormattingSpan[];
 	sourceToPlainOffsets: number[];
@@ -340,7 +342,7 @@ function buildOffsetMaps(
 
 export function parseMarkdownToPlainDocument(
 	sourceText: string,
-): ParsedPlainDocument {
+): PlainDocument {
 	const tree = parseProcessor.parse(sourceText) as Root;
 	const state = {
 		plainParts: [] as string[],
@@ -501,31 +503,91 @@ function buildNodes(args: BuildNodesArgs): string[] {
 	return builtNodeIds;
 }
 
-export function buildAmendmentDocumentModel(sourceText: string): DocumentModel {
-	const parsedHierarchy = parseMarkdownHierarchy(sourceText);
-	const parsedPlain = parseMarkdownToPlainDocument(sourceText);
+export function buildAmendmentDocumentModel(
+	sourceText: string,
+	parsedPlain?: PlainDocument,
+): DocumentModel {
+	const plain = parsedPlain ?? parseMarkdownToPlainDocument(sourceText);
 	const lineStarts = getLineStarts(sourceText);
-	const paragraphLineStarts = parsedHierarchy.paragraphs.map(
-		(paragraph) => paragraph.startLine,
-	);
+
+	const paragraphs: ParsedParagraph[] = [];
+	let paragraphIndex = 0;
+
+	let sourceOffsetCursor = 0;
+	let lineCursor = 0;
+
+	for (const span of plain.spans) {
+		if (span.type === "paragraph") {
+			const text = plain.plainText.slice(span.start, span.end);
+			const lines = text.split("\n");
+			let currentPlainOffset = span.start;
+
+			for (let i = 0; i < lines.length; i++) {
+				const lineText = lines[i] ?? "";
+				const labels = extractLeadingLabels(lineText);
+
+				// Find source offset for this line's start in plainText
+				while (
+					sourceOffsetCursor < plain.sourceToPlainOffsets.length &&
+					(plain.sourceToPlainOffsets[sourceOffsetCursor] ?? 0) <
+						currentPlainOffset
+				) {
+					sourceOffsetCursor++;
+				}
+				const safeSourceOffset = Math.min(
+					sourceText.length,
+					sourceOffsetCursor,
+				);
+
+				// Find source line index
+				while (
+					lineCursor < lineStarts.length &&
+					(lineStarts[lineCursor] ?? 0) <= safeSourceOffset
+				) {
+					lineCursor++;
+				}
+				const currentLine = Math.max(0, lineCursor - 1);
+
+				if (labels.length > 0 || i === 0) {
+					paragraphs.push({
+						index: paragraphIndex++,
+						startLine: currentLine,
+						endLine: currentLine + 1,
+						text: lineText,
+						quoteDepth: (span.metadata?.quoteDepth as number) ?? 0,
+						leadingLabels: labels,
+					});
+				} else {
+					const prev = paragraphs[paragraphs.length - 1];
+					if (prev) {
+						prev.text += `\n${lineText}`;
+						prev.endLine = currentLine + 1;
+					}
+				}
+
+				currentPlainOffset += lineText.length + 1;
+			}
+		}
+	}
+	const parsedHierarchy = buildHierarchyFromParagraphs(paragraphs);
 
 	const nodesById = new Map<string, StructuralNode>();
 	const rootNodeIds = buildNodes({
 		sourceTextLength: sourceText.length,
-		sourceToPlainOffsets: parsedPlain.sourceToPlainOffsets,
+		sourceToPlainOffsets: plain.sourceToPlainOffsets,
 		lineStarts,
-		paragraphLineStarts,
+		paragraphLineStarts: paragraphs.map((p) => p.startLine),
 		nodes: parsedHierarchy.levels,
 		parentPath: [],
 		nodesById,
 	});
 
 	return {
-		plainText: parsedPlain.plainText,
-		spans: parsedPlain.spans,
+		plainText: plain.plainText,
+		spans: plain.spans,
 		rootRange: {
 			start: 0,
-			end: parsedPlain.plainText.length,
+			end: plain.plainText.length,
 			targetLevel: null,
 		},
 		nodesById,

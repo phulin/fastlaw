@@ -22,7 +22,7 @@ import {
 	UltimateEditKind,
 } from "./amendment-edit-tree";
 import { formatInsertedBlockContent } from "./inserted-block-format";
-import { segment } from "./sentencex";
+import { segment } from "./sentence-segment";
 import type { ParagraphRange } from "./types";
 
 /**

@@ -208,11 +208,65 @@ export function renderAmendedSnippet(effect: AmendmentEffect): JSX.Element {
 					},
 				] as FormattingSpan[]);
 
-	return (
-		<>
-			{resolvedParagraphs
-				.filter((paragraph) => paragraph.end > paragraph.start)
-				.map((paragraph) => renderParagraphBlock(paragraph, plainText, spans))}
-		</>
-	);
+	const modifiedParagraphIndices = new Set<number>();
+	resolvedParagraphs.forEach((p, i) => {
+		const isModified = spans.some(
+			(span) =>
+				(span.type === "insertion" ||
+					span.type === "delete" ||
+					span.type === "deletion") &&
+				span.start < p.end &&
+				span.end > p.start,
+		);
+		if (isModified) {
+			modifiedParagraphIndices.add(i);
+		}
+	});
+
+	const visibleIndices = new Set<number>();
+	if (modifiedParagraphIndices.size > 0) {
+		for (const index of modifiedParagraphIndices) {
+			visibleIndices.add(index);
+			if (index > 0) visibleIndices.add(index - 1);
+			if (index < resolvedParagraphs.length - 1) visibleIndices.add(index + 1);
+		}
+	} else {
+		for (let i = 0; i < Math.min(3, resolvedParagraphs.length); i++) {
+			visibleIndices.add(i);
+		}
+	}
+
+	const sortedVisibleIndices = Array.from(visibleIndices).sort((a, b) => a - b);
+
+	const renderBlocks: JSX.Element[] = [];
+	let lastIndex = -1;
+
+	for (const index of sortedVisibleIndices) {
+		if (lastIndex !== -1 && index > lastIndex + 1) {
+			renderBlocks.push(
+				<div class="pdf-amended-snippet-ellipsis">
+					<p>...</p>
+				</div>,
+			);
+		}
+		const p = resolvedParagraphs[index];
+		if (p && p.end > p.start) {
+			renderBlocks.push(renderParagraphBlock(p, plainText, spans));
+		}
+		lastIndex = index;
+	}
+
+	if (
+		sortedVisibleIndices.length > 0 &&
+		(sortedVisibleIndices[sortedVisibleIndices.length - 1] ?? 0) <
+			resolvedParagraphs.length - 1
+	) {
+		renderBlocks.push(
+			<div class="pdf-amended-snippet-ellipsis">
+				<p>...</p>
+			</div>,
+		);
+	}
+
+	return <>{renderBlocks}</>;
 }

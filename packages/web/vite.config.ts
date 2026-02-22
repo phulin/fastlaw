@@ -35,9 +35,6 @@ export default defineConfig(({ command }) => {
 			target: "webworker",
 			noExternal: ["solid-js", "solid-js/web"],
 		},
-		optimizeDeps: {
-			exclude: ["sentencex-wasm"],
-		},
 		build: {
 			outDir: isWorkerBuild ? undefined : "dist/client",
 			rollupOptions: {

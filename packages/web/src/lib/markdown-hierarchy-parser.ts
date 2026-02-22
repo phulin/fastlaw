@@ -7,7 +7,7 @@ export interface HierarchyParagraph {
 	text: string;
 }
 
-interface ParsedParagraph extends HierarchyParagraph {
+export interface ParsedParagraph extends HierarchyParagraph {
 	quoteDepth: number;
 	leadingLabels: string[];
 }
@@ -40,7 +40,7 @@ function countLeadingQuoteDepth(line: string): number {
 	return (match[0].match(/>/g) ?? []).length;
 }
 
-function extractLeadingLabels(line: string): string[] {
+export function extractLeadingLabels(line: string): string[] {
 	const depth = countLeadingQuoteDepth(line);
 	const withoutQuotes = depth > 0 ? line.replace(/^(>\s*)+/, "") : line;
 	let rest = withoutQuotes.trimStart();
@@ -68,68 +68,6 @@ function extractLeadingLabels(line: string): string[] {
 	}
 
 	return labels;
-}
-
-function parseParagraphs(markdown: string): ParsedParagraph[] {
-	const lines = markdown.split("\n");
-	const paragraphs: ParsedParagraph[] = [];
-	let currentStart = -1;
-	let previousLine = "";
-
-	const isStructuralStartLine = (line: string): boolean => {
-		if (line.trim().length === 0) return false;
-		return extractLeadingLabels(line).length > 0;
-	};
-
-	for (let lineIndex = 0; lineIndex <= lines.length; lineIndex++) {
-		const line = lines[lineIndex] ?? "";
-		const isBreak = line.trim().length === 0 || lineIndex === lines.length;
-		const isStructuralSplit =
-			currentStart >= 0 &&
-			lineIndex < lines.length &&
-			previousLine.trim().length > 0 &&
-			isStructuralStartLine(line);
-		if (!isBreak) {
-			if (isStructuralSplit) {
-				const startLine = currentStart;
-				const endLine = lineIndex;
-				const paragraphLines = lines.slice(startLine, endLine);
-				const firstLine = paragraphLines[0] ?? "";
-				paragraphs.push({
-					index: paragraphs.length,
-					startLine,
-					endLine,
-					text: paragraphLines.join("\n"),
-					quoteDepth: countLeadingQuoteDepth(firstLine),
-					leadingLabels: extractLeadingLabels(firstLine),
-				});
-				currentStart = lineIndex;
-				previousLine = line;
-				continue;
-			}
-			if (currentStart < 0) currentStart = lineIndex;
-			previousLine = line;
-			continue;
-		}
-		if (currentStart < 0) continue;
-
-		const startLine = currentStart;
-		const endLine = lineIndex;
-		const paragraphLines = lines.slice(startLine, endLine);
-		const firstLine = paragraphLines[0] ?? "";
-		paragraphs.push({
-			index: paragraphs.length,
-			startLine,
-			endLine,
-			text: paragraphLines.join("\n"),
-			quoteDepth: countLeadingQuoteDepth(firstLine),
-			leadingLabels: extractLeadingLabels(firstLine),
-		});
-		currentStart = -1;
-		previousLine = "";
-	}
-
-	return paragraphs;
 }
 
 function collectMarkers(paragraphs: ParsedParagraph[]): {
@@ -207,8 +145,9 @@ function assignSegments(
 	node.footing = paragraphs.slice(footingStart, node.endParagraph);
 }
 
-export function parseMarkdownHierarchy(markdown: string): MarkdownHierarchy {
-	const parsedParagraphs = parseParagraphs(markdown);
+export function buildHierarchyFromParagraphs(
+	parsedParagraphs: ParsedParagraph[],
+): MarkdownHierarchy {
 	const paragraphs: HierarchyParagraph[] = parsedParagraphs.map(
 		(paragraph) => ({
 			index: paragraph.index,
@@ -303,4 +242,41 @@ export function findHierarchyNodeByMarkerPath(
 		currentLevels = next.sublevels;
 	}
 	return current;
+}
+
+export function parseMarkdownHierarchy(markdown: string): MarkdownHierarchy {
+	const lines = markdown.split("\n");
+	const paragraphs: ParsedParagraph[] = [];
+	let currentParagraph: ParsedParagraph | null = null;
+	let paragraphIndex = 0;
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i] ?? "";
+		const trimmed = line.trim();
+
+		const quoteDepth = countLeadingQuoteDepth(line);
+		const labels = extractLeadingLabels(line);
+
+		if (trimmed === "") {
+			currentParagraph = null;
+			continue;
+		}
+
+		if (labels.length > 0 || currentParagraph === null) {
+			currentParagraph = {
+				index: paragraphIndex++,
+				startLine: i,
+				endLine: i + 1,
+				text: line,
+				quoteDepth,
+				leadingLabels: labels,
+			};
+			paragraphs.push(currentParagraph);
+		} else {
+			currentParagraph.text += `\n${line}`;
+			currentParagraph.endLine = i + 1;
+		}
+	}
+
+	return buildHierarchyFromParagraphs(paragraphs);
 }

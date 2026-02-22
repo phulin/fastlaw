@@ -1,6 +1,5 @@
 import * as pdfjsLib from "pdfjs-dist";
 import type { ClassificationOverride } from "../amendment-edit-engine-types";
-import { initSentencex } from "../sentencex";
 import { extractParagraphs } from "../text-extract";
 import type { NodeContent, Paragraph } from "../types";
 import { buildPageItemsFromParagraphs } from "./page-items";
@@ -103,8 +102,6 @@ self.addEventListener(
 
 		void (async () => {
 			try {
-				await initSentencex();
-
 				// DO NOT import pdf.worker.mjs here. If you import it in a Worker Global Scope,
 				// it will hijack self.addEventListener('message') and break our worker!
 				// Instead, just let getDocument use the fake worker synchronously or manually specify workerSrc
