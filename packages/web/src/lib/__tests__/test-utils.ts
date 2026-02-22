@@ -1,3 +1,4 @@
+import { expect } from "vitest";
 import type { TextWithProvenance } from "../amendment-edit-tree";
 import { type Line, type Paragraph, ParagraphRange } from "../types";
 
@@ -93,3 +94,113 @@ export const parseFixtureParagraphs = (text: string): Paragraph[] => {
 
 	return paragraphs;
 };
+
+type EditMarker = "~~" | "++";
+type EditSpanType = "deletion" | "insertion";
+
+interface ParsedMarkedSpan {
+	type: EditSpanType;
+	start: number;
+	end: number;
+	text: string;
+}
+
+interface ParsedMarkedText {
+	plainText: string;
+	spans: ParsedMarkedSpan[];
+}
+
+const MARKER_TO_SPAN_TYPE: Record<EditMarker, EditSpanType> = {
+	"~~": "deletion",
+	"++": "insertion",
+};
+
+function parseMarkedText(markedText: string): ParsedMarkedText {
+	const spans: ParsedMarkedSpan[] = [];
+	let plainText = "";
+	let cursor = 0;
+
+	while (cursor < markedText.length) {
+		const maybeMarker = markedText.slice(cursor, cursor + 2);
+		if (maybeMarker !== "~~" && maybeMarker !== "++") {
+			plainText += markedText[cursor] ?? "";
+			cursor += 1;
+			continue;
+		}
+
+		const marker = maybeMarker as EditMarker;
+		const endMarkerIndex = markedText.indexOf(marker, cursor + 2);
+		if (endMarkerIndex < 0) {
+			throw new Error(`Unclosed marker "${marker}" in: ${markedText}`);
+		}
+
+		const content = markedText.slice(cursor + 2, endMarkerIndex);
+		const start = plainText.length;
+		plainText += content;
+		const end = plainText.length;
+		spans.push({
+			type: MARKER_TO_SPAN_TYPE[marker],
+			start,
+			end,
+			text: content,
+		});
+		cursor = endMarkerIndex + 2;
+	}
+
+	return { plainText, spans };
+}
+
+type EffectLike = {
+	renderModel: {
+		plainText: string;
+		spans: Array<{ type: string; start: number; end: number }>;
+	};
+};
+
+function findAllOccurrences(haystack: string, needle: string): number[] {
+	if (needle.length === 0) return [];
+	const indexes: number[] = [];
+	let cursor = 0;
+	while (cursor <= haystack.length - needle.length) {
+		const index = haystack.indexOf(needle, cursor);
+		if (index < 0) break;
+		indexes.push(index);
+		cursor = index + 1;
+	}
+	return indexes;
+}
+
+function hasMarkedEditSnippet(
+	effect: EffectLike,
+	markedSnippet: string,
+): boolean {
+	const parsed = parseMarkedText(markedSnippet);
+	const occurrences = findAllOccurrences(
+		effect.renderModel.plainText,
+		parsed.plainText,
+	);
+	if (occurrences.length === 0) return false;
+
+	for (const offset of occurrences) {
+		const allSpansMatch = parsed.spans.every((expectedSpan) => {
+			const expectedStart = offset + expectedSpan.start;
+			const expectedEnd = offset + expectedSpan.end;
+			return effect.renderModel.spans.some(
+				(actualSpan) =>
+					actualSpan.type === expectedSpan.type &&
+					actualSpan.start <= expectedStart &&
+					actualSpan.end >= expectedEnd,
+			);
+		});
+		if (allSpansMatch) return true;
+	}
+
+	return false;
+}
+
+export function expectEffectToContainMarkedText(
+	effect: EffectLike,
+	markedSnippet: string,
+): void {
+	expect(hasMarkedEditSnippet(effect, markedSnippet)).toBe(true);
+}

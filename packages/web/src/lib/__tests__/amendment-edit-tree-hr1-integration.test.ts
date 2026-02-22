@@ -6,7 +6,7 @@ import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
 import { type Paragraph, ParagraphRange } from "../types";
-import { createParagraph } from "./test-utils";
+import { createParagraph, expectEffectToContainMarkedText } from "./test-utils";
 
 interface SelectedInstructionBlock {
 	citation: string;
@@ -14,6 +14,7 @@ interface SelectedInstructionBlock {
 	instructionText: string;
 	instructionLineLevels: number[];
 	expectedEditedExcerpt: string;
+	expectedMarkedEditSnippet?: string;
 }
 
 interface LeveledLine {
@@ -199,6 +200,8 @@ The income (less, at State option, a pro rata share) and financial resources of 
 (1) in subsection (a), in the matter preceding paragraph (1), by striking “2023” and inserting “2031”;`,
 		instructionLineLevels: [1, 2],
 		expectedEditedExcerpt: "for the 2019 through 2031 crop years",
+		expectedMarkedEditSnippet:
+			"for the 2019 through ~~2023~~++2031++ crop years",
 	},
 	{
 		citation: "7 U.S.C. 9034",
@@ -219,6 +222,8 @@ The income (less, at State option, a pro rata share) and financial resources of 
 (B) (i) in the case of long grain rice and medium grain rice, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section; or
 (ii) in the case of upland cotton, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section.
 (2) REFUND FOR UPLAND COTTON.—`,
+		expectedMarkedEditSnippet:
+			"~~The Secretary~~++(1) IN GENERAL.—The Secretary++",
 	},
 	{
 		citation: "7 U.S.C. 2036(a)(2)",
@@ -234,6 +239,7 @@ The income (less, at State option, a pro rata share) and financial resources of 
 		instructionLineLevels: [1],
 		expectedEditedExcerpt: `(1) In general
 Notwithstanding sections 1396o and 1396a(a)(10)(B) of this title, but subject to paragraph (2), a State, at its option and through a State plan amendment, may impose premiums and cost sharing for any group of individuals (as specified by the State) and for any type of services (other than drugs for which cost sharing may be imposed under subsection (c) and non-emergency services furnished in a hospital emergency department for which cost sharing may be imposed under subsection (e)), and may vary such premiums and cost sharing among such groups or types, consistent with the limitations established under this section. Nothing in this section shall be construed as superseding (or preventing the application of) subsection (g), (i), (j), or (k) of section 1396o of this title.`,
+		expectedMarkedEditSnippet: "~~or (j)~~++(j), or (k)++",
 	},
 	{
 		citation: "7 U.S.C. 9038(a)",
@@ -245,6 +251,7 @@ Notwithstanding any other provision of law, during the period beginning on Febru
 (1) to maintain and expand the domestic use of extra long staple cotton produced in the United States;
 (2) to increase exports of extra long staple cotton produced in the United States; and
 (3) to ensure that extra long staple cotton produced in the United States remains competitive in world markets.`,
+		expectedMarkedEditSnippet: "~~2026~~++2032++",
 	},
 	{
 		citation: "7 U.S.C. 1516(b)(2)(C)(i)",
@@ -256,6 +263,8 @@ Notwithstanding any other provision of law, during the period beginning on Febru
 For each of the 2014 and subsequent reinsurance years, the Corporation may use the insurance fund established under subsection (c), but not to exceed $7,000,000 for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter, to pay costs—
 (I) to reimburse expenses incurred for the operations and review of policies, plans of insurance, and related materials (including actuarial and related information); and
 (II) to assist the Corporation in maintaining program actuarial soundness and financial integrity.`,
+		expectedMarkedEditSnippet:
+			"~~for each fiscal year~~++for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter++",
 	},
 	{
 		citation: "7 U.S.C. 9036",
@@ -264,6 +273,8 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 		instructionLineLevels: [1],
 		expectedEditedExcerpt:
 			"Effective for each of the 2014 through 2031 crop years",
+		expectedMarkedEditSnippet:
+			"Effective for each of the 2014 through ~~2023~~++2031++ crop years",
 	},
 	{
 		citation: "7 U.S.C. 1308-3a(d)",
@@ -272,6 +283,8 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 		instructionLineLevels: [1],
 		expectedEditedExcerpt:
 			"to an entity, the amount of the payment or benefit shall be reduced",
+		expectedMarkedEditSnippet:
+			"to an entity~~, general partnership, or joint venture~~, the amount of the payment or benefit shall be reduced",
 	},
 ];
 
@@ -318,8 +331,12 @@ for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
 			),
 			sample.citation,
 		).toBe(true);
-		expect(effect.renderModel.plainText, sample.citation).toContain(
-			sample.expectedEditedExcerpt,
-		);
+		if (sample.expectedMarkedEditSnippet) {
+			expectEffectToContainMarkedText(effect, sample.expectedMarkedEditSnippet);
+		} else {
+			expect(effect.renderModel.plainText, sample.citation).toContain(
+				sample.expectedEditedExcerpt,
+			);
+		}
 	});
 }

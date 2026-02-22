@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import { buildAmendmentDocumentModel } from "../amendment-document-model";
 import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
@@ -21,7 +21,7 @@ import {
 	walkTree,
 } from "../amendment-edit-tree-apply";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
-import { tp } from "./test-utils";
+import { expectEffectToContainMarkedText, tp } from "./test-utils";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(TEST_DIR, "../../..");
@@ -79,7 +79,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe("This is text.");
+		expectEffectToContainMarkedText(effect, "This is~~ old~~ text.");
 		expect(effect.deleted).toEqual([" old"]);
 		expect(effect.inserted).toEqual([]);
 	});
@@ -113,8 +113,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe("For 2031 and 2031 only.");
-		expect(effect.renderModel.plainText).not.toContain("2023");
+		expectEffectToContainMarkedText(
+			effect,
+			"For ~~2023~~++2031++ and ~~2023~~++2031++ only.",
+		);
 	});
 
 	it("applies Strike edits at each place when requested", () => {
@@ -145,8 +147,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe(" alpha beta ");
-		expect(effect.renderModel.plainText).not.toContain("x");
+		expectEffectToContainMarkedText(effect, "~~x~~ alpha ~~x~~ beta ~~x~~");
 	});
 
 	it("records partial apply failed items for no-match operations", () => {
@@ -438,7 +439,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe("This is new text.");
+		expectEffectToContainMarkedText(effect, "This is ~~old~~++new++ text.");
 		expect(effect.deleted).toEqual(["old"]);
 		expect(effect.inserted).toEqual(["new"]);
 	});
@@ -496,7 +497,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe("Replacement text.");
+		expectEffectToContainMarkedText(
+			effect,
+			"~~Original text.~~++Replacement text.++",
+		);
 	});
 
 	it("applies Redesignate edits", () => {
@@ -533,7 +537,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe("(b) Original text.");
+		expectEffectToContainMarkedText(effect, "~~(a)~~++(b)++ Original text.");
 	});
 
 	it("applies Move edits", () => {
@@ -568,7 +572,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe("(b) Second.\n(a) First.");
+		expectEffectToContainMarkedText(
+			effect,
+			"~~(a) First.\n(b) Second.~~++(b) Second.\n(a) First.++",
+		);
 	});
 
 	it("applies Strike through-variants", () => {
@@ -594,7 +601,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe("gamma");
+		expectEffectToContainMarkedText(effect, "~~alpha beta ~~gamma");
 	});
 
 	it("applies StrikeInsert non-text targets", () => {
@@ -625,8 +632,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toContain("new");
-		expect(effect.renderModel.plainText).not.toContain("old");
+		expectEffectToContainMarkedText(effect, "(a) ~~old~~++new++");
 	});
 
 	it("applies StrikeInsert structural target ranges", () => {
@@ -663,11 +669,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toContain("(a) New first.");
-		expect(effect.renderModel.plainText).toContain("(b) New second.");
-		expect(effect.renderModel.plainText).toContain("(c) Keep.");
-		expect(effect.renderModel.plainText).not.toContain("Old first");
-		expect(effect.renderModel.plainText).not.toContain("Old second");
+		expectEffectToContainMarkedText(
+			effect,
+			"~~(a) Old first.\n(b) Old second.\n~~++(a) New first.\n(b) New second.\n++(c) Keep.",
+		);
 	});
 
 	it("applies Insert before/after non-text anchors", () => {
@@ -1282,8 +1287,9 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 		};
 		const effect = applyVariant(tree, "First sentence old. Last sentence old.");
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toBe(
-			"First sentence old. Last sentence new.",
+		expectEffectToContainMarkedText(
+			effect,
+			"First sentence old. Last sentence ~~old~~++new++.",
 		);
 	});
 
@@ -1327,7 +1333,7 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 		);
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toContain("Intro new text.");
+		expectEffectToContainMarkedText(effect, "Intro ~~old text~~++new text++.");
 		expect(effect.renderModel.plainText).toContain(
 			"(2) old text in paragraph two.",
 		);
@@ -1375,8 +1381,9 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 		expect(effect.renderModel.plainText).toContain(
 			"(1) old text in paragraph one.",
 		);
-		expect(effect.renderModel.plainText).toContain(
-			"(2) new text in paragraph two.",
+		expectEffectToContainMarkedText(
+			effect,
+			"(2) ~~old text~~++new text++ in paragraph two.",
 		);
 		expect(hasStrongSpanText(effect, "(1)")).toBe(true);
 		expect(hasStrongSpanText(effect, "(2)")).toBe(true);
@@ -1424,8 +1431,9 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 		);
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toContain(
-			"(b) Intro new text for subsection b.",
+		expectEffectToContainMarkedText(
+			effect,
+			"(b) Intro ~~old text~~++new text++ for subsection b.",
 		);
 		expect(effect.renderModel.plainText).toContain(
 			"(A) old text in subparagraph A.",
@@ -1654,8 +1662,9 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 
 		expect(effect.status).toBe("ok");
 		expect(effect.applySummary.wasTranslated).toBe(true);
-		expect(effect.renderModel.plainText).toBe(
-			"As defined in section 2012(u)(3) of this title.",
+		expectEffectToContainMarkedText(
+			effect,
+			"As defined in ~~section 2012(u)(4)~~++section 2012(u)(3)++ of this title.",
 		);
 		// The instruction text should be translated in the summary
 		expect(effect.debug.operationAttempts[0]?.wasTranslated).toBe(true);
