@@ -16,12 +16,17 @@ pub async fn ensure_cached(
         callback_token,
         "/api/proxy/cache-read",
         reqwest::Method::POST,
-        Some(serde_json::json!({
-            "url": url,
-            "extractZip": extract_zip,
-            "cacheKey": cache_key,
-            "throttleRequestsPerSecond": throttle_requests_per_second
-        })),
+        Some({
+            let mut body = serde_json::json!({
+                "url": url,
+                "extractZip": extract_zip,
+                "cacheKey": cache_key,
+            });
+            if let Some(rps) = throttle_requests_per_second {
+                body["throttleRequestsPerSecond"] = serde_json::json!(rps);
+            }
+            body
+        }),
     )
     .await?;
 
