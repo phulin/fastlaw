@@ -24,7 +24,7 @@ function shiftSpansForInsertion(
 	if (insertedLength <= 0) return spans.map((span) => ({ ...span }));
 	return spans.map((span) => {
 		if (span.end <= insertAt) return { ...span };
-		if (span.start > insertAt) {
+		if (span.start >= insertAt) {
 			return {
 				...span,
 				start: span.start + insertedLength,
@@ -33,6 +33,78 @@ function shiftSpansForInsertion(
 		}
 		return { ...span, end: span.end + insertedLength };
 	});
+}
+
+function splitContainerSpansAroundInsertion(
+	spans: FormattingSpan[],
+	insertAt: number,
+	insertedLength: number,
+): FormattingSpan[] {
+	if (insertedLength <= 0) return spans.map((span) => ({ ...span }));
+	const result: FormattingSpan[] = [];
+	for (const span of spans) {
+		if (span.start >= span.end) continue;
+		if (span.end <= insertAt || span.start >= insertAt) {
+			result.push({ ...span });
+			continue;
+		}
+		if (
+			span.type === "paragraph" ||
+			span.type === "blockquote" ||
+			span.type === "heading"
+		) {
+			const left = { ...span, end: insertAt };
+			const right = {
+				...span,
+				start: insertAt + insertedLength,
+				end: span.end + insertedLength,
+			};
+			if (left.end > left.start) result.push(left);
+			if (right.end > right.start) result.push(right);
+			continue;
+		}
+		result.push({ ...span, end: span.end + insertedLength });
+	}
+	return result;
+}
+
+function normalizeParagraphSpanContainment(
+	spans: FormattingSpan[],
+): FormattingSpan[] {
+	const paragraphs = spans
+		.filter((span) => span.type === "paragraph" && span.end > span.start)
+		.map((span) => ({ ...span }));
+	const nonParagraphs = spans
+		.filter((span) => span.type !== "paragraph" && span.end > span.start)
+		.map((span) => ({ ...span }));
+
+	const sorted = paragraphs.sort(
+		(left, right) => left.start - right.start || left.end - right.end,
+	);
+	const normalized: FormattingSpan[] = [];
+
+	for (const paragraph of sorted) {
+		const next = { ...paragraph };
+		const previous = normalized[normalized.length - 1];
+		if (!previous) {
+			normalized.push(next);
+			continue;
+		}
+		if (next.start >= previous.end) {
+			normalized.push(next);
+			continue;
+		}
+
+		previous.end = Math.max(previous.start, next.start);
+		if (previous.end <= previous.start) {
+			normalized.pop();
+		}
+		if (next.end > next.start) {
+			normalized.push(next);
+		}
+	}
+
+	return [...nonParagraphs, ...normalized];
 }
 
 function materializeEditsFromPatches(
@@ -76,11 +148,16 @@ function materializeEditsFromPatches(
 
 		if (insertedTotalLength > 0) {
 			workingText = `${workingText.slice(0, insertAt)}${insertedPrefixPlain}${insertedPlain}${insertedSuffixPlain}${workingText.slice(insertAt)}`;
-			workingSpans = shiftSpansForInsertion(
-				workingSpans,
-				insertAt,
-				insertedTotalLength,
+			const insertedHasParagraphs = insertedSpans.some(
+				(span) => span.type === "paragraph",
 			);
+			workingSpans = insertedHasParagraphs
+				? splitContainerSpansAroundInsertion(
+						workingSpans,
+						insertAt,
+						insertedTotalLength,
+					)
+				: shiftSpansForInsertion(workingSpans, insertAt, insertedTotalLength);
 			workingSpans.push(
 				...shiftInsertedSpans(
 					insertedSpans,
@@ -97,7 +174,9 @@ function materializeEditsFromPatches(
 
 	return {
 		plainText: workingText,
-		spans: workingSpans.filter((span) => span.end > span.start),
+		spans: normalizeParagraphSpanContainment(
+			workingSpans.filter((span) => span.end > span.start),
+		),
 	};
 }
 

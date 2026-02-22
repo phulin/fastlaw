@@ -983,6 +983,52 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		);
 	});
 
+	it("does not keep a containing paragraph span across multiline inserted blocks", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: {
+							kind: SearchTargetKind.Text,
+							text: tp("county for at least 8 consecutive"),
+						},
+						insert: tp(
+							"county for not less than—\n(aa) 4 consecutive weeks;\n(bb) 7 of the previous 8 consecutive",
+						),
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/7/9081",
+			sectionBody:
+				"An eligible livestock producer in a county for at least 8 consecutive weeks during the normal grazing period.",
+			instructionText:
+				'by striking "county for at least 8 consecutive" and inserting the following.',
+		});
+
+		expect(effect.status).toBe("ok");
+		const insertionSpan = effect.renderModel.spans.find(
+			(span) => span.type === "insertion",
+		);
+		expect(insertionSpan).toBeDefined();
+
+		const parentParagraph = effect.renderModel.spans.find(
+			(span) =>
+				span.type === "paragraph" &&
+				insertionSpan !== undefined &&
+				span.start < insertionSpan.start &&
+				span.end > insertionSpan.end,
+		);
+		expect(parentParagraph).toBeUndefined();
+	});
+
 	it("does not widen strike-insert replacement to ancestor scope when replacing a single paragraph", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
