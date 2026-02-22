@@ -8,7 +8,6 @@ import {
 import type { NodeContent, Paragraph } from "../types";
 import {
 	discoverParsedInstructionSpans,
-	findBillSectionForInstruction,
 	formatTargetScopePath,
 	getSectionBodyText,
 	getUscCitationFromScopePath,
@@ -162,10 +161,7 @@ export const buildPageItemsFromParagraphs = async ({
 				item: {
 					type: "instruction",
 					instruction: {
-						billSection: findBillSectionForInstruction(
-							paragraphs,
-							span.startParagraphIndex,
-						),
+						billSection: span.billSection,
 						target: span.parsedInstruction.ast.parent.text,
 						uscCitation,
 						text: instructionText,

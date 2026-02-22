@@ -35,7 +35,6 @@ function shiftSpansForInsertion(
 	});
 }
 
-
 function materializeEditsFromPatches(
 	model: DocumentModel,
 	patches: PlannedPatch[],

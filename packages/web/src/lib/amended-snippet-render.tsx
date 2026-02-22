@@ -121,12 +121,19 @@ function renderParagraphContent(
 	const paragraphSpans = spans.filter(
 		(span) =>
 			isInlineSpan(span) &&
-			span.start >= paragraph.start &&
-			span.end <= paragraph.end &&
+			span.start < paragraph.end &&
+			span.end > paragraph.start &&
 			span.end > span.start,
 	);
+	const clippedParagraphSpans = paragraphSpans
+		.map((span) => ({
+			...span,
+			start: Math.max(span.start, paragraph.start),
+			end: Math.min(span.end, paragraph.end),
+		}))
+		.filter((span) => span.end > span.start);
 	const boundaries = new Set<number>([0, paragraphText.length]);
-	for (const span of paragraphSpans) {
+	for (const span of clippedParagraphSpans) {
 		boundaries.add(span.start - paragraph.start);
 		boundaries.add(span.end - paragraph.start);
 	}
@@ -141,7 +148,7 @@ function renderParagraphContent(
 		if (segmentText.length === 0) continue;
 		const globalStart = paragraph.start + localStart;
 		const globalEnd = paragraph.start + localEnd;
-		const activeSpans = paragraphSpans
+		const activeSpans = clippedParagraphSpans
 			.filter((span) => span.start <= globalStart && span.end >= globalEnd)
 			.sort(
 				(left, right) =>

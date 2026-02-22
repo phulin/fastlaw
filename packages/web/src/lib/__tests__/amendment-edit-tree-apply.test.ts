@@ -919,6 +919,65 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(indexOfB).toBeGreaterThan(indexOfA);
 	});
 
+	it("splits inserted marker block into individual paragraph spans", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "c" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.Insert,
+								content: tp(
+									"(5) ASSISTANCE FOR LOSSES DUE TO BIRD DEPREDATION.—\n(A) DEFINITION OF FARM-RAISED FISH.—\n(B) PAYMENTS.—\n(C) PAYMENT RATE.—",
+								),
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(c) Existing text.",
+			instructionText: "by adding at the end the following:",
+		});
+
+		expect(effect.status).toBe("ok");
+		const insertionSpan = effect.renderModel.spans.find(
+			(span) => span.type === "insertion",
+		);
+		expect(insertionSpan).toBeDefined();
+		const insertedParagraphs = effect.renderModel.spans
+			.filter(
+				(span) =>
+					span.type === "paragraph" &&
+					insertionSpan &&
+					span.start < insertionSpan.end &&
+					span.end > insertionSpan.start,
+			)
+			.map((span) => effect.renderModel.plainText.slice(span.start, span.end));
+
+		expect(insertedParagraphs.some((text) => text.startsWith("(5)"))).toBe(
+			true,
+		);
+		expect(insertedParagraphs.some((text) => text.startsWith("(A)"))).toBe(
+			true,
+		);
+		expect(insertedParagraphs.some((text) => text.startsWith("(B)"))).toBe(
+			true,
+		);
+		expect(insertedParagraphs.some((text) => text.startsWith("(C)"))).toBe(
+			true,
+		);
+	});
+
 	it("does not widen strike-insert replacement to ancestor scope when replacing a single paragraph", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

@@ -67,7 +67,7 @@ const getInstructionLocationHeader = (
 	const billSectionLabel = billSectionNumber ?? billSection;
 	const location =
 		locationMarkers.length > 0
-			? `${billSectionLabel}${locationMarkers.join("")}:`
+			? `§ ${billSectionLabel}${locationMarkers.join("")}:`
 			: "";
 	const citation =
 		instruction.uscCitation?.replace(/U\.S\.C\./g, "USC") ?? instruction.target;

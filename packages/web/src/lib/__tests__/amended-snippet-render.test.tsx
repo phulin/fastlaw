@@ -151,6 +151,19 @@ describe("renderAmendedSnippet", () => {
 		expect(html).toContain("line 1<br>line 2");
 	});
 
+	it("renders insertion when insertion span overlaps paragraph boundary", () => {
+		const plainText = "Alpha\nBeta";
+		const betaStart = plainText.indexOf("Beta");
+		const betaEnd = betaStart + "Beta".length;
+		const html = renderEffect(plainText, [
+			{ start: 0, end: 5, type: "paragraph" },
+			{ start: betaStart, end: betaEnd, type: "paragraph" },
+			{ start: betaStart - 1, end: betaEnd, type: "insertion" },
+		]);
+
+		expect(html).toMatch(/<p>\s*<ins>Beta<\/ins>\s*<\/p>/);
+	});
+
 	it("renders one paragraph when no paragraph spans are present", () => {
 		const plainText = "Fallback paragraph";
 		const html = renderEffect(plainText, []);

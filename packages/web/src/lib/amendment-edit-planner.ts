@@ -213,6 +213,37 @@ function normalizeInsertedSpans(
 		.map((span) => ({ ...span }));
 }
 
+function stripQuotePrefix(line: string): string {
+	let working = line.trimStart();
+	while (working.startsWith(">")) {
+		working = working.slice(1).trimStart();
+	}
+	return working;
+}
+
+function isStructuralMarkerLine(line: string): boolean {
+	const stripped = stripQuotePrefix(line);
+	return /^\([A-Za-z0-9ivxIVX]+\)(?:\s|$)/.test(stripped);
+}
+
+function normalizeInsertedParagraphBoundaries(sourceText: string): string {
+	if (!sourceText.includes("\n")) return sourceText;
+	const lines = sourceText.split("\n");
+	const normalized: string[] = [];
+	for (let index = 0; index < lines.length; index += 1) {
+		const currentLine = lines[index] ?? "";
+		const nextLine = lines[index + 1];
+		normalized.push(currentLine);
+		if (nextLine === undefined) continue;
+		if (currentLine.trim().length === 0 || nextLine.trim().length === 0)
+			continue;
+		if (!isStructuralMarkerLine(currentLine)) continue;
+		if (!isStructuralMarkerLine(nextLine)) continue;
+		normalized.push("");
+	}
+	return normalized.join("\n");
+}
+
 function parseInsertedText(sourceText: string): {
 	insertedPlain: string;
 	insertedSpans: FormattingSpan[];
@@ -220,7 +251,8 @@ function parseInsertedText(sourceText: string): {
 	if (sourceText.length === 0) {
 		return { insertedPlain: "", insertedSpans: [] };
 	}
-	const parsed = parseMarkdownToPlainDocument(sourceText);
+	const normalizedSourceText = normalizeInsertedParagraphBoundaries(sourceText);
+	const parsed = parseMarkdownToPlainDocument(normalizedSourceText);
 	return {
 		insertedPlain: parsed.plainText,
 		insertedSpans: normalizeInsertedSpans(parsed.spans, parsed.plainText),

@@ -8,6 +8,9 @@ import { type NodeContent, type Paragraph, ParagraphRange } from "../types";
 
 const CODE_REFERENCE_TITLE_RE = /^(\d+)\s+U\.S\.C\.$/i;
 const EN_DASH = /\u2013/g;
+const BILL_SECTION_RE = /^SEC\.\s+\d+/i;
+const BILL_DIVISION_RE =
+	/^(?:TITLE|Subtitle|CHAPTER|SUBCHAPTER|PART)\s+[A-Z0-9]+[\s.—-]/i;
 const instructionParser = new HandcraftedInstructionParser(
 	amendmentGrammarSource,
 );
@@ -15,6 +18,7 @@ const instructionParser = new HandcraftedInstructionParser(
 export interface ParsedInstructionSpan {
 	startParagraphIndex: number;
 	endParagraphIndex: number;
+	billSection: string | null;
 	paragraphRange: ParagraphRange;
 	parsedInstruction: ParsedInstruction;
 }
@@ -77,25 +81,6 @@ export const formatTargetScopePath = (
 		?.map((segment) => `${segment.kind}:${segment.label}`)
 		.join(" > ") ?? "";
 
-export const findBillSectionForInstruction = (
-	paragraphs: readonly Paragraph[],
-	startParagraphIndex: number,
-): string | null => {
-	for (let index = startParagraphIndex; index >= 0; index -= 1) {
-		const text = paragraphs[index]?.text.trim();
-		if (!text) continue;
-		if (/^SEC\.\s+\d+/i.test(text)) return text;
-		if (
-			/^(?:TITLE|Subtitle|CHAPTER|SUBCHAPTER|PART)\s+[A-Z0-9]+[\s.—-]/i.test(
-				text,
-			)
-		) {
-			return text;
-		}
-	}
-	return null;
-};
-
 export const discoverParsedInstructionSpans = (
 	paragraphs: readonly Paragraph[],
 ): ParsedInstructionSpan[] => {
@@ -118,7 +103,18 @@ export const discoverParsedInstructionSpans = (
 
 	const spans: ParsedInstructionSpan[] = [];
 	let paragraphIndex = 0;
+	let currentBillSection: string | null = null;
 	while (paragraphIndex < paragraphs.length) {
+		const currentParagraphText = paragraphs[paragraphIndex]?.text.trim();
+		if (currentParagraphText) {
+			if (
+				BILL_SECTION_RE.test(currentParagraphText) ||
+				BILL_DIVISION_RE.test(currentParagraphText)
+			) {
+				currentBillSection = currentParagraphText;
+			}
+		}
+
 		const startLineIndex = paragraphStartLineIndexes[paragraphIndex];
 		if (startLineIndex === undefined) break;
 
@@ -192,6 +188,7 @@ export const discoverParsedInstructionSpans = (
 		spans.push({
 			startParagraphIndex: paragraphIndex,
 			endParagraphIndex,
+			billSection: currentBillSection,
 			paragraphRange: new ParagraphRange(
 				instructionParagraphs,
 				0,
