@@ -23,7 +23,7 @@ function shiftSpansForInsertion(
 ): FormattingSpan[] {
 	if (insertedLength <= 0) return spans.map((span) => ({ ...span }));
 	return spans.map((span) => {
-		if (span.end < insertAt) return { ...span };
+		if (span.end <= insertAt) return { ...span };
 		if (span.start > insertAt) {
 			return {
 				...span,
@@ -35,58 +35,6 @@ function shiftSpansForInsertion(
 	});
 }
 
-function shiftSpansForDeletion(
-	spans: FormattingSpan[],
-	deleteStart: number,
-	deleteEnd: number,
-): FormattingSpan[] {
-	const deletedLength = deleteEnd - deleteStart;
-	if (deletedLength <= 0) return spans.map((span) => ({ ...span }));
-	const nextSpans: FormattingSpan[] = [];
-	for (const span of spans) {
-		if (span.end <= deleteStart) {
-			nextSpans.push({ ...span });
-			continue;
-		}
-		if (span.start >= deleteEnd) {
-			nextSpans.push({
-				...span,
-				start: span.start - deletedLength,
-				end: span.end - deletedLength,
-			});
-			continue;
-		}
-		const startInDeletion = span.start >= deleteStart && span.start < deleteEnd;
-		const endInDeletion = span.end > deleteStart && span.end <= deleteEnd;
-		if (startInDeletion && endInDeletion) {
-			continue;
-		}
-		if (span.start < deleteStart && span.end > deleteEnd) {
-			nextSpans.push({
-				...span,
-				start: span.start,
-				end: span.end - deletedLength,
-			});
-			continue;
-		}
-		if (span.start < deleteStart && endInDeletion) {
-			nextSpans.push({
-				...span,
-				start: span.start,
-				end: deleteStart,
-			});
-			continue;
-		}
-		if (startInDeletion && span.end > deleteEnd) {
-			nextSpans.push({
-				...span,
-				start: deleteStart,
-				end: span.end - deletedLength,
-			});
-		}
-	}
-	return nextSpans.filter((span) => span.end > span.start);
-}
 
 function materializeEditsFromPatches(
 	model: DocumentModel,
@@ -108,46 +56,24 @@ function materializeEditsFromPatches(
 		const deleteStart = patch.start;
 		const deleteEnd = patch.end;
 		const deletedLength = deleteEnd - deleteStart;
-		const deletedPlain = patch.deletedPlain;
 		const insertedPlain = patch.insertedPlain;
 		const insertedSpans = patch.insertedSpans;
-		let insertedPrefixPlain = patch.insertedPrefixPlain ?? "";
-		let insertedSuffixPlain = patch.insertedSuffixPlain ?? "";
-		if (deletedLength > 0 && insertedPlain.length > 0) {
-			const leadingWhitespace = deletedPlain.match(/^\s+/)?.[0] ?? "";
-			const trailingWhitespace = deletedPlain.match(/\s+$/)?.[0] ?? "";
-			const insertedCore = `${insertedPrefixPlain}${insertedPlain}${insertedSuffixPlain}`;
-			if (!insertedCore.startsWith(" ") && !insertedCore.startsWith("\n")) {
-				insertedPrefixPlain = `${leadingWhitespace}${insertedPrefixPlain}`;
-			}
-			if (!insertedCore.endsWith(" ") && !insertedCore.endsWith("\n")) {
-				insertedSuffixPlain = `${insertedSuffixPlain}${trailingWhitespace}`;
-			}
-		}
+		const insertedPrefixPlain = patch.insertedPrefixPlain ?? "";
+		const insertedSuffixPlain = patch.insertedSuffixPlain ?? "";
 		const insertedTotalLength =
 			insertedPrefixPlain.length +
 			insertedPlain.length +
 			insertedSuffixPlain.length;
 
 		if (deletedLength > 0) {
-			workingText = `${workingText.slice(0, deleteStart)}${workingText.slice(deleteEnd)}`;
-			workingSpans = shiftSpansForDeletion(
-				workingSpans,
-				deleteStart,
-				deleteEnd,
-			);
+			workingSpans.push({
+				type: "deletion",
+				start: deleteStart,
+				end: deleteEnd,
+			});
 		}
 
-		let insertAt = patch.insertAt;
-		if (deletedLength > 0) {
-			if (insertAt <= deleteStart) {
-				// no-op
-			} else if (insertAt >= deleteEnd) {
-				insertAt -= deletedLength;
-			} else {
-				insertAt = deleteStart;
-			}
-		}
+		const insertAt = patch.insertAt;
 
 		if (insertedTotalLength > 0) {
 			workingText = `${workingText.slice(0, insertAt)}${insertedPrefixPlain}${insertedPlain}${insertedSuffixPlain}${workingText.slice(insertAt)}`;
