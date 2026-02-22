@@ -23,7 +23,10 @@ const makeTextItem = (
 
 describe("extractParagraphs", () => {
 	it("extracts text page-by-page from hr1-abridged fixture", async () => {
-		const fixtureUrl = new URL("../../../hr1-abridged.pdf", import.meta.url);
+		const fixtureUrl = new URL(
+			"../__fixtures__/hr1-abridged.pdf",
+			import.meta.url,
+		);
 		const outputFixtureUrl = new URL(
 			"../__fixtures__/hr1-abridged-output.txt",
 			import.meta.url,

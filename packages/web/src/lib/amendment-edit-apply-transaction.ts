@@ -162,6 +162,11 @@ function materializeEditsFromPatches(
 					insertAt + insertedPrefixPlain.length,
 				),
 			);
+			workingSpans.push({
+				type: "insertion",
+				start: insertAt,
+				end: insertAt + insertedTotalLength,
+			});
 		}
 	}
 
