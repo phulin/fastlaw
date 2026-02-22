@@ -161,8 +161,8 @@ function addBlock(
 	},
 ): void {
 	if (state.blockCount > 0) {
-		state.plainParts.push("\n\n");
-		state.plainLength += 2;
+		state.plainParts.push("\n");
+		state.plainLength += 1;
 	}
 	state.blockCount += 1;
 

@@ -142,9 +142,7 @@ const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
 “(ii) EXCLUSIONS.—The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.”.`,
 		instructionLineLevels: [1, 2, 5, 2, 3, 4, 4],
 		expectedEditedExcerpt: `(ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.
-
 (B) Report
-
 The Secretary shall report the basis for a waiver under subparagraph (A) to the Committee on Agriculture of the House of Representatives and the Committee on Agriculture, Nutrition, and Forestry of the Senate.
 (C) DEFINITION OF NONCONTIGUOUS STATE.—`,
 	},
@@ -216,13 +214,9 @@ The income (less, at State option, a pro rata share) and financial resources of 
 “(2) REFUND FOR UPLAND COTTON.—”`,
 		instructionLineLevels: [0, 2, 3, 3, 2, 3, 3, 4, 2],
 		expectedEditedExcerpt: `(b) Repayment rates for upland cotton, long grain rice, and medium grain rice
-
 (1) IN GENERAL.—The Secretary shall permit producers to repay a marketing assistance loan under section 9031 of this title for upland cotton, long grain rice, and medium grain rice at a rate that is the lesser of—
-
 (A) the loan rate established for the commodity under section 9032 of this title, plus interest (determined in accordance with section 7283 of this title); or
-
 (B) (i) in the case of long grain rice and medium grain rice, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section; or
-
 (ii) in the case of upland cotton, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section.
 (2) REFUND FOR UPLAND COTTON.—`,
 	},
@@ -239,8 +233,7 @@ The income (less, at State option, a pro rata share) and financial resources of 
 		instructionText: `(2) NONAPPLICABILITY OF ALTERNATIVE COST SHARING.—Section 1916A(a)(1) of the Social Security Act (42 U.S.C. 1396o–1(a)(1)) is amended, in the second sentence, by striking “or (j)” and inserting “(j), or (k)”.`,
 		instructionLineLevels: [1],
 		expectedEditedExcerpt: `(1) In general
-
-Notwithstanding sections 1396 o and 1396a(a)(10)(B) of this title, but subject to paragraph (2), a State, at its option and through a State plan amendment, may impose premiums and cost sharing for any group of individuals (as specified by the State) and for any type of services (other than drugs for which cost sharing may be imposed under subsection (c) and non-emergency services furnished in a hospital emergency department for which cost sharing may be imposed under subsection (e)), and may vary such premiums and cost sharing among such groups or types, consistent with the limitations established under this section. Nothing in this section shall be construed as superseding (or preventing the application of) subsection (g), (i), (j), or (k) of section 1396 o of this title.`,
+Notwithstanding sections 1396o and 1396a(a)(10)(B) of this title, but subject to paragraph (2), a State, at its option and through a State plan amendment, may impose premiums and cost sharing for any group of individuals (as specified by the State) and for any type of services (other than drugs for which cost sharing may be imposed under subsection (c) and non-emergency services furnished in a hospital emergency department for which cost sharing may be imposed under subsection (e)), and may vary such premiums and cost sharing among such groups or types, consistent with the limitations established under this section. Nothing in this section shall be construed as superseding (or preventing the application of) subsection (g), (i), (j), or (k) of section 1396o of this title.`,
 	},
 	{
 		citation: "7 U.S.C. 9038(a)",
@@ -248,13 +241,9 @@ Notwithstanding sections 1396 o and 1396a(a)(10)(B) of this title, but subject t
 		instructionText: `(e) SPECIAL COMPETITIVE PROVISIONS FOR EXTRA LONG STAPLE COTTON.—Section 1208(a) of the Agricultural Act of 2014 (7 U.S.C. 9038(a)) is amended, in the matter preceding paragraph (1), by striking “2026” and inserting “2032”.`,
 		instructionLineLevels: [1],
 		expectedEditedExcerpt: `(a) Competitiveness program
-
 Notwithstanding any other provision of law, during the period beginning on February 7, 2014, through July 31, 2032, the Secretary shall carry out a program—
-
 (1) to maintain and expand the domestic use of extra long staple cotton produced in the United States;
-
 (2) to increase exports of extra long staple cotton produced in the United States; and
-
 (3) to ensure that extra long staple cotton produced in the United States remains competitive in world markets.`,
 	},
 	{
@@ -263,13 +252,9 @@ Notwithstanding any other provision of law, during the period beginning on Febru
 		instructionText: `Section 516(b)(2)(C)(i) of the Federal Crop Insurance Act (7 U.S.C. 1516(b)(2)(C)(i)) is amended, in the matter preceding subclause (I), by striking “for each fiscal year” and inserting “for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter”.`,
 		instructionLineLevels: [1],
 		expectedEditedExcerpt: `(C) Reviews, compliance, and integrity
-
 (i) In general
-
 For each of the 2014 and subsequent reinsurance years, the Corporation may use the insurance fund established under subsection (c), but not to exceed $7,000,000 for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter, to pay costs—
-
 (I) to reimburse expenses incurred for the operations and review of policies, plans of insurance, and related materials (including actuarial and related information); and
-
 (II) to assist the Corporation in maintaining program actuarial soundness and financial integrity.`,
 	},
 	{
