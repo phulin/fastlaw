@@ -471,6 +471,11 @@ function resolveEdit(
 			sentenceOrdinal: context.sentenceOrdinal,
 			hasMatterPrecedingTarget: context.matterPrecedingTarget !== null,
 			hasMatterFollowingTarget: context.matterFollowingTarget !== null,
+			matterPrecedingRefKind: context.matterPreceding?.kind ?? null,
+			matterPrecedingRefLabel:
+				context.matterPreceding?.path.at(-1)?.label ?? null,
+			matterFollowingRefKind: null,
+			matterFollowingRefLabel: null,
 			hasExplicitTargetPath: normalizedPath.length > 0,
 			targetPathText: targetPath.length > 0 ? pathToText(targetPath) : null,
 			resolvedTargetId: resolve(
@@ -745,6 +750,10 @@ function resolveEdit(
 						sentenceOrdinal: null,
 						hasMatterPrecedingTarget: false,
 						hasMatterFollowingTarget: false,
+						matterPrecedingRefKind: null,
+						matterPrecedingRefLabel: null,
+						matterFollowingRefKind: null,
+						matterFollowingRefLabel: null,
 						hasExplicitTargetPath: false,
 						targetPathText: null,
 						resolvedTargetId: null,

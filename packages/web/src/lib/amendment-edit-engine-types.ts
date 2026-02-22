@@ -93,6 +93,10 @@ export interface ResolvedInstructionOperation {
 	sentenceOrdinal: number | null;
 	hasMatterPrecedingTarget: boolean;
 	hasMatterFollowingTarget: boolean;
+	matterPrecedingRefKind: string | null;
+	matterPrecedingRefLabel: string | null;
+	matterFollowingRefKind: string | null;
+	matterFollowingRefLabel: string | null;
 	hasExplicitTargetPath: boolean;
 	targetPathText: string | null;
 	resolvedTargetId: string | null;

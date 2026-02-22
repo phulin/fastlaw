@@ -320,6 +320,34 @@ function extractAnchor(
 	return match?.[1] ?? null;
 }
 
+function escapeRegex(source: string): string {
+	return source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function resolveInlineMatterBoundary(
+	scopedText: string,
+	refKind: string | null,
+	refLabel: string | null,
+): number | null {
+	if (!refKind || !refLabel) return null;
+	const trimmedLabel = refLabel.trim();
+	if (trimmedLabel.length === 0) return null;
+	const kindsUsingParenMarkers = new Set([
+		"paragraph",
+		"subparagraph",
+		"clause",
+		"subclause",
+		"item",
+		"subitem",
+	]);
+	if (!kindsUsingParenMarkers.has(refKind)) return null;
+	const marker = `(${trimmedLabel})`;
+	const pattern = new RegExp(`(^|\\s)${escapeRegex(marker)}(\\s|$)`);
+	const match = pattern.exec(scopedText);
+	if (!match || match.index === undefined) return null;
+	return match.index + match[1].length;
+}
+
 function getEditStrikingContent(
 	operation: ResolvedInstructionOperation,
 ): string | null {
@@ -428,25 +456,40 @@ function planPatchForOperation(
 
 	if (range && operation.hasMatterPrecedingTarget) {
 		if (!operation.resolvedMatterPrecedingTargetId) {
-			attempt.outcome = "scope_unresolved";
-			return { patches: [], attempt };
+			const inlineBoundary = resolveInlineMatterBoundary(
+				plainText.slice(range.start, range.end),
+				operation.matterPrecedingRefKind,
+				operation.matterPrecedingRefLabel,
+			);
+			if (inlineBoundary === null) {
+				attempt.outcome = "scope_unresolved";
+				return { patches: [], attempt };
+			}
+			range = { ...range, end: range.start + inlineBoundary };
+			attempt.scopedRange = {
+				start: range.start,
+				end: range.end,
+				length: range.end - range.start,
+				preview: previewRange(plainText, range),
+			};
+		} else {
+			const matterTargetRange = getScopeRangeFromNodeId(
+				model,
+				operation.resolvedMatterPrecedingTargetId,
+			);
+			if (!matterTargetRange) {
+				attempt.outcome = "scope_unresolved";
+				return { patches: [], attempt };
+			}
+			const boundary = Math.min(matterTargetRange.start, range.end);
+			range = { ...range, end: Math.max(range.start, boundary) };
+			attempt.scopedRange = {
+				start: range.start,
+				end: range.end,
+				length: range.end - range.start,
+				preview: previewRange(plainText, range),
+			};
 		}
-		const matterTargetRange = getScopeRangeFromNodeId(
-			model,
-			operation.resolvedMatterPrecedingTargetId,
-		);
-		if (!matterTargetRange) {
-			attempt.outcome = "scope_unresolved";
-			return { patches: [], attempt };
-		}
-		const boundary = Math.min(matterTargetRange.start, range.end);
-		range = { ...range, end: Math.max(range.start, boundary) };
-		attempt.scopedRange = {
-			start: range.start,
-			end: range.end,
-			length: range.end - range.start,
-			preview: previewRange(plainText, range),
-		};
 	}
 
 	if (range && operation.hasMatterFollowingTarget) {

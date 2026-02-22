@@ -16,7 +16,6 @@ interface SelectedInstructionBlock {
 	instructionLineLevels: number[];
 	expectedEditedExcerpt: string;
 	expectedMarkedEditSnippet?: string;
-	expectedStatus?: "ok" | "unsupported";
 }
 
 interface LeveledLine {
@@ -365,8 +364,7 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 		expectedEditedExcerpt:
 			"agency, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent, of all administrative costs involved",
 		expectedMarkedEditSnippet:
-			"agency~~ an amount equal to 50 per centum~~++, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent,++ of all administrative costs involved",
-		expectedStatus: "unsupported",
+			"~~agency an amount equal to 50 per centum~~++agency, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent,++ of all administrative costs involved",
 	},
 	{
 		citation: "7 U.S.C. 1308-3a(d)",
@@ -412,11 +410,7 @@ for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
 			instructionText: instructionLines.join("\n"),
 		});
 
-		const expectedStatus = sample.expectedStatus ?? "ok";
-		expect(effect.status, sample.citation).toBe(expectedStatus);
-		if (expectedStatus !== "ok") {
-			return;
-		}
+		expect(effect.status, sample.citation).toBe("ok");
 		expect(
 			effect.debug.operationAttempts.length,
 			sample.citation,
