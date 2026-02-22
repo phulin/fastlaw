@@ -183,7 +183,9 @@ The income (less, at State option, a pro rata share) and financial resources of 
 (2) by adding at the end the following:
 “(2) STATE QUALITY CONTROL INCENTIVE.—”`,
 		instructionLineLevels: [1, 2, 1, 2, 2, 2],
-		expectedEditedExcerpt: "(2) STATE QUALITY CONTROL INCENTIVE.—",
+		expectedEditedExcerpt: `(a) PROGRAM.—
+(1) ESTABLISHMENT.—Subject to the availability of funds appropriated under section 2027 of this title, the Secretary is authorized to formulate and administer a supplemental nutrition assistance program under which, at the request of the State agency, eligible households within the State shall be provided an opportunity to obtain a more nutritious diet through the issuance to them of an allotment, except that a State may not participate in the supplemental nutrition assistance program if the Secretary determines that State or local sales taxes are collected within that State on purchases of food made with benefits issued under this chapter. The benefits so received by such households shall be used only to purchase food from retail food stores which have been approved for participation in the supplemental nutrition assistance program. Benefits issued and used as provided in this chapter shall be redeemable at face value by the Secretary through the facilities of the Treasury of the United States.
+(2) STATE QUALITY CONTROL INCENTIVE.—`,
 	},
 	{
 		citation: "7 U.S.C. 9011(8)(B)(ii)",
@@ -213,7 +215,16 @@ The income (less, at State option, a pro rata share) and financial resources of 
 “(ii) in the case of upland cotton, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section.
 “(2) REFUND FOR UPLAND COTTON.—”`,
 		instructionLineLevels: [0, 2, 3, 3, 2, 3, 3, 4, 2],
-		expectedEditedExcerpt: "(2) REFUND FOR UPLAND COTTON.—",
+		expectedEditedExcerpt: `(b) Repayment rates for upland cotton, long grain rice, and medium grain rice
+
+(1) IN GENERAL.—The Secretary shall permit producers to repay a marketing assistance loan under section 9031 of this title for upland cotton, long grain rice, and medium grain rice at a rate that is the lesser of—
+
+(A) the loan rate established for the commodity under section 9032 of this title, plus interest (determined in accordance with section 7283 of this title); or
+
+(B) (i) in the case of long grain rice and medium grain rice, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section; or
+
+(ii) in the case of upland cotton, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section.
+(2) REFUND FOR UPLAND COTTON.—`,
 	},
 	{
 		citation: "7 U.S.C. 2036(a)(2)",
@@ -227,22 +238,39 @@ The income (less, at State option, a pro rata share) and financial resources of 
 		sectionPath: "/statutes/usc/section/42/1396o-1/a",
 		instructionText: `(2) NONAPPLICABILITY OF ALTERNATIVE COST SHARING.—Section 1916A(a)(1) of the Social Security Act (42 U.S.C. 1396o–1(a)(1)) is amended, in the second sentence, by striking “or (j)” and inserting “(j), or (k)”.`,
 		instructionLineLevels: [1],
-		expectedEditedExcerpt: "(j), or (k)",
+		expectedEditedExcerpt: `(1) In general
+
+Notwithstanding sections 1396 o and 1396a(a)(10)(B) of this title, but subject to paragraph (2), a State, at its option and through a State plan amendment, may impose premiums and cost sharing for any group of individuals (as specified by the State) and for any type of services (other than drugs for which cost sharing may be imposed under subsection (c) and non-emergency services furnished in a hospital emergency department for which cost sharing may be imposed under subsection (e)), and may vary such premiums and cost sharing among such groups or types, consistent with the limitations established under this section. Nothing in this section shall be construed as superseding (or preventing the application of) subsection (g), (i), (j), or (k) of section 1396 o of this title.`,
 	},
 	{
 		citation: "7 U.S.C. 9038(a)",
 		sectionPath: "/statutes/usc/section/7/9038/a",
 		instructionText: `(e) SPECIAL COMPETITIVE PROVISIONS FOR EXTRA LONG STAPLE COTTON.—Section 1208(a) of the Agricultural Act of 2014 (7 U.S.C. 9038(a)) is amended, in the matter preceding paragraph (1), by striking “2026” and inserting “2032”.`,
 		instructionLineLevels: [1],
-		expectedEditedExcerpt: "through July 31, 2032",
+		expectedEditedExcerpt: `(a) Competitiveness program
+
+Notwithstanding any other provision of law, during the period beginning on February 7, 2014, through July 31, 2032, the Secretary shall carry out a program—
+
+(1) to maintain and expand the domestic use of extra long staple cotton produced in the United States;
+
+(2) to increase exports of extra long staple cotton produced in the United States; and
+
+(3) to ensure that extra long staple cotton produced in the United States remains competitive in world markets.`,
 	},
 	{
 		citation: "7 U.S.C. 1516(b)(2)(C)(i)",
 		sectionPath: "/statutes/usc/section/7/1516/b/2/C",
 		instructionText: `Section 516(b)(2)(C)(i) of the Federal Crop Insurance Act (7 U.S.C. 1516(b)(2)(C)(i)) is amended, in the matter preceding subclause (I), by striking “for each fiscal year” and inserting “for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter”.`,
 		instructionLineLevels: [1],
-		expectedEditedExcerpt:
-			"for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter",
+		expectedEditedExcerpt: `(C) Reviews, compliance, and integrity
+
+(i) In general
+
+For each of the 2014 and subsequent reinsurance years, the Corporation may use the insurance fund established under subsection (c), but not to exceed $7,000,000 for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter, to pay costs—
+
+(I) to reimburse expenses incurred for the operations and review of policies, plans of insurance, and related materials (including actuarial and related information); and
+
+(II) to assist the Corporation in maintaining program actuarial soundness and financial integrity.`,
 	},
 	{
 		citation: "7 U.S.C. 9036",
