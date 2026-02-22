@@ -1,7 +1,10 @@
+import * as pdfjsLib from "pdfjs-dist";
 import type { ClassificationOverride } from "../amendment-edit-engine-types";
+import { initSentencex } from "../sentencex";
 import { extractParagraphs } from "../text-extract";
 import type { NodeContent, Paragraph } from "../types";
 import { buildPageItemsFromParagraphs } from "./page-items";
+
 import type {
 	ProcessingWorkerRequest,
 	ProcessingWorkerResponse,
@@ -100,16 +103,24 @@ self.addEventListener(
 
 		void (async () => {
 			try {
-				const pdfjsLib = await import("pdfjs-dist");
-				// @ts-expect-error - PDF.js types mismatch
-				await import("pdfjs-dist/build/pdf.worker.mjs");
+				await initSentencex();
+
+				// DO NOT import pdf.worker.mjs here. If you import it in a Worker Global Scope,
+				// it will hijack self.addEventListener('message') and break our worker!
+				// Instead, just let getDocument use the fake worker synchronously or manually specify workerSrc
+				// without executing the worker module in this scope.
 				if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
 					pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 						"pdfjs-dist/build/pdf.worker.mjs",
 						import.meta.url,
 					).toString();
 				}
-				const loadingTask = pdfjsLib.getDocument({ data: message.fileBuffer });
+
+				const loadingTask = pdfjsLib.getDocument({
+					data: message.fileBuffer,
+					standardFontDataUrl:
+						"https://unpkg.com/pdfjs-dist@4.4.168/standard_fonts/",
+				});
 				const pdf = await loadingTask.promise;
 
 				const layouts: {
@@ -168,6 +179,7 @@ self.addEventListener(
 					jobId: message.jobId,
 					payload: windowPayload,
 				});
+				console.log("finished processing window items");
 
 				const allParagraphs = await extractParagraphs(pdf);
 				const allPayload = await createItemsPayload(
@@ -182,6 +194,7 @@ self.addEventListener(
 					jobId: message.jobId,
 					payload: allPayload,
 				});
+				console.log("finished processing all items");
 			} catch (error: unknown) {
 				postResponse({
 					type: "error",

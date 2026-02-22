@@ -18,6 +18,7 @@ import { PdfUploadDropzone } from "./components/PdfUploadDropzone";
 import { PdfWorkspace } from "./components/PdfWorkspace";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/pdf-base.css";
+import ProcessingWorker from "./lib/pdf/processing.worker?worker";
 import type { ProcessingWorkerResponse } from "./lib/pdf/processing-worker-types";
 import type { SourceVersionRecord } from "./lib/types";
 
@@ -434,10 +435,7 @@ export default function PdfApp() {
 		sourceVersionId: string,
 	) => {
 		processingWorker?.terminate();
-		const worker = new Worker(
-			new URL("./lib/pdf/processing.worker.ts", import.meta.url),
-			{ type: "module" },
-		);
+		const worker = new ProcessingWorker();
 		processingWorker = worker;
 
 		worker.addEventListener(

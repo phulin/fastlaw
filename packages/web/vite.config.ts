@@ -1,6 +1,7 @@
 import path from "node:path";
 import { cloudflare } from "@cloudflare/vite-plugin";
-import { defineConfig } from "vite";
+import devtools from "solid-devtools/vite";
+import { defineConfig, type PluginOption } from "vite";
 import solid from "vite-plugin-solid";
 
 export default defineConfig(({ command }) => {
@@ -8,7 +9,12 @@ export default defineConfig(({ command }) => {
 	const isDev = command === "serve";
 	const shouldRunCloudflare = isWorkerBuild || isDev;
 
-	const plugins = [solid({ ssr: true })];
+	const plugins: PluginOption[] = [];
+	if (isDev) {
+		plugins.push(devtools({ autoname: true }));
+	}
+	plugins.push(solid({ ssr: true }));
+
 	if (shouldRunCloudflare) {
 		plugins.push(...cloudflare());
 	}
@@ -28,6 +34,9 @@ export default defineConfig(({ command }) => {
 		ssr: {
 			target: "webworker",
 			noExternal: ["solid-js", "solid-js/web"],
+		},
+		optimizeDeps: {
+			exclude: ["sentencex-wasm"],
 		},
 		build: {
 			outDir: isWorkerBuild ? undefined : "dist/client",

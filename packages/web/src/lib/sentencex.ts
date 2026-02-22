@@ -32,15 +32,22 @@ export async function initSentencex() {
 			initSync({ module: wasmArrayBuffer });
 		}
 	} else {
-		// Ensure this is properly fetched in the browser
-		const response = await fetch(wasmUrl);
-		const wasmArrayBuffer = await response.arrayBuffer();
-		initSync({ module: wasmArrayBuffer });
+		try {
+			// Ensure this is properly fetched in the browser
+			const response = await fetch(wasmUrl);
+			const wasmArrayBuffer = await response.arrayBuffer();
+			initSync({ module: wasmArrayBuffer });
+		} catch (e) {
+			console.error(
+				"Failed to initialize sentencex-wasm in browser context:",
+				e,
+			);
+		}
 	}
 }
 
-// Ensure it's initialized before usage
-await initSentencex();
+// We do NOT use top-level await here to prevent Web Worker modules from hanging silently.
+// Ensure it's initialized by the caller before usage instead!
 
 export function segment(language: string, text: string): string[] {
 	return rawSegment(language, text);
