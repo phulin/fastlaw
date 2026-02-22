@@ -327,6 +327,11 @@ struct ParserState {
 
     section_path_counts: HashMap<String, usize>,
     section_key_counts: HashMap<String, usize>,
+
+    // Tracks whether the last raw text node ended with whitespace (trimmed away by
+    // normalize_text), so the next text node knows to insert a space even if it has
+    // no leading whitespace itself.
+    text_had_trailing_ws: bool,
 }
 
 impl ParserState {
@@ -343,6 +348,7 @@ impl ParserState {
             active_section: None,
             section_path_counts: HashMap::new(),
             section_key_counts: HashMap::new(),
+            text_had_trailing_ws: false,
         }
     }
 
@@ -606,6 +612,15 @@ where
         return;
     }
 
+    let had_leading_ws = raw_text
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_whitespace());
+    let needs_space = had_leading_ws || state.text_had_trailing_ws;
+    state.text_had_trailing_ws = raw_text
+        .chars()
+        .last()
+        .is_some_and(|c| c.is_ascii_whitespace());
     let mask = state.current_mask();
 
     if !state.title_emitted && is_main_title_heading(&state.tag_stack) {
@@ -624,7 +639,7 @@ where
                 level.capture.num = text.to_string();
             }
         } else if is_level_heading(&state.tag_stack, level.depth) {
-            append_text(&mut level.capture.heading, &text);
+            append_text(&mut level.capture.heading, &text, needs_space);
         }
     }
 
@@ -634,27 +649,27 @@ where
         }
 
         if is_section_heading(&state.tag_stack, section.depth) {
-            append_text(&mut section.capture.heading, &text);
+            append_text(&mut section.capture.heading, &text, needs_space);
             return;
         }
 
         if is_source_credit(&state.tag_stack, section.depth) {
-            append_text(&mut section.source_credit, &text);
+            append_text(&mut section.source_credit, &text, needs_space);
             return;
         }
 
         if let Some(note) = section.active_notes.last_mut() {
             if is_note_heading(&state.tag_stack, note.depth) {
-                append_text(&mut note.heading, &text);
+                append_text(&mut note.heading, &text, needs_space);
             } else {
-                append_text(&mut note.text, &text);
+                append_text(&mut note.text, &text, needs_space);
             }
             return;
         }
 
         if !in_body_excluded_context(mask) {
             let target = section.target_text_mut();
-            append_text(target, &text);
+            append_text(target, &text, needs_space);
         }
     }
 }
@@ -1012,7 +1027,7 @@ fn normalize_text(raw: &str) -> Cow<'_, str> {
     WHITESPACE_RE.replace_all(trimmed, " ")
 }
 
-fn append_text(target: &mut String, text: &str) {
+fn append_text(target: &mut String, text: &str, had_leading_ws: bool) {
     if text.is_empty() {
         return;
     }
@@ -1022,7 +1037,8 @@ fn append_text(target: &mut String, text: &str) {
     }
 
     let first = text.chars().next().unwrap();
-    let needs_space = !target.ends_with(' ')
+    let needs_space = had_leading_ws
+        && !target.ends_with(' ')
         && !target.ends_with('\n')
         && !target.ends_with("**")
         && !has_unclosed_bold(target)

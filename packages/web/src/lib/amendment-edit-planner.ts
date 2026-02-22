@@ -239,12 +239,6 @@ function resolveSentenceOrdinalRange(
 	ordinal: number,
 ): { start: number; end: number } | null {
 	const sentences = segment("en", text);
-	console.log(
-		"resolveSentenceOrdinalRange text:",
-		JSON.stringify(text),
-		"sentences:",
-		sentences,
-	);
 	if (sentences.length === 0) return null;
 
 	const validSentences: { text: string; start: number; end: number }[] = [];
@@ -1084,14 +1078,6 @@ export function planEdits(
 			model,
 			operation,
 			classificationOverrides,
-		);
-		console.log(
-			"Operation planned:",
-			operation.nodeText,
-			"patches:",
-			patches.length,
-			"outcome:",
-			attempt.outcome,
 		);
 		attempts.push(attempt);
 		tentativePatches.push(...patches);

@@ -43,7 +43,5 @@ export async function initSentencex() {
 await initSentencex();
 
 export function segment(language: string, text: string): string[] {
-	const result = rawSegment(language, text);
-	console.log("rawSegment result for", JSON.stringify(text), "is", result);
-	return result;
+	return rawSegment(language, text);
 }

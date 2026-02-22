@@ -182,28 +182,10 @@ function resolvePathCandidates(
 	}
 
 	if (currentCandidates.length === 0) {
-		console.log(
-			"resolvePathCandidates failed to find first segment in root nodes:",
-			currentPath[0] ? `${currentPath[0].type}:${currentPath[0].val}` : "empty",
-			"original path:",
-			pathToText(path),
-		);
 		return [];
 	}
 
 	const restSegments = currentPath.slice(1);
-	if (currentCandidates.length === 0) {
-		// Force log if unresolved
-		console.log(
-			`Root nodes (${model.rootNodeIds.length}):`,
-			model.rootNodeIds
-				.map((id) => {
-					const node = model.nodesById.get(id);
-					return `${node?.kind}:${node?.label}`;
-				})
-				.join(", "),
-		);
-	}
 	for (const segment of restSegments) {
 		const childCandidateIds: string[] = [];
 		for (const candidateId of currentCandidates) {
@@ -238,23 +220,7 @@ function resolvePathCandidates(
 			descendantCandidateIds,
 			segment,
 		);
-		console.log(
-			"resolvePathCandidates segment:",
-			`${segment.type}:${segment.val}`,
-			"candidates found:",
-			currentCandidates.length,
-		);
 		if (currentCandidates.length === 0) {
-			console.log(
-				"Possible descendant labels:",
-				descendantCandidateIds
-					.slice(0, 100)
-					.map((id) => {
-						const node = model.nodesById.get(id);
-						return `${node?.kind}:${node?.label}`;
-					})
-					.join(", "),
-			);
 			return [];
 		}
 	}
@@ -319,14 +285,6 @@ function resolveSinglePath(
 
 	if (normalized.length === 0) return null;
 	const candidates = resolvePathCandidates(model, normalized);
-	console.log(
-		"resolveSinglePath original:",
-		pathToText(path),
-		"normalized:",
-		pathToText(normalized),
-		"candidates:",
-		candidates.length,
-	);
 	if (candidates.length === 0) {
 		issues.push({
 			operationIndex,
