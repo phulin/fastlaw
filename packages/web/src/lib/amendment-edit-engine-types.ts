@@ -8,7 +8,9 @@ export type HierarchyLevelType =
 	| "clause"
 	| "subclause"
 	| "item"
-	| "subitem";
+	| "subitem"
+	| "code_reference"
+	| "act_reference";
 
 export interface HierarchyLevel {
 	type: HierarchyLevelType;
@@ -119,6 +121,8 @@ export interface OperationMatchAttempt {
 	searchTextKind: "striking" | "anchor_before" | "anchor_after" | "none";
 	searchIndex: number | null;
 	patchApplied: boolean;
+	wasTranslated: boolean;
+	translatedInstructionText: string | null;
 	outcome: "applied" | "no_patch" | "scope_unresolved";
 }
 
@@ -142,4 +146,13 @@ export interface PlanEditsResult {
 export interface ApplyPlannedPatchesResult {
 	plainText: string;
 	spans: FormattingSpan[];
+}
+
+export interface ClassificationOverride {
+	congress: number;
+	publicLawNumber: string;
+	pubLawSec: string | null;
+	uscTitle: string | null;
+	uscSection: string | null;
+	description: string | null;
 }

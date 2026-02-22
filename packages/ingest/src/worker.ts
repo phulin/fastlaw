@@ -41,6 +41,136 @@ type AppContext = {
 const app = new Hono<AppContext>();
 
 // ──────────────────────────────────────────────────────────────
+// Classification Tables Ingest
+// ──────────────────────────────────────────────────────────────
+import * as cheerio from "cheerio";
+
+app.post("/api/admin/ingest-classifications", async (c) => {
+	const urls = [
+		"https://uscode.house.gov/classification/tables.shtml",
+		"https://uscode.house.gov/classification/priortables.shtml",
+	];
+
+	const targetHrefs: string[] = [];
+
+	for (const url of urls) {
+		const res = await fetch(url);
+		if (!res.ok) continue;
+		const html = await res.text();
+		const $ = cheerio.load(html);
+
+		$("a").each((_, el) => {
+			const href = $(el).attr("href");
+			if (href?.match(/tbl\d+pl(_\w+)?\.htm/)) {
+				targetHrefs.push(new URL(href, url).href);
+			}
+		});
+	}
+
+	const uniqueUrls = Array.from(new Set(targetHrefs));
+	let totalInserted = 0;
+
+	for (const url of uniqueUrls) {
+		const res = await fetch(url);
+		if (!res.ok) continue;
+		const html = await res.text();
+		const $ = cheerio.load(html);
+
+		const preTags = $("pre");
+
+		type Record = {
+			congress: number;
+			public_law_number: string;
+			pub_law_sec: string | null;
+			usc_title: string | null;
+			usc_section: string | null;
+			description: string | null;
+		};
+		const records: Record[] = [];
+
+		let currentPl = "";
+		let congress = 0;
+
+		const urlMatch = url.match(/tbl(\d+)pl/);
+		if (urlMatch) {
+			congress = Number.parseInt(urlMatch[1], 10);
+		}
+
+		if (preTags.length === 0) continue;
+
+		const text = $(preTags[0]).text();
+		const lines = text.split("\n");
+
+		let started = false;
+
+		for (const line of lines) {
+			if (line.includes("-------------")) {
+				started = true;
+				continue;
+			}
+			if (!started) continue;
+
+			if (line.trim().length === 0) continue;
+
+			const titleSlice = line.slice(0, 6).trim();
+			const sectionSlice = line.slice(6, 19).trim();
+			const descSlice = line.slice(19, 36).trim();
+			const pubLawSlice = line.slice(36, 45).trim();
+			const secSlice = line.slice(45, 66).trim();
+
+			if (pubLawSlice.length > 0) {
+				const parts = pubLawSlice.split("-");
+				if (parts.length === 2) {
+					currentPl = pubLawSlice;
+					congress = Number.parseInt(parts[0], 10) || congress;
+				}
+			}
+
+			if (!titleSlice) continue;
+			if (!currentPl || !congress) continue;
+
+			records.push({
+				congress,
+				public_law_number: currentPl,
+				pub_law_sec: secSlice || null,
+				usc_title: titleSlice || null,
+				usc_section: sectionSlice || null,
+				description: descSlice || null,
+			});
+		}
+
+		if (records.length > 0) {
+			const BATCH_SIZE = 100;
+			for (let i = 0; i < records.length; i += BATCH_SIZE) {
+				const batch = records.slice(i, i + BATCH_SIZE);
+				const statements = batch.map((r) =>
+					c.env.DB.prepare(
+						`INSERT INTO usc_classifications (congress, public_law_number, pub_law_sec, usc_title, usc_section, description)
+						 VALUES (?, ?, ?, ?, ?, ?)
+						 ON CONFLICT (congress, public_law_number, pub_law_sec, usc_title, usc_section) DO UPDATE SET description=excluded.description`,
+					).bind(
+						r.congress,
+						r.public_law_number,
+						r.pub_law_sec,
+						r.usc_title,
+						r.usc_section,
+						r.description,
+					),
+				);
+				await c.env.DB.batch(statements);
+				totalInserted += batch.length;
+			}
+		}
+	}
+
+	return c.json({
+		status: "ok",
+		totalInserted,
+		urlsAnalyzed: uniqueUrls.length,
+	});
+});
+
+// ──────────────────────────────────────────────────────────────
 // Health & admin
 // ──────────────────────────────────────────────────────────────
 

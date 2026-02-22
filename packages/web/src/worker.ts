@@ -6,6 +6,7 @@ import {
 	abortIngestJob,
 	getAncestorNodes,
 	getChildNodes,
+	getClassificationOverrides,
 	getIngestJobById,
 	getLatestSourceVersion,
 	getNodeByPath,
@@ -184,6 +185,18 @@ app.post("/api/statutes/section-bodies", async (c) => {
 		.filter((result): result is NonNullable<typeof result> => result != null);
 
 	return c.json({ results: orderedResults });
+});
+
+app.get("/api/statutes/classifications", async (c) => {
+	try {
+		const results = await getClassificationOverrides();
+		return c.json({ results });
+	} catch (error) {
+		return c.json(
+			{ error: error instanceof Error ? error.message : String(error) },
+			500,
+		);
+	}
 });
 
 app.get("/pdf", async (c) => {

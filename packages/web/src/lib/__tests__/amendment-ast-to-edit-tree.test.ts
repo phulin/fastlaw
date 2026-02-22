@@ -122,7 +122,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -151,7 +151,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -180,7 +180,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -201,7 +201,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -222,7 +222,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -246,7 +246,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -267,7 +267,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -302,7 +302,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -334,7 +334,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -366,7 +366,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -390,7 +390,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -414,7 +414,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -438,7 +438,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -468,7 +468,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -492,7 +492,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -523,7 +523,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let locationNode = result.tree.children[0];
 		if (locationNode?.type === SemanticNodeType.Scope) {
-			locationNode = locationNode.children[0] as any;
+			locationNode = locationNode.children[0];
 		}
 		if (
 			!locationNode ||
@@ -587,7 +587,7 @@ describe("translateInstructionAstToEditTree", () => {
 		const result = translateInstructionAstToEditTree(ast);
 		let editNode = result.tree.children[0];
 		if (editNode?.type === SemanticNodeType.Scope) {
-			editNode = editNode.children[0] as any;
+			editNode = editNode.children[0];
 		}
 		if (!editNode || editNode.type !== SemanticNodeType.Edit) {
 			throw new Error("Expected edit node.");

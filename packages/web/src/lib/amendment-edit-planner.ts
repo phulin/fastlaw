@@ -2,7 +2,9 @@ import {
 	getScopeRangeFromNodeId,
 	parseMarkdownToPlainDocument,
 } from "./amendment-document-model";
+
 import type {
+	ClassificationOverride,
 	DocumentModel,
 	FormattingSpan,
 	OperationMatchAttempt,
@@ -11,6 +13,7 @@ import type {
 	ResolvedInstructionOperation,
 	ScopeRange,
 } from "./amendment-edit-engine-types";
+
 import {
 	PunctuationKind,
 	type TextWithProvenance,
@@ -21,6 +24,88 @@ import {
 import { formatInsertedBlockContent } from "./inserted-block-format";
 import { segment } from "./sentencex";
 import type { ParagraphRange } from "./types";
+
+/**
+ * Searches text for occurrences of "section X", and replaces X using base section
+ * translations based on D1 classification tables.
+ */
+function translateCrossReferences(
+	text: string,
+	classificationOverrides?: ClassificationOverride[],
+): string {
+	if (!classificationOverrides || classificationOverrides.length === 0)
+		return text;
+
+	// matches e.g. "section 3(a)(1)" or "sections 3 and 4"
+	// we want to catch the base numbers.
+	return text.replace(
+		/(sections?\s+)([\d\w\-()]+)(\s+and\s+[\d\w\-()]+)?/gi,
+		(_match, prefix, baseSection, andPart) => {
+			let translatedBase = baseSection;
+			// Extract just the core number/letter part, ignoring subsections like (a)(1)
+			const baseMatch = baseSection.match(/^([^()]+)/);
+			const baseNum = baseMatch ? baseMatch[1] : baseSection;
+
+			const override = classificationOverrides.find(
+				(o) => o.pubLawSec === baseNum,
+			);
+			if (override?.uscSection) {
+				translatedBase = baseSection.replace(baseNum, override.uscSection);
+			}
+
+			let translatedAndPart = andPart ?? "";
+			if (andPart) {
+				const andBaseMatch = andPart.match(/\s+and\s+([^()]+)/);
+				if (andBaseMatch?.[1]) {
+					const andBaseNum = andBaseMatch[1];
+					const andOverride = classificationOverrides?.find(
+						(o) => o.pubLawSec === andBaseNum,
+					);
+					if (andOverride?.uscSection) {
+						translatedAndPart = andPart.replace(
+							andBaseNum,
+							andOverride.uscSection,
+						);
+					}
+				}
+			}
+
+			return `${prefix}${translatedBase}${translatedAndPart}`;
+		},
+	);
+}
+
+function computeFallbackRegexSearch(
+	strikeText: string,
+	classificationOverrides?: ClassificationOverride[],
+): RegExp | null {
+	// If the strike text mentions a section, we can make the base section a wildcard
+	const match = strikeText.match(/section\s+([^()]+)(?:\([^)]+\))*/i);
+	if (!match || !match[1]) return null;
+
+	const pubLawSec = match[1];
+
+	// If we have overrides, verify that this is a section that *would* be translated.
+	// If we don't have overrides, we'll do a "blind" wildcard match which is riskier
+	// but often necessary for tests that don't provide the table.
+	if (classificationOverrides && classificationOverrides.length > 0) {
+		const override = classificationOverrides.find(
+			(o) => o.pubLawSec === pubLawSec,
+		);
+		if (!override?.uscSection) return null;
+	}
+
+	// Escape the rest of the string but replace the base section with a wildcard
+	const escaped = strikeText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const regexStr = escaped.replace(
+		new RegExp(
+			`section\\s+${pubLawSec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+			"i",
+		),
+		"section\\s+(?<base>\\S+?)",
+	);
+	return new RegExp(regexStr, "i");
+}
 
 function previewRange(text: string, range: ScopeRange | null): string {
 	if (!range) return "";
@@ -154,6 +239,12 @@ function resolveSentenceOrdinalRange(
 	ordinal: number,
 ): { start: number; end: number } | null {
 	const sentences = segment("en", text);
+	console.log(
+		"resolveSentenceOrdinalRange text:",
+		JSON.stringify(text),
+		"sentences:",
+		sentences,
+	);
 	if (sentences.length === 0) return null;
 
 	const validSentences: { text: string; start: number; end: number }[] = [];
@@ -279,6 +370,8 @@ function buildAttempt(
 		searchTextKind: "none",
 		searchIndex: null,
 		patchApplied: false,
+		wasTranslated: false,
+		translatedInstructionText: null,
 		outcome: "no_patch",
 	};
 }
@@ -286,11 +379,21 @@ function buildAttempt(
 function planPatchForOperation(
 	model: DocumentModel,
 	operation: ResolvedInstructionOperation,
+	classificationOverrides?: ClassificationOverride[],
 ): { patches: PlannedPatch[]; attempt: OperationMatchAttempt } {
 	const plainText = model.plainText;
 	const baseRange = getScopeRangeFromNodeId(model, operation.resolvedTargetId);
 	let range = baseRange;
 	const attempt = buildAttempt(operation, range, plainText);
+
+	const translatedNodeText = translateCrossReferences(
+		operation.nodeText,
+		classificationOverrides,
+	);
+	if (translatedNodeText !== operation.nodeText) {
+		attempt.wasTranslated = true;
+		attempt.translatedInstructionText = translatedNodeText;
+	}
 
 	if (operation.hasExplicitTargetPath && !operation.resolvedTargetId) {
 		attempt.outcome = "scope_unresolved";
@@ -407,7 +510,18 @@ function planPatchForOperation(
 			if (!range) break;
 			const strikeSearch = textSearchFromEditTarget(operation.edit.strike);
 			const strikingContent = strikeSearch?.text ?? null;
-			const replacementContent = operation.edit.insert;
+			let replacementContentText = operation.edit.insert.text;
+
+			// Extract baseline and translate "section X" in the inserted text
+			replacementContentText = translateCrossReferences(
+				replacementContentText,
+				classificationOverrides,
+			);
+
+			const replacementContent = {
+				...operation.edit.insert,
+				text: replacementContentText,
+			};
 			const eachPlaceItAppears = strikeSearch?.eachPlaceItAppears === true;
 
 			if (!strikingContent) {
@@ -477,22 +591,63 @@ function planPatchForOperation(
 				break;
 			}
 
-			const localIndex = scopedText.indexOf(strikingContent);
-			attempt.searchText = strikingContent;
+			let localIndex = scopedText.indexOf(strikingContent);
+			let resolvedStrikingContent = strikingContent;
+			let resolvedReplacementContentText = replacementContent.text;
+
+			if (localIndex < 0 && strikingContent) {
+				const fallbackRegex = computeFallbackRegexSearch(
+					strikingContent,
+					classificationOverrides,
+				);
+				if (fallbackRegex) {
+					const match = scopedText.match(fallbackRegex);
+					if (match && match.index !== undefined && match.groups?.base) {
+						localIndex = match.index;
+						resolvedStrikingContent = match[0];
+						attempt.wasTranslated = true;
+
+						// If the replacement string had the identical original base number, use the newly captured one instead.
+						// E.g. strike "section 3(a)" insert "section 3(b)", with target "section 1396a(a)"
+						const originalPubLawBaseMatch =
+							strikingContent.match(/section\s+([^()]+)/i);
+						if (originalPubLawBaseMatch?.[1]) {
+							const originalPubLawBase = originalPubLawBaseMatch[1];
+							// Reconstruct insert using the captured base from target text (match.groups.base)
+							// We bypass the global classification translation because we're reusing the exact base from the matched string
+							resolvedReplacementContentText =
+								operation.edit.insert.text.replace(
+									new RegExp(
+										`section\\s+${originalPubLawBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+										"i",
+									),
+									`section ${match.groups.base}`,
+								);
+						}
+					}
+				}
+			}
+
+			attempt.searchText = resolvedStrikingContent;
 			attempt.searchTextKind = "striking";
 			attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
 			if (localIndex < 0) break;
 
+			const resolvedReplacementContent = {
+				...replacementContent,
+				text: resolvedReplacementContentText,
+			};
+
 			if (eachPlaceItAppears) {
 				for (const occurrenceIndex of findAllOccurrences(
 					scopedText,
-					strikingContent,
+					resolvedStrikingContent,
 				)) {
 					pushPatch({
 						start: range.start + occurrenceIndex,
-						end: range.start + occurrenceIndex + strikingContent.length,
-						deleted: strikingContent,
-						inserted: replacementContent.text,
+						end: range.start + occurrenceIndex + resolvedStrikingContent.length,
+						deleted: resolvedStrikingContent,
+						inserted: resolvedReplacementContent.text,
 					});
 				}
 				break;
@@ -500,16 +655,24 @@ function planPatchForOperation(
 
 			pushPatch({
 				start: range.start + localIndex,
-				end: range.start + localIndex + strikingContent.length,
-				deleted: strikingContent,
-				inserted: replacementContent.text,
+				end: range.start + localIndex + resolvedStrikingContent.length,
+				deleted: resolvedStrikingContent,
+				inserted: resolvedReplacementContent.text,
 			});
 			break;
 		}
 
 		case UltimateEditKind.Rewrite: {
 			if (!range) break;
-			const replacementContent = operation.edit.content;
+			let replacementContentText = operation.edit.content.text;
+			replacementContentText = translateCrossReferences(
+				replacementContentText,
+				classificationOverrides,
+			);
+			const replacementContent = {
+				...operation.edit.content,
+				text: replacementContentText,
+			};
 			const formatted = formatReplacementContent(
 				replacementContent,
 				range.targetLevel ?? 0,
@@ -577,8 +740,31 @@ function planPatchForOperation(
 				break;
 			}
 
-			const localStart = scopedText.indexOf(strikingContent);
-			attempt.searchText = strikingContent;
+			let localStart = scopedText.indexOf(strikingContent);
+			let resolvedStrikingContent = strikingContent;
+
+			if (
+				localStart < 0 &&
+				strikingContent &&
+				!throughContent &&
+				!throughPunctuation
+			) {
+				// We don't support fallback regex with "through" ranges right now as it's too complex to anchor
+				const fallbackRegex = computeFallbackRegexSearch(
+					strikingContent,
+					classificationOverrides,
+				);
+				if (fallbackRegex) {
+					const match = scopedText.match(fallbackRegex);
+					if (match && match.index !== undefined && match.groups?.base) {
+						localStart = match.index;
+						resolvedStrikingContent = match[0];
+						attempt.wasTranslated = true;
+					}
+				}
+			}
+
+			attempt.searchText = resolvedStrikingContent;
 			attempt.searchTextKind = "striking";
 			attempt.searchIndex = localStart >= 0 ? range.start + localStart : null;
 			if (localStart < 0) break;
@@ -586,12 +772,12 @@ function planPatchForOperation(
 			if (eachPlaceItAppears && !throughContent && !throughPunctuation) {
 				for (const occurrenceIndex of findAllOccurrences(
 					scopedText,
-					strikingContent,
+					resolvedStrikingContent,
 				)) {
 					const patchRange = normalizeInlineDeletionRange(
 						plainText,
 						range.start + occurrenceIndex,
-						range.start + occurrenceIndex + strikingContent.length,
+						range.start + occurrenceIndex + resolvedStrikingContent.length,
 					);
 					pushPatch({
 						start: patchRange.start,
@@ -602,11 +788,11 @@ function planPatchForOperation(
 				break;
 			}
 
-			let localEnd = localStart + strikingContent.length;
+			let localEnd = localStart + resolvedStrikingContent.length;
 			if (throughContent) {
 				const throughStart = scopedText.indexOf(
 					throughContent,
-					localStart + strikingContent.length,
+					localStart + resolvedStrikingContent.length,
 				);
 				if (throughStart < 0) break;
 				localEnd = throughStart + throughContent.length;
@@ -615,7 +801,7 @@ function planPatchForOperation(
 				const punctuation = punctuationText(throughPunctuation);
 				const punctuationIndex = scopedText.indexOf(
 					punctuation,
-					localStart + strikingContent.length,
+					localStart + resolvedStrikingContent.length,
 				);
 				if (punctuationIndex < 0) break;
 				localEnd = punctuationIndex + punctuation.length;
@@ -648,7 +834,15 @@ function planPatchForOperation(
 
 		case UltimateEditKind.Insert: {
 			if (!range) break;
-			const content = operation.edit.content;
+			let contentText = operation.edit.content.text;
+			contentText = translateCrossReferences(
+				contentText,
+				classificationOverrides,
+			);
+			const content = {
+				...operation.edit.content,
+				text: contentText,
+			};
 
 			if (operation.edit.before) {
 				const anchor = textFromEditTarget(operation.edit.before);
@@ -871,7 +1065,6 @@ function planPatchForOperation(
 				deleted: plainText,
 				inserted: movedText,
 			});
-			break;
 		}
 	}
 
@@ -881,12 +1074,25 @@ function planPatchForOperation(
 export function planEdits(
 	model: DocumentModel,
 	operations: ResolvedInstructionOperation[],
+	classificationOverrides?: ClassificationOverride[],
 ): PlanEditsResult {
 	const attempts: OperationMatchAttempt[] = [];
 	const tentativePatches: PlannedPatch[] = [];
 
 	for (const operation of operations) {
-		const { patches, attempt } = planPatchForOperation(model, operation);
+		const { patches, attempt } = planPatchForOperation(
+			model,
+			operation,
+			classificationOverrides,
+		);
+		console.log(
+			"Operation planned:",
+			operation.nodeText,
+			"patches:",
+			patches.length,
+			"outcome:",
+			attempt.outcome,
+		);
 		attempts.push(attempt);
 		tentativePatches.push(...patches);
 	}

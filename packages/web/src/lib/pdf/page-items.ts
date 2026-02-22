@@ -1,5 +1,6 @@
 import type { PageItem } from "../../components/PageRow";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
+import type { ClassificationOverride } from "../amendment-edit-engine-types";
 import {
 	type AmendmentEffect,
 	applyAmendmentEditTreeToSection,
@@ -23,6 +24,7 @@ interface BuildPageItemsOptions {
 		paths: string[],
 		sourceVersionId?: string,
 	) => Promise<Map<string, NodeContent>>;
+	classificationOverrides?: ClassificationOverride[];
 }
 
 const buildUnsupportedEffect = (
@@ -40,6 +42,7 @@ const buildUnsupportedEffect = (
 		applySummary: {
 			partiallyApplied: false,
 			failedItems: [],
+			wasTranslated: false,
 		},
 		debug: {
 			sectionTextLength: sectionBodyText.length,

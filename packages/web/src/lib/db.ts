@@ -1,3 +1,4 @@
+import type { ClassificationOverride } from "./amendment-edit-engine-types";
 import type {
 	BlobRecord,
 	Env,
@@ -432,6 +433,20 @@ export async function getNodeContent(
 	return JSON.parse(text) as NodeContent;
 }
 
+// Classifications
+
+export async function getClassificationOverrides(): Promise<
+	ClassificationOverride[]
+> {
+	const db = getDB();
+	const result = await db
+		.prepare(
+			"SELECT congress, public_law_number as publicLawNumber, pub_law_sec as pubLawSec, usc_title as uscTitle, usc_section as uscSection, description FROM usc_classifications",
+		)
+		.all<ClassificationOverride>();
+	return result.results;
+}
+
 // Convenience functions for URL-based lookups
 
 export async function findNodeByPath(
@@ -488,7 +503,3 @@ export const getLevelsByParentId = async (
 ): Promise<NodeRecord[]> => {
 	return getChildNodes(parentId);
 };
-
-export const getLevelById = getNodeById;
-export const getAncestorLevels = getAncestorNodes;
-export const getSiblingLevels = getSiblingNodes;

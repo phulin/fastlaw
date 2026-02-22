@@ -1,3 +1,4 @@
+/** @jsxImportSource solid-js */
 import { renderToString } from "solid-js/web";
 import { describe, expect, it } from "vitest";
 import { renderAmendedSnippet } from "../amended-snippet-render";
@@ -23,6 +24,7 @@ function buildEffect(
 		applySummary: {
 			partiallyApplied: false,
 			failedItems: [],
+			wasTranslated: true,
 		},
 		debug: {
 			sectionTextLength: plainText.length,

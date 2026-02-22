@@ -1,3 +1,4 @@
+import type { ClassificationOverride } from "../amendment-edit-engine-types";
 import { extractParagraphs } from "../text-extract";
 import type { NodeContent, Paragraph } from "../types";
 import { buildPageItemsFromParagraphs } from "./page-items";
@@ -53,6 +54,22 @@ const fetchSectionBodies = async (
 	return sectionBodies;
 };
 
+const fetchClassificationOverrides = async (): Promise<
+	ClassificationOverride[]
+> => {
+	const response = await fetch("/api/statutes/classifications");
+	if (!response.ok) {
+		console.warn(
+			`Failed to fetch classification overrides: HTTP ${response.status}`,
+		);
+		return [];
+	}
+	const payload = (await response.json()) as {
+		results: ClassificationOverride[];
+	};
+	return payload.results || [];
+};
+
 const postResponse = (message: ProcessingWorkerResponse) => {
 	self.postMessage(message);
 };
@@ -62,6 +79,7 @@ const createItemsPayload = async (
 	sectionBodyCache: Map<string, NodeContent>,
 	sourceVersionId: string,
 	numAmendColors: number,
+	classificationOverrides: ClassificationOverride[],
 ): Promise<WorkerPageItemsPayload> => {
 	const items = await buildPageItemsFromParagraphs({
 		paragraphs,
@@ -69,6 +87,7 @@ const createItemsPayload = async (
 		sourceVersionId,
 		numAmendColors,
 		fetchSectionBodies,
+		classificationOverrides,
 	});
 	return { items };
 };
@@ -131,6 +150,7 @@ self.addEventListener(
 					targetPage + message.windowRadius,
 				);
 				const sectionBodyCache = new Map<string, NodeContent>();
+				const classificationOverrides = await fetchClassificationOverrides();
 
 				const windowParagraphs = await extractParagraphs(pdf, {
 					startPage: windowStart,
@@ -141,6 +161,7 @@ self.addEventListener(
 					sectionBodyCache,
 					message.sourceVersionId,
 					message.numAmendColors,
+					classificationOverrides,
 				);
 				postResponse({
 					type: "windowItems",
@@ -154,6 +175,7 @@ self.addEventListener(
 					sectionBodyCache,
 					message.sourceVersionId,
 					message.numAmendColors,
+					classificationOverrides,
 				);
 				postResponse({
 					type: "allItems",

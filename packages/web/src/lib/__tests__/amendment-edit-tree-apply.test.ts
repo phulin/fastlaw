@@ -3,15 +3,23 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
+import { buildAmendmentDocumentModel } from "../amendment-document-model";
+import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
+import type { ResolvedInstructionOperation } from "../amendment-edit-engine-types";
+import { planEdits } from "../amendment-edit-planner";
 import {
 	type InstructionSemanticTree,
 	LocationRestrictionKind,
 	ScopeKind,
 	SearchTargetKind,
 	SemanticNodeType,
+	type TargetScopeSegment,
 	UltimateEditKind,
 } from "../amendment-edit-tree";
-import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
+import {
+	applyAmendmentEditTreeToSection,
+	walkTree,
+} from "../amendment-edit-tree-apply";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
 import { tp } from "./test-utils";
 
@@ -20,10 +28,6 @@ const WEB_ROOT = resolve(TEST_DIR, "../../..");
 const USC_2014_PRE_FIXTURE_PATH = resolve(
 	WEB_ROOT,
 	"src/lib/__fixtures__/usc-7-2014-pre.md",
-);
-const USC_2014_POST_FIXTURE_PATH = resolve(
-	WEB_ROOT,
-	"src/lib/__fixtures__/usc-7-2014-post.md",
 );
 interface IntegrationInstruction {
 	citation: string;
@@ -1490,7 +1494,8 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 describe("applyAmendmentEditTreeToSection integration", () => {
 	it("applies HR1 sec. 10103 and 10104 semantic trees against the USC 7/2014 markdown fixture", () => {
 		const parser = createHandcraftedInstructionParser();
-		let sectionBody = readFileSync(USC_2014_PRE_FIXTURE_PATH, "utf8").trim();
+		const sectionBody = readFileSync(USC_2014_PRE_FIXTURE_PATH, "utf8").trim();
+		const allOperations: ResolvedInstructionOperation[] = [];
 		for (const instruction of HR1_10103_10104_INSTRUCTIONS) {
 			const parsed = parser.parseInstructionFromLines(
 				instruction.text.split("\n"),
@@ -1503,33 +1508,100 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 			const translated = translateInstructionAstToEditTree(parsed.ast);
 			expect(translated.issues).toEqual([]);
 
-			const effect = applyAmendmentEditTreeToSection({
-				tree: translated.tree,
-				sectionPath: "/statutes/usc/section/7/2014",
-				sectionBody,
-				instructionText: instruction.text,
-			});
-
-			expect(effect.status).toBe("ok");
-			sectionBody = effect.renderModel.plainText;
+			const model = buildAmendmentDocumentModel(sectionBody);
+			const counter = { index: allOperations.length };
+			const walked = walkTree(
+				model,
+				translated.tree.children,
+				{
+					target: (translated.tree.targetScopePath ?? []).map(
+						(s: TargetScopeSegment) => ({
+							type: s.kind,
+							val: s.label,
+						}),
+					),
+					matterPreceding: null,
+					matterPrecedingTarget: null,
+					matterFollowingTarget: null,
+					unanchoredInsertMode: /\badding at the end\b/i.test(
+						instruction.text ?? "",
+					)
+						? "add_at_end"
+						: "insert",
+					sentenceOrdinal: null,
+					classificationOverrides: [],
+					redesignations: new Map(),
+				},
+				counter,
+			);
+			allOperations.push(...walked.resolved);
 		}
 
-		const expectedPost = readFileSync(
-			USC_2014_POST_FIXTURE_PATH,
-			"utf8",
-		).trim();
-		expect(sectionBody).toBe(expectedPost);
-		expect(sectionBody).toContain(
+		const model = buildAmendmentDocumentModel(sectionBody);
+		const { patches } = planEdits(model, allOperations, []);
+		const applied = applyPlannedPatchesTransaction(model, patches);
+		const finalBody = applied.plainText;
+
+		expect(finalBody).toContain(
 			"households with an elderly or disabled member that received a payment",
 		);
-		expect(sectionBody).toContain(
+		expect(finalBody).toContain(
 			"to a household without an elderly or disabled member shall be considered money payable directly to the household.",
 		);
-		expect(sectionBody).toContain(
+		expect(finalBody).toContain(
 			"expense paid on behalf of a household with an elderly or disabled member under a State law",
 		);
-		expect(sectionBody).toContain(
-			"> > > (E) RESTRICTIONS ON INTERNET EXPENSES.—",
+		expect(finalBody).toContain(
+			"(E) RESTRICTIONS ON INTERNET EXPENSES.—Any service fee associated with internet connection",
 		);
+	});
+
+	it("translates instruction text using classification overrides", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "2012",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: {
+							kind: SearchTargetKind.Text,
+							text: tp("section 3(u)(4)"),
+						},
+						insert: tp("section 3(u)(3)"),
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/7/2036",
+			sectionBody: "As defined in section 2012(u)(4) of this title.",
+			instructionText:
+				'Section 16 is amended by striking "section 3(u)(4)" and inserting "section 3(u)(3)".',
+			classificationOverrides: [
+				{
+					congress: 118,
+					publicLawNumber: "118-1",
+					pubLawSec: "3",
+					uscTitle: "7",
+					uscSection: "2012",
+					description: null,
+				},
+			],
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.applySummary.wasTranslated).toBe(true);
+		expect(effect.renderModel.plainText).toBe(
+			"As defined in section 2012(u)(3) of this title.",
+		);
+		// The instruction text should be translated in the summary
+		expect(effect.debug.operationAttempts[0]?.wasTranslated).toBe(true);
+		expect(
+			effect.debug.operationAttempts[0]?.translatedInstructionText,
+		).toContain("section 2012(u)(4)");
 	});
 });

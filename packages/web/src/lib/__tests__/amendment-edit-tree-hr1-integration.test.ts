@@ -220,7 +220,7 @@ The income (less, at State option, a pro rata share) and financial resources of 
 		sectionPath: "/statutes/usc/section/7/2036/a",
 		instructionText: `(3) Section 27(a)(2) of the Food and Nutrition Act of 2008 (7 U.S.C. 2036(a)(2))) is amended by striking “section 3(u)(4)” each place it appears and inserting “section 3(u)(3)”.`,
 		instructionLineLevels: [1],
-		expectedEditedExcerpt: "section 3(u)(3)",
+		expectedEditedExcerpt: "section 2012(u)(3)",
 	},
 	{
 		citation: "42 U.S.C. 1396o-1(a)(1)",

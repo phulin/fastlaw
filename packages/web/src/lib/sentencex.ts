@@ -7,23 +7,30 @@ export async function initSentencex() {
 		process.versions &&
 		process.versions.node
 	) {
-		// Use a dynamic import via new Function to completely hide it from Vite/Rollup
-		const dynamicImport = new Function(
-			"modulePath",
-			"return import(modulePath)",
-		);
+		// Webpack/Vite tries to bundle dynamic imports if it can resolve them statically.
+		// Using a string interpolation trick usually hides it, but in node environments
+		// like vitest we can just require or import directly.
+		try {
+			const fs = await import("node:fs");
+			const url = await import("node:url");
+			const path = await import("node:path");
 
-		const { readFileSync } = await dynamicImport("node:fs");
-		const { fileURLToPath } = await dynamicImport("node:url");
-		const { dirname, resolve } = await dynamicImport("node:path");
-
-		const __dirname = dirname(fileURLToPath(import.meta.url));
-		const wasmPath = resolve(
-			__dirname,
-			"../../../../node_modules/sentencex-wasm/sentencex_wasm_bg.wasm",
-		);
-		const wasmBuffer = readFileSync(wasmPath);
-		initSync({ module: wasmBuffer });
+			const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+			const wasmPath = path.resolve(
+				__dirname,
+				"../../../../node_modules/sentencex-wasm/sentencex_wasm_bg.wasm",
+			);
+			const wasmBuffer = fs.readFileSync(wasmPath);
+			initSync({ module: wasmBuffer });
+		} catch (e) {
+			console.warn(
+				"Failed node-based WASM initialization, falling back to fetch",
+				e,
+			);
+			const response = await fetch(wasmUrl);
+			const wasmArrayBuffer = await response.arrayBuffer();
+			initSync({ module: wasmArrayBuffer });
+		}
 	} else {
 		// Ensure this is properly fetched in the browser
 		const response = await fetch(wasmUrl);
@@ -36,5 +43,7 @@ export async function initSentencex() {
 await initSentencex();
 
 export function segment(language: string, text: string): string[] {
-	return rawSegment(language, text);
+	const result = rawSegment(language, text);
+	console.log("rawSegment result for", JSON.stringify(text), "is", result);
+	return result;
 }

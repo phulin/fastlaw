@@ -1,6 +1,7 @@
 import { buildAmendmentDocumentModel } from "./amendment-document-model";
 import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
 import type {
+	ClassificationOverride,
 	DocumentModel,
 	FormattingSpan,
 	HierarchyLevel,
@@ -29,6 +30,7 @@ interface ApplyEditTreeArgs {
 	sectionPath: string;
 	sectionBody: string;
 	instructionText?: string;
+	classificationOverrides?: ClassificationOverride[];
 }
 
 type AmendmentSegmentKind = "unchanged" | "deleted" | "inserted";
@@ -66,11 +68,14 @@ export interface FailedApplyItem {
 	reasonKind: ApplyFailureReasonKind;
 	reason: string;
 	reasonDetail: string | null;
+	wasTranslated: boolean;
+	translatedInstructionText: string | null;
 }
 
 export interface AmendmentApplySummary {
 	partiallyApplied: boolean;
 	failedItems: FailedApplyItem[];
+	wasTranslated: boolean;
 }
 
 export interface AmendmentEffect {
@@ -156,16 +161,50 @@ function resolvePathCandidates(
 	model: DocumentModel,
 	path: HierarchyLevel[] | undefined,
 ): string[] {
-	const normalized = normalizePath(path);
-	if (normalized.length === 0) return [];
-	const [firstSegment, ...rest] = normalized;
-	if (!firstSegment) return [];
-	let currentCandidates = filterCandidateIds(
-		model,
-		model.rootNodeIds,
-		firstSegment,
-	);
-	for (const segment of rest) {
+	if (!path || path.length === 0) return [];
+
+	const currentPath = [...path];
+	let currentCandidates: string[] = [];
+
+	// Skip leading code_reference and section segments if they don't match root nodes.
+	// This allows resolution to start from the actual document content (e.g. subsections).
+	while (currentPath.length > 0) {
+		const segment = currentPath[0];
+		currentCandidates = filterCandidateIds(model, model.rootNodeIds, segment);
+		if (currentCandidates.length > 0) {
+			break;
+		}
+		if (segment.type === "code_reference" || segment.type === "section") {
+			currentPath.shift();
+			continue;
+		}
+		break;
+	}
+
+	if (currentCandidates.length === 0) {
+		console.log(
+			"resolvePathCandidates failed to find first segment in root nodes:",
+			currentPath[0] ? `${currentPath[0].type}:${currentPath[0].val}` : "empty",
+			"original path:",
+			pathToText(path),
+		);
+		return [];
+	}
+
+	const restSegments = currentPath.slice(1);
+	if (currentCandidates.length === 0) {
+		// Force log if unresolved
+		console.log(
+			`Root nodes (${model.rootNodeIds.length}):`,
+			model.rootNodeIds
+				.map((id) => {
+					const node = model.nodesById.get(id);
+					return `${node?.kind}:${node?.label}`;
+				})
+				.join(", "),
+		);
+	}
+	for (const segment of restSegments) {
 		const childCandidateIds: string[] = [];
 		for (const candidateId of currentCandidates) {
 			const candidateNode = model.nodesById.get(candidateId);
@@ -199,7 +238,25 @@ function resolvePathCandidates(
 			descendantCandidateIds,
 			segment,
 		);
-		if (currentCandidates.length === 0) return [];
+		console.log(
+			"resolvePathCandidates segment:",
+			`${segment.type}:${segment.val}`,
+			"candidates found:",
+			currentCandidates.length,
+		);
+		if (currentCandidates.length === 0) {
+			console.log(
+				"Possible descendant labels:",
+				descendantCandidateIds
+					.slice(0, 100)
+					.map((id) => {
+						const node = model.nodesById.get(id);
+						return `${node?.kind}:${node?.label}`;
+					})
+					.join(", "),
+			);
+			return [];
+		}
 	}
 
 	return currentCandidates;
@@ -212,10 +269,64 @@ function resolveSinglePath(
 	unresolvedKind: ResolutionIssue["kind"],
 	ambiguousKind: ResolutionIssue["kind"],
 	issues: ResolutionIssue[],
+	classificationOverrides?: ClassificationOverride[],
+	redesignations?: Map<string, string>,
 ): string | null {
-	const normalized = normalizePath(path);
+	let normalized = normalizePath(path);
+
+	// Apply classification override if available
+	if (
+		classificationOverrides &&
+		classificationOverrides.length > 0 &&
+		path &&
+		path.length > 0
+	) {
+		const sectionSegment = path.find((s) => s.type === "section");
+		if (sectionSegment) {
+			const matchingOverride = classificationOverrides.find(
+				(o) => o.pubLawSec === sectionSegment.val,
+			);
+			if (matchingOverride?.uscSection) {
+				// We found an override, meaning this section is actually classified differently.
+				// However, D1 resolution here usually works by matching the label that exists
+				// in the document structure.
+				// If the document uses the overridden section number, we might want to swap
+				// out the segment.val with the overridden one to match nodes in the tree.
+
+				// Keep track if we replaced the section label for resolution purposes
+				normalized = normalized.map((s) =>
+					s.type === "section"
+						? { ...s, val: matchingOverride.uscSection || s.val }
+						: s,
+				);
+			}
+		}
+	}
+
+	// Apply local redesignations
+	if (redesignations && redesignations.size > 0) {
+		const fullPath = pathToText(normalized);
+		for (const [newPath, oldLabel] of redesignations) {
+			if (fullPath === newPath) {
+				const last = normalized[normalized.length - 1];
+				if (last) {
+					normalized = [...normalized.slice(0, -1), { ...last, val: oldLabel }];
+				}
+				break;
+			}
+		}
+	}
+
 	if (normalized.length === 0) return null;
 	const candidates = resolvePathCandidates(model, normalized);
+	console.log(
+		"resolveSinglePath original:",
+		pathToText(path),
+		"normalized:",
+		pathToText(normalized),
+		"candidates:",
+		candidates.length,
+	);
 	if (candidates.length === 0) {
 		issues.push({
 			operationIndex,
@@ -245,6 +356,8 @@ interface TraversalContext {
 	matterFollowingTarget: HierarchyLevel[] | null;
 	unanchoredInsertMode: "insert" | "add_at_end";
 	sentenceOrdinal: number | null;
+	classificationOverrides?: ClassificationOverride[];
+	redesignations: Map<string, string>;
 }
 
 interface WalkResult {
@@ -286,8 +399,30 @@ function mergeTargets(
 	override: HierarchyLevel[] | null,
 ): HierarchyLevel[] {
 	if (!override || override.length === 0) return base;
-	const startsAtSection = override[0]?.type === "section";
-	if (startsAtSection) return override;
+
+	// Check if the override starts at some point within the base path to avoid duplication.
+	for (let i = 0; i < base.length; i++) {
+		let match = true;
+		for (let j = 0; j + i < base.length && j < override.length; j++) {
+			if (
+				base[i + j].type !== override[j].type ||
+				base[i + j].val !== override[j].val
+			) {
+				match = false;
+				break;
+			}
+		}
+		if (match) {
+			// Found an overlap. Check if we should merge.
+			// If override is completely contained in base, return base.
+			if (i + override.length <= base.length) {
+				return base;
+			}
+			// Otherwise return base prefix + override.
+			return [...base.slice(0, i), ...override];
+		}
+	}
+
 	return [...base, ...override];
 }
 
@@ -343,6 +478,8 @@ function resolveEdit(
 			unresolvedKind,
 			ambiguousKind,
 			issues,
+			context.classificationOverrides,
+			context.redesignations,
 		);
 	}
 
@@ -663,7 +800,7 @@ function resolveEdit(
 	}
 }
 
-function walkTree(
+export function walkTree(
 	model: DocumentModel,
 	nodes: InstructionSemanticTree["children"],
 	context: TraversalContext,
@@ -675,10 +812,9 @@ function walkTree(
 
 	for (const node of nodes) {
 		if (node.type === SemanticNodeType.Scope) {
-			const scopeTarget = [
-				...context.target,
+			const scopeTarget = mergeTargets(context.target, [
 				{ type: toHierarchyType(node.scope.kind), val: node.scope.label },
-			] as HierarchyLevel[];
+			]);
 			const nested = walkTree(
 				model,
 				node.children,
@@ -688,6 +824,8 @@ function walkTree(
 			resolved.push(...nested.resolved);
 			issues.push(...nested.issues);
 			unsupportedReasons.push(...nested.unsupportedReasons);
+			// Carry redesignations from nested scopes?
+			// Usually redesignations are local to the level they are in.
 			continue;
 		}
 
@@ -698,7 +836,7 @@ function walkTree(
 					continue;
 				}
 				for (const ref of node.restriction.refs) {
-					const target = refToHierarchyPath(ref);
+					const target = mergeTargets(context.target, refToHierarchyPath(ref));
 					const nested = walkTree(
 						model,
 						node.children,
@@ -732,9 +870,12 @@ function walkTree(
 				continue;
 			}
 			if (node.restriction.kind === LocationRestrictionKind.AtEnd) {
-				const target = node.restriction.ref
-					? refToHierarchyPath(node.restriction.ref)
-					: context.target;
+				const target = mergeTargets(
+					context.target,
+					node.restriction.ref
+						? refToHierarchyPath(node.restriction.ref)
+						: null,
+				);
 				const nested = walkTree(
 					model,
 					node.children,
@@ -794,9 +935,27 @@ function walkTree(
 		}
 
 		if (node.type === SemanticNodeType.Edit) {
-			const result = resolveEdit(model, node, context, counter, issues);
-			resolved.push(...result.resolved);
-			unsupportedReasons.push(...result.unsupportedReasons);
+			const nested = resolveEdit(model, node, context, counter, issues);
+			resolved.push(...nested.resolved);
+			unsupportedReasons.push(...nested.unsupportedReasons);
+
+			// Track redesignations to handle "(as so redesignated)" references in subsequent edits
+			for (const op of nested.resolved) {
+				if (op.edit.kind === UltimateEditKind.Redesignate) {
+					const mapping = op.edit.mappings[op.redesignateMappingIndex];
+					if (mapping) {
+						const toHierarchy = refToHierarchyPath(mapping.to);
+						const fullToPath = pathToText(
+							normalizePath(mergeTargets(context.target, toHierarchy)),
+						);
+						const fromLabel =
+							mapping.from.path[mapping.from.path.length - 1]?.label;
+						if (fullToPath && fromLabel) {
+							context.redesignations.set(fullToPath, fromLabel);
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -876,11 +1035,14 @@ function buildApplySummary(
 			reasonKind: failure.reasonKind,
 			reason: failure.reason,
 			reasonDetail: failure.reasonDetail,
+			wasTranslated: attempt.wasTranslated,
+			translatedInstructionText: attempt.translatedInstructionText,
 		});
 	}
 	return {
 		partiallyApplied: failedItems.length > 0,
 		failedItems,
+		wasTranslated: operationAttempts.some((a) => a.wasTranslated),
 	};
 }
 
@@ -944,6 +1106,8 @@ export function applyAmendmentEditTreeToSection(
 				? "add_at_end"
 				: "insert",
 			sentenceOrdinal: null,
+			classificationOverrides: args.classificationOverrides,
+			redesignations: new Map(),
 		},
 		counter,
 	);
@@ -959,7 +1123,11 @@ export function applyAmendmentEditTreeToSection(
 		);
 	}
 
-	const { patches, attempts } = planEdits(model, walked.resolved);
+	const { patches, attempts } = planEdits(
+		model,
+		walked.resolved,
+		args.classificationOverrides,
+	);
 	const applied = applyPlannedPatchesTransaction(model, patches);
 	const workingText = applied.plainText;
 
