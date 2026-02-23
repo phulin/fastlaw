@@ -481,6 +481,68 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.inserted).toEqual(["new"]);
 	});
 
+	it("applies matter-preceding edits in subsection introduction instead of subsection heading", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "a" },
+					children: [
+						{
+							type: SemanticNodeType.LocationRestriction,
+							restriction: {
+								kind: LocationRestrictionKind.MatterPreceding,
+								ref: {
+									kind: ScopeKind.Paragraph,
+									path: [{ kind: ScopeKind.Paragraph, label: "1" }],
+								},
+							},
+							children: [
+								{
+									type: SemanticNodeType.Edit,
+									edit: {
+										kind: UltimateEditKind.Insert,
+										content: tp(
+											" (other than, beginning October 1, 2028, specified individuals)",
+										),
+										after: {
+											kind: SearchTargetKind.Text,
+											text: tp("individuals"),
+										},
+									},
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"**(a)** **Imposition of certain charges under plan in case of individuals**",
+			"",
+			"Subject to this subsection, the State plan shall provide that in the case of individuals described in subparagraph (A), no enrollment fee shall be imposed.",
+			"",
+			"**(1)** No enrollment fee.",
+		].join("\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody,
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).toContain(
+			"(a) Imposition of certain charges under plan in case of individuals",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"case of individuals(other than, beginning October 1, 2028, specified individuals) described in subparagraph (A)",
+		);
+	});
+
 	it("does not use tree targetScopePath as fallback root scope", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

@@ -369,6 +369,59 @@ function resolveInlineMatterBoundary(
 	return match.index + match[1].length;
 }
 
+function trimLeadingSubsectionHeadingFromRange(
+	model: DocumentModel,
+	range: ScopeRange,
+): ScopeRange {
+	const leadingParagraph = model.spans.find(
+		(span) =>
+			span.type === "paragraph" &&
+			span.start <= range.start &&
+			span.end > range.start,
+	);
+	if (!leadingParagraph) return range;
+	if (leadingParagraph.end >= range.end) return range;
+
+	const leadingText = model.plainText.slice(
+		leadingParagraph.start,
+		leadingParagraph.end,
+	);
+	if (!/^\s*\([A-Za-z0-9ivxIVX]+\)\s+/.test(leadingText)) return range;
+
+	const strongSpans = model.spans
+		.filter(
+			(span) =>
+				span.type === "strong" &&
+				span.end > leadingParagraph.start &&
+				span.start < leadingParagraph.end,
+		)
+		.map((span) => ({
+			start: Math.max(span.start, leadingParagraph.start),
+			end: Math.min(span.end, leadingParagraph.end),
+		}));
+	if (strongSpans.length === 0) return range;
+
+	for (
+		let index = leadingParagraph.start;
+		index < leadingParagraph.end;
+		index += 1
+	) {
+		const char = model.plainText[index] ?? "";
+		if (/\s/.test(char)) continue;
+		const covered = strongSpans.some(
+			(span) => span.start <= index && index < span.end,
+		);
+		if (!covered) return range;
+	}
+
+	let trimmedStart = leadingParagraph.end;
+	while (trimmedStart < range.end && model.plainText[trimmedStart] === "\n") {
+		trimmedStart += 1;
+	}
+	if (trimmedStart >= range.end) return range;
+	return { ...range, start: trimmedStart };
+}
+
 function getEditStrikingContent(
 	operation: ResolvedInstructionOperation,
 ): string | null {
@@ -487,12 +540,6 @@ function planPatchForOperation(
 				return { patches: [], attempt };
 			}
 			range = { ...range, end: range.start + inlineBoundary };
-			attempt.scopedRange = {
-				start: range.start,
-				end: range.end,
-				length: range.end - range.start,
-				preview: previewRange(plainText, range),
-			};
 		} else {
 			const matterTargetRange = getScopeRangeFromNodeId(
 				model,
@@ -504,13 +551,14 @@ function planPatchForOperation(
 			}
 			const boundary = Math.min(matterTargetRange.start, range.end);
 			range = { ...range, end: Math.max(range.start, boundary) };
-			attempt.scopedRange = {
-				start: range.start,
-				end: range.end,
-				length: range.end - range.start,
-				preview: previewRange(plainText, range),
-			};
 		}
+		range = trimLeadingSubsectionHeadingFromRange(model, range);
+		attempt.scopedRange = {
+			start: range.start,
+			end: range.end,
+			length: range.end - range.start,
+			preview: previewRange(plainText, range),
+		};
 	}
 
 	if (range && operation.hasMatterFollowingTarget) {
