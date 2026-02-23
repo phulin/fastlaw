@@ -225,6 +225,7 @@ export interface TextSearchTarget {
 	kind: SearchTargetKind.Text;
 	text: TextWithProvenance;
 	eachPlaceItAppears?: boolean;
+	atEnd?: boolean;
 }
 
 export interface StructuralEditTarget {
@@ -237,6 +238,7 @@ export interface StructuralRangeEditTarget {
 
 export interface PunctuationEditTarget {
 	punctuation: PunctuationKind;
+	atEndOf?: StructuralReference;
 }
 
 export interface InnerLocationEditTarget {
@@ -325,11 +327,12 @@ export interface ScopeNode {
 
 export function textSearchFromEditTarget(
 	target: EditTarget,
-): { text: string; eachPlaceItAppears: boolean } | null {
+): { text: string; eachPlaceItAppears: boolean; atEnd: boolean } | null {
 	if ("kind" in target && target.kind === SearchTargetKind.Text) {
 		return {
 			text: target.text.text,
 			eachPlaceItAppears: target.eachPlaceItAppears ?? false,
+			atEnd: target.atEnd ?? false,
 		};
 	}
 	return null;

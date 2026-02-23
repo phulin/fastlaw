@@ -91,6 +91,7 @@ export interface ResolvedInstructionOperation {
 	/** For Redesignate edits: index into edit.mappings that this operation handles. */
 	redesignateMappingIndex: number;
 	sentenceOrdinal: number | null;
+	atEndOnly: boolean;
 	hasMatterPrecedingTarget: boolean;
 	hasMatterFollowingTarget: boolean;
 	matterPrecedingRefKind: string | null;

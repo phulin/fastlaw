@@ -464,6 +464,10 @@ function parseStrikingTarget(
 	context: TranslationContext,
 ): EditTarget {
 	const strikingSearch = findChild(node, GrammarAstNodeType.StrikingSearch);
+	const strikingLocation = findChild(node, GrammarAstNodeType.StrikingLocation);
+	const atEnd =
+		strikingLocation?.text.includes("at the end") ||
+		node.text.includes("at the end");
 	if (strikingSearch) {
 		const inline = findChild(strikingSearch, GrammarAstNodeType.Inline);
 		const appearances = findChild(
@@ -477,6 +481,7 @@ function parseStrikingTarget(
 					text: strikingSearch.text.trim(),
 					sourceLocation: strikingSearch.sourceLocation,
 				},
+				atEnd,
 			};
 		}
 		return {
@@ -486,6 +491,7 @@ function parseStrikingTarget(
 				? appearances.text.includes("each place it appears") ||
 					appearances.text.includes("both places it appears")
 				: undefined,
+			atEnd,
 		};
 	}
 
@@ -508,11 +514,16 @@ function parseStrikingTarget(
 
 	const inline = findChild(node, GrammarAstNodeType.Inline);
 	if (inline)
-		return { kind: SearchTargetKind.Text, text: extractInlineContent(inline) };
+		return {
+			kind: SearchTargetKind.Text,
+			text: extractInlineContent(inline),
+			atEnd,
+		};
 
 	return {
 		kind: SearchTargetKind.Text,
 		text: { text: node.text.trim(), sourceLocation: node.sourceLocation },
+		atEnd,
 	};
 }
 
@@ -787,7 +798,7 @@ function parseInnerLocationEditTarget(
 ): EditTarget {
 	const target = parseInnerLocationTarget(node, context);
 	if (target.kind === InnerLocationTargetKind.Punctuation) {
-		return { punctuation: target.punctuation };
+		return { punctuation: target.punctuation, atEndOf: target.atEndOf };
 	}
 	return { inner: target };
 }

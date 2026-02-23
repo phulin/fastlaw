@@ -23,7 +23,15 @@ function shiftSpansForInsertion(
 ): FormattingSpan[] {
 	if (insertedLength <= 0) return spans.map((span) => ({ ...span }));
 	return spans.map((span) => {
-		if (span.end <= insertAt) return { ...span };
+		if (span.end <= insertAt) {
+			if (
+				span.end === insertAt &&
+				(span.type === "paragraph" || span.type === "heading")
+			) {
+				return { ...span, end: span.end + insertedLength };
+			}
+			return { ...span };
+		}
 		if (span.start >= insertAt) {
 			return {
 				...span,
@@ -149,7 +157,9 @@ function materializeEditsFromPatches(
 			const insertedHasParagraphs = insertedSpans.some(
 				(span) => span.type === "paragraph",
 			);
-			workingSpans = insertedHasParagraphs
+			const shouldSplitContainerSpans =
+				insertedHasParagraphs && deletedLength === 0;
+			workingSpans = shouldSplitContainerSpans
 				? splitContainerSpansAroundInsertion(
 						workingSpans,
 						insertAt,

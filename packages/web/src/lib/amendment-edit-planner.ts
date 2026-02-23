@@ -123,6 +123,15 @@ function punctuationText(kind: PunctuationKind): string {
 	}
 }
 
+function findPunctuationIndexAtEnd(
+	scopedText: string,
+	kind: PunctuationKind,
+): number {
+	const punctuation = punctuationText(kind);
+	const trimmedEnd = scopedText.trimEnd();
+	return trimmedEnd.lastIndexOf(punctuation);
+}
+
 function paragraphTexts(range: ParagraphRange): string[] {
 	return range.paragraphs.map((p, i) => {
 		if (i === 0 && i === range.paragraphs.length - 1) {
@@ -587,6 +596,10 @@ function planPatchForOperation(
 			if (!range) break;
 			const strikeSearch = textSearchFromEditTarget(operation.edit.strike);
 			const strikingContent = strikeSearch?.text ?? null;
+			const strikePunctuation =
+				"punctuation" in operation.edit.strike
+					? operation.edit.strike.punctuation
+					: undefined;
 			let replacementContentText = operation.edit.insert.text;
 
 			// Extract baseline and translate "section X" in the inserted text
@@ -600,6 +613,28 @@ function planPatchForOperation(
 				text: replacementContentText,
 			};
 			const eachPlaceItAppears = strikeSearch?.eachPlaceItAppears === true;
+			const atEndSearch = strikeSearch?.atEnd === true;
+
+			if (!strikingContent && strikePunctuation) {
+				const punctuation = punctuationText(strikePunctuation);
+				const punctuationIndex = findPunctuationIndexAtEnd(
+					scopedText,
+					strikePunctuation,
+				);
+				attempt.searchText = punctuation;
+				attempt.searchTextKind = "striking";
+				attempt.searchIndex =
+					punctuationIndex >= 0 ? range.start + punctuationIndex : null;
+				if (punctuationIndex < 0) break;
+
+				pushPatch({
+					start: range.start + punctuationIndex,
+					end: range.start + punctuationIndex + punctuation.length,
+					deleted: punctuation,
+					inserted: replacementContent.text,
+				});
+				break;
+			}
 
 			if (!strikingContent) {
 				// Range replace (through-target)
@@ -671,7 +706,10 @@ function planPatchForOperation(
 				break;
 			}
 
-			let localIndex = scopedText.indexOf(strikingContent);
+			let localIndex =
+				operation.atEndOnly || atEndSearch
+					? scopedText.lastIndexOf(strikingContent)
+					: scopedText.indexOf(strikingContent);
 			let resolvedStrikingContent = strikingContent;
 			let resolvedReplacementContentText = replacementContent.text;
 
@@ -776,7 +814,12 @@ function planPatchForOperation(
 			if (!range) break;
 			const strikeSearch = textSearchFromEditTarget(operation.edit.target);
 			const strikingContent = strikeSearch?.text ?? null;
+			const strikePunctuation =
+				"punctuation" in operation.edit.target
+					? operation.edit.target.punctuation
+					: undefined;
 			const eachPlaceItAppears = strikeSearch?.eachPlaceItAppears === true;
+			const atEndSearch = strikeSearch?.atEnd === true;
 			const throughContent = operation.edit.through
 				? textFromEditTarget(operation.edit.through)
 				: null;
@@ -784,6 +827,26 @@ function planPatchForOperation(
 				operation.edit.through && "punctuation" in operation.edit.through
 					? operation.edit.through.punctuation
 					: undefined;
+
+			if (!strikingContent && strikePunctuation && !throughContent) {
+				const punctuation = punctuationText(strikePunctuation);
+				const punctuationIndex = findPunctuationIndexAtEnd(
+					scopedText,
+					strikePunctuation,
+				);
+				attempt.searchText = punctuation;
+				attempt.searchTextKind = "striking";
+				attempt.searchIndex =
+					punctuationIndex >= 0 ? range.start + punctuationIndex : null;
+				if (punctuationIndex < 0) break;
+
+				pushPatch({
+					start: range.start + punctuationIndex,
+					end: range.start + punctuationIndex + punctuation.length,
+					deleted: punctuation,
+				});
+				break;
+			}
 
 			if (!strikingContent) {
 				if (operation.resolvedThroughTargetId) {
@@ -821,7 +884,10 @@ function planPatchForOperation(
 				break;
 			}
 
-			let localStart = scopedText.indexOf(strikingContent);
+			let localStart =
+				operation.atEndOnly || atEndSearch
+					? scopedText.lastIndexOf(strikingContent)
+					: scopedText.indexOf(strikingContent);
 			let resolvedStrikingContent = strikingContent;
 
 			if (

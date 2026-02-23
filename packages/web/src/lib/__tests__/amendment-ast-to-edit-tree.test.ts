@@ -8,6 +8,7 @@ import {
 	LocationRestrictionKind,
 	PunctuationKind,
 	ScopeKind,
+	SearchTargetKind,
 	SemanticNodeType,
 	TextLocationAnchorKind,
 	UltimateEditKind,
@@ -594,6 +595,87 @@ describe("translateInstructionAstToEditTree", () => {
 			"a",
 			"b",
 		]);
+	});
+
+	it("preserves punctuation at-end structural context on strike-insert edit targets", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended by striking the period at the end of subsection (a) and inserting “;”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		const queue = [...result.tree.children];
+		let strikeInsertEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.StrikeInsert
+			) {
+				strikeInsertEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!strikeInsertEdit) {
+			throw new Error("Expected strike-insert edit.");
+		}
+		if (strikeInsertEdit.edit.kind !== UltimateEditKind.StrikeInsert) {
+			throw new Error("Expected strike-insert edit kind.");
+		}
+		const strikeTarget = strikeInsertEdit.edit.strike;
+		if (!("punctuation" in strikeTarget)) {
+			throw new Error("Expected punctuation strike target.");
+		}
+		expect(strikeTarget.punctuation).toBe(PunctuationKind.Period);
+		expect(strikeTarget.atEndOf?.path[0]?.label).toBe("a");
+	});
+
+	it("marks text strike targets with at-end semantics when specified", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended by striking “or” at the end.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		const queue = [...result.tree.children];
+		let strikeEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.Strike
+			) {
+				strikeEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!strikeEdit) {
+			throw new Error("Expected strike edit node.");
+		}
+		if (strikeEdit.edit.kind !== UltimateEditKind.Strike) {
+			throw new Error("Expected strike edit.");
+		}
+		const strikeTarget = strikeEdit.edit.target;
+		if (
+			!("kind" in strikeTarget) ||
+			strikeTarget.kind !== SearchTargetKind.Text
+		) {
+			throw new Error("Expected text strike target.");
+		}
+		expect(strikeTarget.text.text).toBe("or");
+		expect(strikeTarget.atEnd).toBe(true);
 	});
 
 	it("keeps hyphen-separated redesignation endpoints as explicit pairs", () => {

@@ -318,6 +318,7 @@ interface TraversalContext {
 	matterFollowingTarget: HierarchyLevel[] | null;
 	unanchoredInsertMode: "insert" | "add_at_end";
 	sentenceOrdinal: number | null;
+	atEndOnly: boolean;
 	classificationOverrides?: ClassificationOverride[];
 	redesignations: Map<string, string>;
 }
@@ -469,6 +470,7 @@ function resolveEdit(
 			addAtEnd: overrides.addAtEnd ?? false,
 			redesignateMappingIndex: overrides.redesignateMappingIndex ?? 0,
 			sentenceOrdinal: context.sentenceOrdinal,
+			atEndOnly: context.atEndOnly,
 			hasMatterPrecedingTarget: context.matterPrecedingTarget !== null,
 			hasMatterFollowingTarget: context.matterFollowingTarget !== null,
 			matterPrecedingRefKind: context.matterPreceding?.kind ?? null,
@@ -748,6 +750,7 @@ function resolveEdit(
 						addAtEnd: false,
 						redesignateMappingIndex: 0,
 						sentenceOrdinal: null,
+						atEndOnly: false,
 						hasMatterPrecedingTarget: false,
 						hasMatterFollowingTarget: false,
 						matterPrecedingRefKind: null,
@@ -850,7 +853,12 @@ export function walkTree(
 				const nested = walkTree(
 					model,
 					node.children,
-					{ ...context, target, unanchoredInsertMode: "add_at_end" },
+					{
+						...context,
+						target,
+						unanchoredInsertMode: "add_at_end",
+						atEndOnly: true,
+					},
 					counter,
 				);
 				resolved.push(...nested.resolved);
@@ -1080,6 +1088,7 @@ export function applyAmendmentEditTreeToSection(
 				? "add_at_end"
 				: "insert",
 			sentenceOrdinal: null,
+			atEndOnly: false,
 			classificationOverrides: args.classificationOverrides,
 			redesignations: new Map(),
 		},

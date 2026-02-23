@@ -14,6 +14,7 @@ import { planEdits } from "../amendment-edit-planner";
 import {
 	type InstructionSemanticTree,
 	LocationRestrictionKind,
+	PunctuationKind,
 	ScopeKind,
 	SearchTargetKind,
 	SemanticNodeType,
@@ -671,6 +672,89 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expectEffectToContainMarkedText(effect, "(a) ~~old~~++new++");
 	});
 
+	it("applies punctuation strike-insert targets at end of scope", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "a" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: { punctuation: PunctuationKind.Period },
+								insert: tp(", and"),
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(a) Alpha.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expectEffectToContainMarkedText(effect, "(a) Alpha~~.~~++, and++");
+	});
+
+	it("keeps inline punctuation insertions paragraph-covered when followed by add-at-end block insertion", () => {
+		const originalText =
+			"(II) which is directly adjoining to any census tract described in subclause (I).";
+		const model = buildAmendmentDocumentModel(originalText);
+		const periodIndex = originalText.lastIndexOf(".");
+		expect(periodIndex).toBeGreaterThan(-1);
+
+		const applied = applyPlannedPatchesTransaction(model, [
+			{
+				operationIndex: 0,
+				start: periodIndex + 1,
+				end: periodIndex + 1,
+				insertAt: periodIndex + 1,
+				deletedPlain: "",
+				insertedPlain: "\n(iv)\nAdded clause.",
+				insertedSpans: [
+					{ type: "paragraph", start: 1, end: 5 },
+					{ type: "paragraph", start: 6, end: 18 },
+				],
+			},
+			{
+				operationIndex: 1,
+				start: periodIndex,
+				end: periodIndex + 1,
+				insertAt: periodIndex + 1,
+				deletedPlain: ".",
+				insertedPlain: ", or",
+				insertedSpans: [],
+			},
+		]);
+
+		const inlineInsertStart = applied.plainText.indexOf(", or");
+		expect(inlineInsertStart).toBeGreaterThan(-1);
+		const inlineInsertEnd = inlineInsertStart + ", or".length;
+		const inlineInsertSpan = applied.spans.find(
+			(span) =>
+				span.type === "insertion" &&
+				span.start <= inlineInsertStart &&
+				span.end >= inlineInsertEnd,
+		);
+		expect(inlineInsertSpan).toBeDefined();
+
+		const containingParagraph = applied.spans.find(
+			(span) =>
+				span.type === "paragraph" &&
+				span.start <= inlineInsertStart &&
+				span.end >= inlineInsertEnd,
+		);
+		expect(containingParagraph).toBeDefined();
+	});
+
 	it("applies StrikeInsert structural target ranges", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
@@ -1019,7 +1103,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		);
 	});
 
-	it("does not keep a containing paragraph span across multiline inserted blocks", () => {
+	it("keeps containing paragraph span for multiline strike-insert replacements", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
 			targetSection: "1",
@@ -1062,7 +1146,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 				span.start < insertionSpan.start &&
 				span.end > insertionSpan.end,
 		);
-		expect(parentParagraph).toBeUndefined();
+		expect(parentParagraph).toBeDefined();
 	});
 
 	it("does not widen strike-insert replacement to ancestor scope when replacing a single paragraph", () => {
@@ -1715,6 +1799,7 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 						? "add_at_end"
 						: "insert",
 					sentenceOrdinal: null,
+					atEndOnly: false,
 					classificationOverrides: [],
 					redesignations: new Map(),
 				},
