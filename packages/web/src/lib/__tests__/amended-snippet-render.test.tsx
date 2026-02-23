@@ -48,6 +48,10 @@ function renderEffect(plainText: string, spans: FormattingSpan[]): string {
 		.replace(/></g, ">\n<");
 }
 
+function normalizeHtmlForAssertions(html: string): string {
+	return html.replace(/>\s+</g, "><");
+}
+
 function buildParagraphTextAndSpans(paragraphs: string[]): {
 	plainText: string;
 	spans: FormattingSpan[];
@@ -215,15 +219,16 @@ describe("renderAmendedSnippet", () => {
 			...spans,
 			{ start: editedStart, end: editedEnd, type: "insertion" },
 		]);
+		const normalizedHtml = normalizeHtmlForAssertions(html);
 
-		expect(html).toContain("<p>P2</p>");
-		expect(html).toContain("<p>P3</p>");
-		expect(html).toContain("<p>P4</p>");
-		expect(html).toContain("<p>P5 <ins>edited</ins></p>");
-		expect(html).toContain("<p>P6</p>");
-		expect(html).toContain("<p>P7</p>");
-		expect(html).toContain("<p>P8</p>");
-		expect(html).not.toContain("<p>P1</p>");
-		expect(html).not.toContain("<p>P9</p>");
+		expect(normalizedHtml).toContain("<p>P2</p>");
+		expect(normalizedHtml).toContain("<p>P3</p>");
+		expect(normalizedHtml).toContain("<p>P4</p>");
+		expect(normalizedHtml).toContain("<p>P5 <ins>edited</ins></p>");
+		expect(normalizedHtml).toContain("<p>P6</p>");
+		expect(normalizedHtml).toContain("<p>P7</p>");
+		expect(normalizedHtml).toContain("<p>P8</p>");
+		expect(normalizedHtml).not.toContain("<p>P1</p>");
+		expect(normalizedHtml).not.toContain("<p>P9</p>");
 	});
 });

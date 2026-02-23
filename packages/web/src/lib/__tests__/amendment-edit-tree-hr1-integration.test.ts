@@ -15,7 +15,8 @@ interface SelectedInstructionBlock {
 	instructionText: string;
 	instructionLineLevels: number[];
 	expectedEditedExcerpt: string;
-	expectedMarkedEditSnippet?: string;
+	expectedAbsentExcerpts?: string[];
+	expectedMarkedEditSnippets?: string[];
 }
 
 interface LeveledLine {
@@ -150,6 +151,41 @@ const paragraphSpans = (spans: FormattingSpan[]): FormattingSpan[] =>
 		.filter((span) => span.type === "paragraph")
 		.sort((left, right) => left.start - right.start || left.end - right.end);
 
+const textWithDeletedSpansRemoved = (
+	plainText: string,
+	spans: FormattingSpan[],
+): string => {
+	const deletionSpans = spans
+		.filter((span) => span.type === "deletion")
+		.map((span) => ({
+			start: Math.max(0, Math.min(plainText.length, span.start)),
+			end: Math.max(0, Math.min(plainText.length, span.end)),
+		}))
+		.filter((span) => span.end > span.start)
+		.sort((left, right) => left.start - right.start || left.end - right.end);
+
+	if (deletionSpans.length === 0) return plainText;
+
+	const mergedSpans: Array<{ start: number; end: number }> = [];
+	for (const span of deletionSpans) {
+		const previous = mergedSpans[mergedSpans.length - 1];
+		if (!previous || span.start > previous.end) {
+			mergedSpans.push(span);
+			continue;
+		}
+		previous.end = Math.max(previous.end, span.end);
+	}
+
+	let cursor = 0;
+	let result = "";
+	for (const span of mergedSpans) {
+		result += plainText.slice(cursor, span.start);
+		cursor = span.end;
+	}
+	result += plainText.slice(cursor);
+	return result;
+};
+
 const assertParagraphSpanOffsets = (
 	plainText: string,
 	spans: FormattingSpan[],
@@ -279,8 +315,9 @@ The income (less, at State option, a pro rata share) and financial resources of 
 (1) in subsection (a), in the matter preceding paragraph (1), by striking “2023” and inserting “2031”;`,
 		instructionLineLevels: [1, 2],
 		expectedEditedExcerpt: "for the 2019 through 2031 crop years",
-		expectedMarkedEditSnippet:
+		expectedMarkedEditSnippets: [
 			"for the 2019 through ~~2023~~++2031++ crop years",
+		],
 	},
 	{
 		citation: "7 U.S.C. 9034",
@@ -301,8 +338,9 @@ The income (less, at State option, a pro rata share) and financial resources of 
 (B) (i) in the case of long grain rice and medium grain rice, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section; or
 (ii) in the case of upland cotton, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section.
 (2) REFUND FOR UPLAND COTTON.—`,
-		expectedMarkedEditSnippet:
+		expectedMarkedEditSnippets: [
 			"~~The Secretary~~++(1) IN GENERAL.—The Secretary++",
+		],
 	},
 	{
 		citation: "7 U.S.C. 2036(a)(2)",
@@ -318,7 +356,22 @@ The income (less, at State option, a pro rata share) and financial resources of 
 		instructionLineLevels: [1],
 		expectedEditedExcerpt: `(1) In general
 Notwithstanding sections 1396o and 1396a(a)(10)(B) of this title, but subject to paragraph (2), a State, at its option and through a State plan amendment, may impose premiums and cost sharing for any group of individuals (as specified by the State) and for any type of services (other than drugs for which cost sharing may be imposed under subsection (c) and non-emergency services furnished in a hospital emergency department for which cost sharing may be imposed under subsection (e)), and may vary such premiums and cost sharing among such groups or types, consistent with the limitations established under this section. Nothing in this section shall be construed as superseding (or preventing the application of) subsection (g), (i), (j), or (k) of section 1396o of this title.`,
-		expectedMarkedEditSnippet: "~~or (j)~~++(j), or (k)++",
+		expectedMarkedEditSnippets: ["~~or (j)~~++(j), or (k)++"],
+	},
+	{
+		citation: "47 U.S.C. 309(j)(11)",
+		sectionPath: "/statutes/usc/section/47/309/j/11",
+		instructionText: `(1) AMENDMENT.—Section 309(j)(11) of the Communications Act of 1934 (47 U.S.C. 309(j)(11)) is amended by striking “grant a license or permit under this subsection shall expire March 9, 2023” and all that follows and inserting the following: “complete a system of competitive bidding under this subsection shall expire September 30, 2034, except that, with respect to the electromagnetic spectrum— ”
+“(A) between the frequencies of 3.1 gigahertz and 3.45 gigahertz, such authority shall not apply; and
+“(B) between the frequencies of 7.4 gigahertz and 8.4 gigahertz, such authority shall not apply.”.`,
+		instructionLineLevels: [1, 2, 2],
+		expectedEditedExcerpt: `The authority of the Commission to complete a system of competitive bidding under this subsection shall expire September 30, 2034, except that, with respect to the electromagnetic spectrum—
+(A) between the frequencies of 3.1 gigahertz and 3.45 gigahertz, such authority shall not apply; and
+(B) between the frequencies of 7.4 gigahertz and 8.4 gigahertz, such authority shall not apply.`,
+		expectedAbsentExcerpts: [
+			"such authority shall expire on September 30, 2025",
+			"such authority shall expire on the date that is 7 years after November 15, 2021",
+		],
 	},
 	{
 		citation: "7 U.S.C. 9038(a)",
@@ -330,7 +383,7 @@ Notwithstanding any other provision of law, during the period beginning on Febru
 (1) to maintain and expand the domestic use of extra long staple cotton produced in the United States;
 (2) to increase exports of extra long staple cotton produced in the United States; and
 (3) to ensure that extra long staple cotton produced in the United States remains competitive in world markets.`,
-		expectedMarkedEditSnippet: "~~2026~~++2032++",
+		expectedMarkedEditSnippets: ["~~2026~~++2032++"],
 	},
 	{
 		citation: "7 U.S.C. 1516(b)(2)(C)(i)",
@@ -342,8 +395,9 @@ Notwithstanding any other provision of law, during the period beginning on Febru
 For each of the 2014 and subsequent reinsurance years, the Corporation may use the insurance fund established under subsection (c), but not to exceed $7,000,000 for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter, to pay costs—
 (I) to reimburse expenses incurred for the operations and review of policies, plans of insurance, and related materials (including actuarial and related information); and
 (II) to assist the Corporation in maintaining program actuarial soundness and financial integrity.`,
-		expectedMarkedEditSnippet:
+		expectedMarkedEditSnippets: [
 			"~~for each fiscal year~~++for each of fiscal years 2014 through 2025 and $10,000,000 for fiscal year 2026 and each fiscal year thereafter++",
+		],
 	},
 	{
 		citation: "7 U.S.C. 9036",
@@ -352,8 +406,9 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 		instructionLineLevels: [1],
 		expectedEditedExcerpt:
 			"Effective for each of the 2014 through 2031 crop years",
-		expectedMarkedEditSnippet:
+		expectedMarkedEditSnippets: [
 			"Effective for each of the 2014 through ~~2023~~++2031++ crop years",
+		],
 	},
 	{
 		citation: "7 U.S.C. 2025(a)",
@@ -363,8 +418,9 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 		instructionLineLevels: [1],
 		expectedEditedExcerpt:
 			"agency, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent, of all administrative costs involved",
-		expectedMarkedEditSnippet:
+		expectedMarkedEditSnippets: [
 			"~~agency an amount equal to 50 per centum~~++agency, through fiscal year 2026, 50 percent, and for fiscal year 2027 and each fiscal year thereafter, 25 percent,++ of all administrative costs involved",
+		],
 	},
 	{
 		citation: "7 U.S.C. 1308-3a(d)",
@@ -373,8 +429,30 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 		instructionLineLevels: [1],
 		expectedEditedExcerpt:
 			"to an entity, the amount of the payment or benefit shall be reduced",
-		expectedMarkedEditSnippet:
+		expectedMarkedEditSnippets: [
 			"to an entity~~, general partnership, or joint venture~~, the amount of the payment or benefit shall be reduced",
+		],
+	},
+	{
+		citation: "26 U.S.C. 45(b)(11)(B)",
+		sectionPath: "/statutes/usc/section/26/45",
+		instructionText: `(1) IN GENERAL.—Section 45(b)(11) of the Internal Revenue Code of 1986 is amended—
+(A) in subparagraph (B)—
+(i) in clause (ii)(II), by striking “or” at the end,
+(ii) in clause (iii)(II), by striking the period at the end and inserting “, or”, and
+(iii) by adding at the end the following new clause:
+“(iv) for purposes of any qualified facility which is an advanced nuclear facility, a metropolitan statistical area which has (or, at any time during the period beginning after December 31, 2009, had) 0.17 percent or greater direct employment related to the advancement of nuclear power, including employment related to—
+“(I) an advanced nuclear facility,
+“(II) advanced nuclear power research and development,
+“(III) nuclear fuel cycle research, development, or production, including mining, enrichment, manufacture, storage, disposal, or recycling of nuclear fuel, and
+“(IV) the manufacturing or assembly of components used in an advanced nuclear facility.”.`,
+		instructionLineLevels: [1, 2, 3, 3, 3, 4, 5, 5, 5, 5],
+		expectedEditedExcerpt:
+			"(iv) for purposes of any qualified facility which is an advanced nuclear facility, a metropolitan statistical area which has (or, at any time during the period beginning after December 31, 2009, had) 0.17 percent or greater direct employment related to the advancement of nuclear power, including employment related to—",
+		expectedMarkedEditSnippets: [
+			"(II) has an unemployment rate at or above the national average unemployment rate for the previous year (as determined by the Secretary), ~~or~~",
+			"(II) which is directly adjoining to any census tract described in subclause (I)~~.~~++, or++",
+		],
 	},
 ];
 
@@ -421,17 +499,25 @@ for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
 			),
 			sample.citation,
 		).toBe(true);
+
 		assertParagraphSpanOffsets(
 			effect.renderModel.plainText,
 			effect.renderModel.spans,
 			sample.citation,
 		);
-		if (sample.expectedMarkedEditSnippet) {
-			expectEffectToContainMarkedText(effect, sample.expectedMarkedEditSnippet);
-		} else {
-			expect(effect.renderModel.plainText, sample.citation).toContain(
-				sample.expectedEditedExcerpt,
-			);
+
+		if (sample.expectedMarkedEditSnippets) {
+			for (const markedSnippet of sample.expectedMarkedEditSnippets) {
+				expectEffectToContainMarkedText(effect, markedSnippet);
+			}
 		}
+
+		const editedTextWithoutDeletions = textWithDeletedSpansRemoved(
+			effect.renderModel.plainText,
+			effect.renderModel.spans,
+		);
+		expect(editedTextWithoutDeletions, sample.citation).toContain(
+			sample.expectedEditedExcerpt,
+		);
 	});
 }

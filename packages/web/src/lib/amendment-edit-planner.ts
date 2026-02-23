@@ -192,6 +192,18 @@ function multilineReplacementSuffix(
 	return "\n";
 }
 
+function boundaryAwareReplacementSuffix(
+	inserted: TextWithProvenance,
+	deleted: string,
+	text: string,
+	rangeEnd: number,
+): string {
+	if (deleted.endsWith("\n") && !inserted.text.endsWith("\n")) {
+		return "\n";
+	}
+	return multilineReplacementSuffix(inserted, text, rangeEnd);
+}
+
 function normalizeInsertedSpans(
 	spans: FormattingSpan[],
 	insertedPlain: string,
@@ -611,8 +623,9 @@ function planPatchForOperation(
 							end: range.end,
 							deleted: scopedText,
 							inserted: formatted.text,
-							insertedSuffixPlain: multilineReplacementSuffix(
+							insertedSuffixPlain: boundaryAwareReplacementSuffix(
 								formatted,
+								scopedText,
 								plainText,
 								range.end,
 							),
@@ -630,8 +643,9 @@ function planPatchForOperation(
 						end,
 						deleted: plainText.slice(start, end),
 						inserted: formatted.text,
-						insertedSuffixPlain: multilineReplacementSuffix(
+						insertedSuffixPlain: boundaryAwareReplacementSuffix(
 							formatted,
+							plainText.slice(start, end),
 							plainText,
 							end,
 						),
@@ -647,8 +661,9 @@ function planPatchForOperation(
 					end: range.end,
 					deleted: scopedText,
 					inserted: formatted.text,
-					insertedSuffixPlain: multilineReplacementSuffix(
+					insertedSuffixPlain: boundaryAwareReplacementSuffix(
 						formatted,
+						scopedText,
 						plainText,
 						range.end,
 					),
@@ -747,8 +762,9 @@ function planPatchForOperation(
 				end: range.end,
 				deleted: scopedText,
 				inserted: formatted.text,
-				insertedSuffixPlain: multilineReplacementSuffix(
+				insertedSuffixPlain: boundaryAwareReplacementSuffix(
 					formatted,
+					scopedText,
 					plainText,
 					range.end,
 				),
