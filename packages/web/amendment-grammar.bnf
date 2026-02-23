@@ -135,7 +135,7 @@ sub_name ::= "subsection" | "paragraph" | "subparagraph" | "clause" | "subclause
 sub_name_plural ::= "subsections" | "paragraphs" | "subparagraphs" | "clauses" | "subclauses" | "items" | "subitems"
 sub_name_caps ::= "Subsection" | "Paragraph" | "Subparagraph" | "Clause" | "Subclause" | "Item" | "Subitem"
 
-text ::= [a-zA-Z0-9 ()\-–—.,;:‘’$&/\u2044]+
+text ::= [a-zA-Z0-9 ()\-–—.,;:‘’$&/¼-¾⅐-⅞\u2044]+
 inline ::= "“" text "”"
 block ::= block_line ("\n" block_line)*
 block_line ::= "“" text "”" | text "”" | "“" text

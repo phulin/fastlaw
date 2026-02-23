@@ -538,4 +538,28 @@ describe("extractParagraphs", () => {
 		);
 		expect(targetParagraph?.text).not.toContain("”and");
 	});
+
+	it("normalizes U+2044 slash fractions to single Unicode fraction characters when available", () => {
+		const extractor = new PdfLineExtractor();
+		extractor.ingestPage(
+			1,
+			[
+				makeTextItem("The", 72, 700, 20, 10),
+				makeTextItem("ratio", 100, 700, 30, 10),
+				makeTextItem("is", 138, 700, 10, 10),
+				makeTextItem("1⁄2", 156, 700, 20, 10),
+				makeTextItem("plus", 184, 700, 24, 10),
+				makeTextItem("3⁄4", 216, 700, 20, 10),
+				makeTextItem("and", 244, 700, 18, 10),
+				makeTextItem("2⁄7", 270, 700, 20, 10),
+				makeTextItem(".", 292, 700, 4, 10),
+			],
+			612,
+			792,
+		);
+
+		const lines = extractor.getLines();
+		expect(lines).toHaveLength(1);
+		expect(lines[0]?.text).toBe("The ratio is ½ plus ¾ and 2⁄7.");
+	});
 });

@@ -238,6 +238,38 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.applySummary.failedItems[0]?.operationIndex).toBe(0);
 	});
 
+	it("fails when instruction amends a USC note citation", () => {
+		const parser = createHandcraftedInstructionParser();
+		const instructionLines = [
+			"Section 105(f)(1) of the Gulf of Mexico Energy Security Act of 2006 (43 U.S.C. 1331 note; Public Law 109–432) is amended—",
+			"(1) in subsection (f), by striking “shared among” and inserting “allocated among”.",
+		];
+		const parsed = parser.parseInstructionFromLines(instructionLines, 0);
+		expect(parsed).toBeTruthy();
+		if (!parsed) return;
+
+		const translated = translateInstructionAstToEditTree(parsed.ast);
+		expect(translated.issues).toEqual([]);
+		expect(translated.tree.targetScopePath).toEqual([
+			{ kind: "code_reference", label: "43 U.S.C." },
+			{ kind: ScopeKind.Section, label: "1331" },
+		]);
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree: translated.tree,
+			sectionPath: "/statutes/usc/section/43/1331",
+			sectionBody: "Revenue from leases shall be shared among States.",
+			instructionText: instructionLines.join("\n"),
+		});
+
+		expect(effect.status).toBe("unsupported");
+		expect(effect.changes).toHaveLength(0);
+		expect(effect.debug.failureReason).toBe("target_unresolved");
+		expect(effect.applySummary.failedItems[0]?.reasonKind).toBe(
+			"target_unresolved",
+		);
+	});
+
 	it("applies Insert edits", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

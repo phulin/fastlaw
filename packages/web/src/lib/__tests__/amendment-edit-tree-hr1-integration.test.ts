@@ -454,6 +454,18 @@ For each of the 2014 and subsequent reinsurance years, the Corporation may use t
 			"(II) which is directly adjoining to any census tract described in subclause (I)~~.~~++, or++",
 		],
 	},
+	{
+		citation: "30 U.S.C. 207(a)",
+		sectionPath: "/statutes/usc/section/30/207",
+		instructionText:
+			"(a) RATE.—Section 7(a) of the Mineral Leasing Act (30 U.S.C. 207(a)) is amended, in the fourth sentence, by striking “12½ per centum” and inserting “12½ percent, except such amount shall be not more than 7 percent during the period that begins on the date of enactment of the Act entitled ‘An Act to provide for reconciliation pursuant to title II of H. Con. Res. 14’ (119th Congress) and ends September 30, 2034,”.",
+		instructionLineLevels: [1],
+		expectedEditedExcerpt:
+			"12½ percent, except such amount shall be not more than 7 percent during the period that begins on the date of enactment of the Act entitled ‘An Act to provide for reconciliation pursuant to title II of H. Con. Res. 14’ (119th Congress) and ends September 30, 2034,",
+		expectedMarkedEditSnippets: [
+			"A coal lease shall be for a term of twenty years and for so long thereafter as coal is produced annually in commercial quantities from that lease. Any lease which is not producing in commercial quantities at the end of ten years shall be terminated. The Secretary shall by regulation prescribe annual rentals on leases. A lease shall require payment of a royalty in such amount as the Secretary shall determine of not less than ~~12½ per centum~~++12½ percent, except such amount shall be not more than 7 percent during the period that begins on the date of enactment of the Act entitled ‘An Act to provide for reconciliation pursuant to title II of H. Con. Res. 14’ (119th Congress) and ends September 30, 2034,++",
+		],
+	},
 ];
 
 for (const sample of SELECTED_INSTRUCTION_BLOCKS) {
