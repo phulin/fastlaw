@@ -552,7 +552,9 @@ describe("extractParagraphs", () => {
 				makeTextItem("3⁄4", 216, 700, 20, 10),
 				makeTextItem("and", 244, 700, 18, 10),
 				makeTextItem("2⁄7", 270, 700, 20, 10),
-				makeTextItem(".", 292, 700, 4, 10),
+				makeTextItem("with", 298, 700, 20, 10),
+				makeTextItem("121⁄2", 326, 700, 26, 10),
+				makeTextItem(".", 353, 700, 4, 10),
 			],
 			612,
 			792,
@@ -560,6 +562,6 @@ describe("extractParagraphs", () => {
 
 		const lines = extractor.getLines();
 		expect(lines).toHaveLength(1);
-		expect(lines[0]?.text).toBe("The ratio is ½ plus ¾ and 2⁄7.");
+		expect(lines[0]?.text).toBe("The ratio is ½ plus ¾ and 2⁄7 with 12½.");
 	});
 });

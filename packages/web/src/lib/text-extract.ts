@@ -2,6 +2,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { assignIndentationLevels } from "./cluster-indentation";
 import { splitParagraphsRulesBased } from "./rules-paragraph-condenser-3";
+import { normalizeFractionSlashFractions } from "./text-normalization";
 import type { Line, Paragraph } from "./types";
 import { wordDictionary } from "./word-dictionary";
 
@@ -56,34 +57,6 @@ function normalizeMissingSpaceAfterClosingQuote(s: string): string {
 	// Some PDF spans collapse the space after a closing double quote: ..."word”and...
 	// Insert a single space when a closing double-quote is immediately followed by a word.
 	return s.replaceAll(/([”"])([A-Za-z])/g, "$1 $2");
-}
-
-const SINGLE_UNICODE_FRACTIONS = new Map<string, string>([
-	["1/2", "½"],
-	["1/3", "⅓"],
-	["2/3", "⅔"],
-	["1/4", "¼"],
-	["3/4", "¾"],
-	["1/5", "⅕"],
-	["2/5", "⅖"],
-	["3/5", "⅗"],
-	["4/5", "⅘"],
-	["1/6", "⅙"],
-	["5/6", "⅚"],
-	["1/7", "⅐"],
-	["1/8", "⅛"],
-	["3/8", "⅜"],
-	["5/8", "⅝"],
-	["7/8", "⅞"],
-	["1/9", "⅑"],
-	["1/10", "⅒"],
-	["0/3", "↉"],
-]);
-
-function normalizeFractionSlashFractions(s: string): string {
-	return s.replaceAll(/(\d+)⁄(\d+)/g, (match, numerator, denominator) => {
-		return SINGLE_UNICODE_FRACTIONS.get(`${numerator}/${denominator}`) ?? match;
-	});
 }
 
 function normalizeLeadingLineNumberArtifact(s: string): string {
