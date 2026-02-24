@@ -72,9 +72,14 @@ export function formatInsertedBlockContent(
 		markerIndex += 1;
 		const markerDepth = baseDepth + (markerRank - minMarkerRank);
 		activeDepth = markerDepth;
+		const normalizedRest = rest
+			? rest.startsWith("(")
+				? rest
+				: ` ${rest}`
+			: "";
 
 		formattedLines.push(
-			`${quotePrefix(markerDepth)}(${marker})${rest ? ` ${rest}` : ""}`,
+			`${quotePrefix(markerDepth)}(${marker})${normalizedRest}`,
 		);
 	}
 

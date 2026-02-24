@@ -243,13 +243,119 @@ function isStructuralMarkerLine(line: string): boolean {
 	return /^\([A-Za-z0-9ivxIVX]+\)(?:\s|$)/.test(stripped);
 }
 
+const MARKER_LINE_WITH_PREFIX_RE =
+	/^(\s*(?:>\s*)*)((?:\([A-Za-z0-9ivxIVX]+\))+)\s+([A-Za-z0-9][A-Za-z0-9 '"()\-.,/&]*?)\.\u2014(?:\s*(.*))?$/;
+const MARKER_PARAGRAPH_RE =
+	/^(\s*)((?:\([A-Za-z0-9ivxIVX]+\))+)(?:\s+([\s\S]*))?$/;
+const HEADING_PARAGRAPH_RE = /^[A-Za-z0-9][A-Za-z0-9 '"()\-.,/&]*$/;
+
+function lowercaseHeadingWithUppercaseFirstCharacter(text: string): string {
+	if (text.length === 0) return text;
+	const lower = text.toLowerCase();
+	return lower[0].toUpperCase() + lower.slice(1);
+}
+
+function normalizeInsertedMarkerHeadings(sourceText: string): string {
+	if (sourceText.length === 0) return sourceText;
+	const lines = sourceText.split("\n");
+	const normalized: string[] = [];
+	for (const line of lines) {
+		const match = line.match(MARKER_LINE_WITH_PREFIX_RE);
+		if (!match) {
+			normalized.push(line);
+			continue;
+		}
+		const prefix = match[1] ?? "";
+		const marker = match[2] ?? "";
+		const heading = lowercaseHeadingWithUppercaseFirstCharacter(
+			(match[3] ?? "").trim(),
+		);
+		const tail = (match[4] ?? "").trim();
+		normalized.push(`${prefix}${marker} ${heading}`);
+		if (tail.length > 0) {
+			normalized.push("");
+			normalized.push(`${prefix}${tail}`);
+		}
+	}
+	return normalized.join("\n");
+}
+
+function isStandaloneSectionHeading(text: string): boolean {
+	const trimmed = text.trim();
+	if (trimmed.length === 0) return false;
+	if (!HEADING_PARAGRAPH_RE.test(trimmed)) return false;
+	return !/[.!?;:]$/.test(trimmed);
+}
+
+function withSymbolicMarkerHeadingSpans(
+	spans: FormattingSpan[],
+	plainText: string,
+): FormattingSpan[] {
+	const output = spans.map((span) => ({ ...span }));
+	const paragraphSpans = output
+		.filter((span) => span.type === "paragraph")
+		.sort((left, right) => left.start - right.start || left.end - right.end);
+
+	const hasStrongSpan = (start: number, end: number): boolean =>
+		output.some(
+			(span) =>
+				span.type === "strong" && span.start === start && span.end === end,
+		);
+
+	for (const paragraph of paragraphSpans) {
+		const text = plainText.slice(paragraph.start, paragraph.end);
+		const match = text.match(MARKER_PARAGRAPH_RE);
+		if (!match) continue;
+
+		const leading = match[1] ?? "";
+		const marker = match[2] ?? "";
+		const trailing = (match[3] ?? "").trim();
+		if (marker.length === 0) continue;
+
+		const markerStart = paragraph.start + leading.length;
+		const markerEnd = markerStart + marker.length;
+		if (markerEnd > markerStart && !hasStrongSpan(markerStart, markerEnd)) {
+			output.push({ start: markerStart, end: markerEnd, type: "strong" });
+		}
+
+		if (!isStandaloneSectionHeading(trailing)) continue;
+		let headingStart = markerEnd;
+		while (text[headingStart - paragraph.start] === " ") {
+			headingStart += 1;
+		}
+		const headingEnd = paragraph.end;
+		if (headingEnd > headingStart && !hasStrongSpan(headingStart, headingEnd)) {
+			output.push({ start: headingStart, end: headingEnd, type: "strong" });
+		}
+	}
+
+	return output.sort(
+		(left, right) =>
+			left.start - right.start ||
+			left.end - right.end ||
+			left.type.localeCompare(right.type),
+	);
+}
+
 function normalizeInsertedParagraphBoundaries(sourceText: string): string {
 	if (!sourceText.includes("\n")) return sourceText;
 	const lines = sourceText.split("\n");
+	const expandedLines = lines.flatMap((line) =>
+		splitInlineStructuralMarkers(line),
+	);
 	const normalized: string[] = [];
-	for (let index = 0; index < lines.length; index += 1) {
-		const currentLine = lines[index] ?? "";
-		const nextLine = lines[index + 1];
+	for (let index = 0; index < expandedLines.length; index += 1) {
+		const currentLine = expandedLines[index] ?? "";
+		const nextLine = expandedLines[index + 1];
+		const previousLine =
+			normalized.length > 0 ? (normalized[normalized.length - 1] ?? "") : "";
+		if (
+			currentLine.trim().length > 0 &&
+			isStructuralMarkerLine(currentLine) &&
+			previousLine.trim().length > 0
+		) {
+			normalized.push("");
+		}
 		normalized.push(currentLine);
 		if (nextLine === undefined) continue;
 		if (currentLine.trim().length === 0 || nextLine.trim().length === 0)
@@ -261,6 +367,21 @@ function normalizeInsertedParagraphBoundaries(sourceText: string): string {
 	return normalized.join("\n");
 }
 
+function splitInlineStructuralMarkers(line: string): string[] {
+	if (line.trim().length === 0) return [line];
+
+	const prefixMatch = line.match(/^(\s*(?:>\s*)*)/);
+	const prefix = prefixMatch?.[1] ?? "";
+	const content = line.slice(prefix.length);
+	const parts = content
+		.split(/(?<=[.;:])\s+(?=\([A-Za-z0-9ivxIVX]+\)\s+[A-Z])/g)
+		.map((part) => part.trim())
+		.filter((part) => part.length > 0);
+	if (parts.length <= 1) return [line];
+
+	return parts.map((part) => `${prefix}${part}`);
+}
+
 function parseInsertedText(sourceText: string): {
 	insertedPlain: string;
 	insertedSpans: FormattingSpan[];
@@ -268,11 +389,19 @@ function parseInsertedText(sourceText: string): {
 	if (sourceText.length === 0) {
 		return { insertedPlain: "", insertedSpans: [] };
 	}
-	const normalizedSourceText = normalizeInsertedParagraphBoundaries(sourceText);
-	const parsed = parseMarkdownToPlainDocument(normalizedSourceText);
+	const normalizedSourceText = normalizeInsertedParagraphBoundaries(
+		normalizeInsertedMarkerHeadings(sourceText),
+	);
+	const normalizedSourceWithHeadings =
+		normalizeInsertedMarkerHeadings(normalizedSourceText);
+	const parsed = parseMarkdownToPlainDocument(normalizedSourceWithHeadings);
+	const symbolicSpans = withSymbolicMarkerHeadingSpans(
+		parsed.spans,
+		parsed.plainText,
+	);
 	return {
 		insertedPlain: parsed.plainText,
-		insertedSpans: normalizeInsertedSpans(parsed.spans, parsed.plainText),
+		insertedSpans: normalizeInsertedSpans(symbolicSpans, parsed.plainText),
 	};
 }
 

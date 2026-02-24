@@ -362,11 +362,16 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		});
 
 		expect(effect.status).toBe("ok");
-		expect(effect.renderModel.plainText).toContain("(u) THRIFTY FOOD PLAN.—");
-		expect(effect.renderModel.plainText).toContain("\n(1) IN GENERAL.—Alpha.");
+		expect(effect.renderModel.plainText).toContain("(u) Thrifty food plan");
+		expect(effect.renderModel.plainText).toContain("\n(1) In general\nAlpha.");
 		expect(effect.renderModel.plainText).toContain("\n(A) Beta.");
-		expect(effect.inserted[0]).toContain("(u) THRIFTY FOOD PLAN.—");
-		expect(effect.inserted[0]).toContain("(1) IN GENERAL.—Alpha.");
+		expect(effect.inserted[0]).toContain("(u) Thrifty food plan");
+		expect(effect.inserted[0]).toContain("(1) In general\nAlpha.");
+		const strongTexts = effect.renderModel.spans
+			.filter((span) => span.type === "strong")
+			.map((span) => effect.renderModel.plainText.slice(span.start, span.end));
+		expect(strongTexts).toContain("(u)");
+		expect(strongTexts).toContain("Thrifty food plan");
 	});
 
 	it("keeps scoped structural replacements formatted and appends add-at-end blocks after sibling subparagraphs", () => {
@@ -447,8 +452,167 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			"(ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.",
 		);
 		expect(effect.renderModel.plainText).toContain(
-			"(ii) EXCLUSIONS.—The term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
+			"(ii) Exclusions\nThe term 'noncontiguous State' does not include Guam or the Virgin Islands of the United States.",
 		);
+	});
+
+	it("splits mixed-case marker headings on .— into heading lines with strong spans", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1905",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Rewrite,
+						content: tp(
+							[
+								"(1) Premiums.—Beginning October 1, 2028, the State plan shall provide...",
+								"(A) In general.—Subject to subparagraph (B), the State plan shall provide...",
+								"(i) Exclusion of certain services.—In no case may a deduction be imposed...",
+							].join("\n"),
+						),
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/42/1905",
+			sectionBody: "(k) placeholder",
+			instructionText: "Section 1905 is amended to read as follows.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).toContain(
+			"(1) Premiums\nBeginning October 1, 2028, the State plan shall provide...",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"(A) In general\nSubject to subparagraph (B), the State plan shall provide...",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"(i) Exclusion of certain services\nIn no case may a deduction be imposed...",
+		);
+
+		const strongTexts = effect.renderModel.spans
+			.filter((span) => span.type === "strong")
+			.map((span) => effect.renderModel.plainText.slice(span.start, span.end));
+		expect(strongTexts).toContain("Premiums");
+		expect(strongTexts).toContain("In general");
+		expect(strongTexts).toContain("Exclusion of certain services");
+	});
+
+	it("splits inline structural marker transitions into separate paragraphs", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1905",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Rewrite,
+						content: tp(
+							[
+								"(I) In general.—Except as provided in subclause (II), in no case may a deduction exceed $35. (II) Special rules for prescription drugs.—In no case may a deduction for a prescription drug exceed the limit.",
+							].join("\n"),
+						),
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/42/1905",
+			sectionBody: "(k) placeholder",
+			instructionText: "Section 1905 is amended to read as follows.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).toContain(
+			"(I) In general\nExcept as provided in subclause (II), in no case may a deduction exceed $35.",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"(II) Special rules for prescription drugs\nIn no case may a deduction for a prescription drug exceed the limit.",
+		);
+	});
+
+	it("starts a new paragraph for a same-indent marker heading after body text", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1905",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Rewrite,
+						content: tp(
+							[
+								"(I) In general.—Except as provided in subclause (II), in no case may a deduction exceed $35.",
+								"In no case may a deduction for a prescription drug exceed the limit under paragraph (2)(A)(i).",
+								"(II) Special rules for prescription drugs.—In no case may a deduction for a prescription drug exceed the applicable limit.",
+							].join("\n"),
+						),
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/42/1905",
+			sectionBody: "(k) placeholder",
+			instructionText: "Section 1905 is amended to read as follows.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).toContain(
+			"paragraph (2)(A)(i).\n(II) Special rules for prescription drugs",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"(II) Special rules for prescription drugs\nIn no case may a deduction for a prescription drug exceed the applicable limit.",
+		);
+	});
+
+	it("does not treat non-structural parenthetical insertions as marker headings", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1396o",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.StrikeInsert,
+						strike: { kind: SearchTargetKind.Text, text: tp("individuals") },
+						insert: tp(
+							"individuals (other than, beginning October 1, 2028, specified individuals (as defined in subsection (k)(3)))",
+						),
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/42/1396o",
+			sectionBody:
+				"in the case of individuals described in subparagraph (A) or (E)(i)",
+			instructionText: "Section 1396o is amended by striking and inserting.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).toContain(
+			"individuals (other than, beginning October 1, 2028, specified individuals (as defined in subsection (k)(3))) described",
+		);
+		const strongTexts = effect.renderModel.spans
+			.filter((span) => span.type === "strong")
+			.map((span) => effect.renderModel.plainText.slice(span.start, span.end));
+		expect(
+			strongTexts.some((text) =>
+				text.includes("other than, beginning October"),
+			),
+		).toBe(false);
 	});
 
 	it("applies StrikeInsert edits", () => {
@@ -1096,7 +1260,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.status).toBe("ok");
 		const result = effect.renderModel.plainText ?? "";
 		const indexOfA = result.indexOf("(A) IN GENERAL");
-		const indexOfB = result.indexOf("(B) EXCEPTION.—");
+		const indexOfB = result.indexOf("(B) Exception");
 		const addAtEndAttempt = effect.debug.operationAttempts.find(
 			(item) => item.operationType === "insert",
 		);
@@ -1264,7 +1428,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		const result = effect.renderModel.plainText ?? "";
 		expect(result).toContain("(c) RATE.");
 		expect(result).toContain("(1) The value of the assistance");
-		expect(result).toContain("(2) VALUE OF ASSISTANCE.—");
+		expect(result).toContain("(2) Value of assistance");
 		expect(result).toContain("5 cents per pound.\n(3) No overlap.");
 	});
 
@@ -1885,7 +2049,7 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 			"expense paid on behalf of a household with an elderly or disabled member under a State law",
 		);
 		expect(finalBody).toContain(
-			"(E) RESTRICTIONS ON INTERNET EXPENSES.—Any service fee associated with internet connection",
+			"(E) Restrictions on internet expenses\nAny service fee associated with internet connection",
 		);
 	});
 
