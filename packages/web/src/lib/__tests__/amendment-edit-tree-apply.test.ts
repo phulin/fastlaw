@@ -703,7 +703,40 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			"(a) Imposition of certain charges under plan in case of individuals",
 		);
 		expect(effect.renderModel.plainText).toContain(
-			"case of individuals(other than, beginning October 1, 2028, specified individuals) described in subparagraph (A)",
+			"case of individuals (other than, beginning October 1, 2028, specified individuals) described in subparagraph (A)",
+		);
+	});
+
+	it("inserts boundary spaces consistently for parenthetical insertions", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Insert,
+						content: tp("(other than, beginning October 1, 2028)"),
+						after: {
+							kind: SearchTargetKind.Text,
+							text: tp("individuals"),
+						},
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "in the case of individuals described in subparagraph (A)",
+			instructionText:
+				'Section 1 is amended by inserting "(other than, beginning October 1, 2028)" after "individuals".',
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).toContain(
+			"individuals (other than, beginning October 1, 2028) described",
 		);
 	});
 

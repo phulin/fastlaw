@@ -5,6 +5,184 @@ import type {
 	PlannedPatch,
 } from "./amendment-edit-engine-types";
 
+const OPENING_PUNCTUATION = new Set(["(", "[", "{", "/"]);
+const CLOSING_PUNCTUATION = new Set([
+	",",
+	".",
+	";",
+	":",
+	"?",
+	"!",
+	")",
+	"]",
+	"}",
+]);
+
+function isWordLike(value: string): boolean {
+	return /^[A-Za-z0-9]$/.test(value);
+}
+
+function lastNonWhitespaceCharacter(value: string): string | null {
+	for (let index = value.length - 1; index >= 0; index -= 1) {
+		const char = value[index];
+		if (char && !/\s/.test(char)) return char;
+	}
+	return null;
+}
+
+function firstNonWhitespaceCharacter(value: string): string | null {
+	for (let index = 0; index < value.length; index += 1) {
+		const char = value[index];
+		if (char && !/\s/.test(char)) return char;
+	}
+	return null;
+}
+
+function trailingWhitespace(value: string): string {
+	return value.match(/\s*$/)?.[0] ?? "";
+}
+
+function leadingWhitespace(value: string): string {
+	return value.match(/^\s*/)?.[0] ?? "";
+}
+
+function shouldInsertPrefixSpace(
+	leftChar: string | null,
+	insertedFirstChar: string | null,
+): boolean {
+	if (!leftChar || !insertedFirstChar) return false;
+	if (CLOSING_PUNCTUATION.has(insertedFirstChar)) return false;
+	if (OPENING_PUNCTUATION.has(leftChar)) return false;
+	if (
+		(isWordLike(leftChar) || leftChar === ")") &&
+		isWordLike(insertedFirstChar)
+	) {
+		return true;
+	}
+	if (insertedFirstChar === "(" && (isWordLike(leftChar) || leftChar === ")")) {
+		return true;
+	}
+	return false;
+}
+
+function shouldInsertSuffixSpace(
+	insertedLastChar: string | null,
+	rightChar: string | null,
+): boolean {
+	if (!insertedLastChar || !rightChar) return false;
+	if (CLOSING_PUNCTUATION.has(rightChar)) return false;
+	if (OPENING_PUNCTUATION.has(insertedLastChar)) return false;
+	return (
+		(isWordLike(insertedLastChar) || insertedLastChar === ")") &&
+		(isWordLike(rightChar) || rightChar === "(")
+	);
+}
+
+function normalizeInsertionAffixes(args: {
+	workingText: string;
+	insertAt: number;
+	deleteStart: number;
+	deleteEnd: number;
+	insertedPlain: string;
+	insertedPrefixPlain: string;
+	insertedSuffixPlain: string;
+}): {
+	insertedPrefixPlain: string;
+	insertedSuffixPlain: string;
+	outsidePrefixPlain: string;
+	outsideSuffixPlain: string;
+} {
+	const {
+		workingText,
+		insertAt,
+		deleteStart,
+		deleteEnd,
+		insertedPlain,
+		insertedPrefixPlain,
+		insertedSuffixPlain,
+	} = args;
+	if (insertedPlain.length === 0) {
+		return {
+			insertedPrefixPlain,
+			insertedSuffixPlain,
+			outsidePrefixPlain: "",
+			outsideSuffixPlain: "",
+		};
+	}
+	if (insertedPlain.includes("\n")) {
+		return {
+			insertedPrefixPlain,
+			insertedSuffixPlain,
+			outsidePrefixPlain: "",
+			outsideSuffixPlain: "",
+		};
+	}
+
+	let normalizedPrefix = insertedPrefixPlain;
+	let normalizedSuffix = insertedSuffixPlain;
+	let outsidePrefixPlain = "";
+	let outsideSuffixPlain = "";
+	const insertedFirstChar = firstNonWhitespaceCharacter(insertedPlain);
+	const insertedLastChar = lastNonWhitespaceCharacter(insertedPlain);
+
+	const leftContextBoundary = deleteEnd > deleteStart ? deleteStart : insertAt;
+	const rightContextBoundary = deleteEnd > deleteStart ? deleteEnd : insertAt;
+	const leftContext = workingText.slice(0, leftContextBoundary);
+	const rightContext = workingText.slice(rightContextBoundary);
+	const leftContextWhitespace = trailingWhitespace(leftContext);
+	const rightContextWhitespace = leadingWhitespace(rightContext);
+	const leftChar = lastNonWhitespaceCharacter(leftContext);
+	const rightChar = firstNonWhitespaceCharacter(rightContext);
+
+	const prefixLeadingWhitespace = leadingWhitespace(normalizedPrefix);
+	const suffixTrailingWhitespace = trailingWhitespace(normalizedSuffix);
+	const prefixBoundaryHasNewline =
+		leftContextWhitespace.includes("\n") ||
+		prefixLeadingWhitespace.includes("\n");
+	const suffixBoundaryHasNewline =
+		rightContextWhitespace.includes("\n") ||
+		suffixTrailingWhitespace.includes("\n");
+
+	if (!prefixBoundaryHasNewline) {
+		if (
+			leftContextWhitespace.length > 0 &&
+			prefixLeadingWhitespace.length > 0
+		) {
+			normalizedPrefix = normalizedPrefix.replace(/^[ \t]+/, "");
+		}
+		if (
+			leftContextWhitespace.length === 0 &&
+			prefixLeadingWhitespace.length === 0 &&
+			shouldInsertPrefixSpace(leftChar, insertedFirstChar)
+		) {
+			outsidePrefixPlain = " ";
+		}
+	}
+
+	if (!suffixBoundaryHasNewline) {
+		if (
+			rightContextWhitespace.length > 0 &&
+			suffixTrailingWhitespace.length > 0
+		) {
+			normalizedSuffix = normalizedSuffix.replace(/[ \t]+$/, "");
+		}
+		if (
+			rightContextWhitespace.length === 0 &&
+			suffixTrailingWhitespace.length === 0 &&
+			shouldInsertSuffixSpace(insertedLastChar, rightChar)
+		) {
+			outsideSuffixPlain = " ";
+		}
+	}
+
+	return {
+		insertedPrefixPlain: normalizedPrefix,
+		insertedSuffixPlain: normalizedSuffix,
+		outsidePrefixPlain,
+		outsideSuffixPlain,
+	};
+}
+
 function shiftInsertedSpans(
 	spans: FormattingSpan[],
 	offset: number,
@@ -135,12 +313,27 @@ function materializeEditsFromPatches(
 		const deletedLength = deleteEnd - deleteStart;
 		const insertedPlain = patch.insertedPlain;
 		const insertedSpans = patch.insertedSpans;
-		const insertedPrefixPlain = patch.insertedPrefixPlain ?? "";
-		const insertedSuffixPlain = patch.insertedSuffixPlain ?? "";
+		const normalizedAffixes = normalizeInsertionAffixes({
+			workingText,
+			insertAt: patch.insertAt,
+			deleteStart,
+			deleteEnd,
+			insertedPlain,
+			insertedPrefixPlain: patch.insertedPrefixPlain ?? "",
+			insertedSuffixPlain: patch.insertedSuffixPlain ?? "",
+		});
+		const insertedPrefixPlain = normalizedAffixes.insertedPrefixPlain;
+		const insertedSuffixPlain = normalizedAffixes.insertedSuffixPlain;
+		const outsidePrefixPlain = normalizedAffixes.outsidePrefixPlain;
+		const outsideSuffixPlain = normalizedAffixes.outsideSuffixPlain;
 		const insertedTotalLength =
 			insertedPrefixPlain.length +
 			insertedPlain.length +
 			insertedSuffixPlain.length;
+		const totalInsertedLength =
+			outsidePrefixPlain.length +
+			insertedTotalLength +
+			outsideSuffixPlain.length;
 
 		if (deletedLength > 0) {
 			workingSpans.push({
@@ -152,8 +345,8 @@ function materializeEditsFromPatches(
 
 		const insertAt = patch.insertAt;
 
-		if (insertedTotalLength > 0) {
-			workingText = `${workingText.slice(0, insertAt)}${insertedPrefixPlain}${insertedPlain}${insertedSuffixPlain}${workingText.slice(insertAt)}`;
+		if (totalInsertedLength > 0) {
+			workingText = `${workingText.slice(0, insertAt)}${outsidePrefixPlain}${insertedPrefixPlain}${insertedPlain}${insertedSuffixPlain}${outsideSuffixPlain}${workingText.slice(insertAt)}`;
 			const insertedHasParagraphs = insertedSpans.some(
 				(span) => span.type === "paragraph",
 			);
@@ -163,20 +356,22 @@ function materializeEditsFromPatches(
 				? splitContainerSpansAroundInsertion(
 						workingSpans,
 						insertAt,
-						insertedTotalLength,
+						totalInsertedLength,
 					)
-				: shiftSpansForInsertion(workingSpans, insertAt, insertedTotalLength);
-			workingSpans.push(
-				...shiftInsertedSpans(
-					insertedSpans,
-					insertAt + insertedPrefixPlain.length,
-				),
-			);
-			workingSpans.push({
-				type: "insertion",
-				start: insertAt,
-				end: insertAt + insertedTotalLength,
-			});
+				: shiftSpansForInsertion(workingSpans, insertAt, totalInsertedLength);
+			if (insertedTotalLength > 0) {
+				workingSpans.push(
+					...shiftInsertedSpans(
+						insertedSpans,
+						insertAt + outsidePrefixPlain.length + insertedPrefixPlain.length,
+					),
+				);
+				workingSpans.push({
+					type: "insertion",
+					start: insertAt + outsidePrefixPlain.length,
+					end: insertAt + outsidePrefixPlain.length + insertedTotalLength,
+				});
+			}
 		}
 	}
 
