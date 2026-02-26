@@ -2,18 +2,22 @@ import {
 	buildAmendmentDocumentModel,
 	type PlainDocument,
 } from "./amendment-document-model";
-import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
+import {
+	applyPlannedPatchesToWorkingText,
+	applyPlannedPatchesTransaction,
+} from "./amendment-edit-apply-transaction";
 import type {
 	ClassificationOverride,
 	DocumentModel,
 	FormattingSpan,
 	HierarchyLevel,
 	OperationMatchAttempt,
+	PlannedPatch,
 	ResolutionIssue,
 	ResolvedInstructionOperation,
 	StructuralNode,
 } from "./amendment-edit-engine-types";
-import { planEdits } from "./amendment-edit-planner";
+import { planOperationEdit } from "./amendment-edit-planner";
 import {
 	type EditNode,
 	type EditTarget,
@@ -273,22 +277,22 @@ function resolveSinglePath(
 		}
 	}
 
-	// Apply local redesignations
-	if (redesignations && redesignations.size > 0) {
+	if (normalized.length === 0) return null;
+	let candidates = resolvePathCandidates(model, normalized);
+	if (candidates.length === 0 && redesignations && redesignations.size > 0) {
 		const fullPath = pathToText(normalized);
 		for (const [newPath, oldLabel] of redesignations) {
-			if (fullPath === newPath) {
-				const last = normalized[normalized.length - 1];
-				if (last) {
-					normalized = [...normalized.slice(0, -1), { ...last, val: oldLabel }];
-				}
-				break;
-			}
+			if (fullPath !== newPath) continue;
+			const last = normalized[normalized.length - 1];
+			if (!last) break;
+			const aliasedPath = [
+				...normalized.slice(0, -1),
+				{ ...last, val: oldLabel },
+			];
+			candidates = resolvePathCandidates(model, aliasedPath);
+			break;
 		}
 	}
-
-	if (normalized.length === 0) return null;
-	const candidates = resolvePathCandidates(model, normalized);
 	if (candidates.length === 0) {
 		issues.push({
 			operationIndex,
@@ -941,6 +945,261 @@ export function walkTree(
 	return { resolved, issues, unsupportedReasons };
 }
 
+interface SequentialExecutionState {
+	resolutionModel: DocumentModel;
+	renderPlainText: string;
+	renderSpans: FormattingSpan[];
+	resolvedOperationCount: number;
+	patches: PlannedPatch[];
+	attempts: OperationMatchAttempt[];
+	issues: ResolutionIssue[];
+	unsupportedReasons: string[];
+}
+
+interface CanonicalRenderOffsetMap {
+	toRenderPoint(canonicalOffset: number): number;
+}
+
+function buildCanonicalRenderOffsetMap(
+	renderText: string,
+	spans: FormattingSpan[],
+): CanonicalRenderOffsetMap {
+	const deletedMask = new Uint8Array(renderText.length);
+	for (const span of spans) {
+		if (span.type !== "deletion") continue;
+		const start = Math.max(0, Math.min(renderText.length, span.start));
+		const end = Math.max(0, Math.min(renderText.length, span.end));
+		for (let index = start; index < end; index += 1) {
+			deletedMask[index] = 1;
+		}
+	}
+
+	const toRenderPoint = (canonicalOffset: number): number => {
+		let liveCount = 0;
+		const target = Math.max(0, canonicalOffset);
+		for (let index = 0; index < renderText.length; index += 1) {
+			if (deletedMask[index] === 1) continue;
+			if (liveCount === target) return index;
+			liveCount += 1;
+		}
+		return renderText.length;
+	};
+
+	return { toRenderPoint };
+}
+
+function toSpanOnlyModel(
+	plainText: string,
+	spans: FormattingSpan[],
+): DocumentModel {
+	return {
+		plainText,
+		spans,
+		rootRange: { start: 0, end: plainText.length, targetLevel: 0 },
+		nodesById: new Map(),
+		rootNodeIds: [],
+	};
+}
+
+function executeResolvedOperation(
+	state: SequentialExecutionState,
+	operation: ResolvedInstructionOperation,
+	classificationOverrides?: ClassificationOverride[],
+): PlannedPatch[] {
+	const { patches, attempt } = planOperationEdit(
+		state.resolutionModel,
+		operation,
+		classificationOverrides,
+	);
+	if (attempt.outcome !== "scope_unresolved") {
+		attempt.patchApplied = patches.length > 0;
+		attempt.outcome = patches.length > 0 ? "applied" : "no_patch";
+	}
+	state.attempts.push(attempt);
+
+	if (patches.length === 0) {
+		return [];
+	}
+
+	const orderedPatches = [...patches].sort(
+		(left, right) => left.start - right.start || left.end - right.end,
+	);
+	const nextResolutionText = applyPlannedPatchesToWorkingText(
+		state.resolutionModel.plainText,
+		orderedPatches,
+	);
+	state.resolutionModel = buildAmendmentDocumentModel(nextResolutionText);
+	const offsetMap = buildCanonicalRenderOffsetMap(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	const renderPatches = orderedPatches.map((patch) => ({
+		...patch,
+		start: offsetMap.toRenderPoint(patch.start),
+		end: offsetMap.toRenderPoint(patch.end),
+		insertAt: offsetMap.toRenderPoint(patch.insertAt),
+	}));
+	const appliedRender = applyPlannedPatchesTransaction(
+		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
+		renderPatches,
+	);
+	state.renderPlainText = appliedRender.plainText;
+	state.renderSpans = appliedRender.spans;
+	state.patches.push(...orderedPatches);
+	return orderedPatches;
+}
+
+function registerAppliedRedesignation(
+	context: TraversalContext,
+	operation: ResolvedInstructionOperation,
+): void {
+	if (operation.edit.kind !== UltimateEditKind.Redesignate) return;
+	const mapping = operation.edit.mappings[operation.redesignateMappingIndex];
+	if (!mapping) return;
+	const toHierarchy = refToHierarchyPath(mapping.to);
+	const fullToPath = pathToText(
+		normalizePath(mergeTargets(context.target, toHierarchy)),
+	);
+	const fromLabel = mapping.from.path[mapping.from.path.length - 1]?.label;
+	if (!fullToPath || !fromLabel) return;
+	context.redesignations.set(fullToPath, fromLabel);
+}
+
+function executeTreeSequential(
+	nodes: InstructionSemanticTree["children"],
+	context: TraversalContext,
+	counter: { index: number },
+	state: SequentialExecutionState,
+): void {
+	for (const node of nodes) {
+		if (node.type === SemanticNodeType.Scope) {
+			const scopeTarget = mergeTargets(context.target, [
+				{ type: toHierarchyType(node.scope.kind), val: node.scope.label },
+			]);
+			executeTreeSequential(
+				node.children,
+				{ ...context, target: scopeTarget },
+				counter,
+				state,
+			);
+			continue;
+		}
+
+		if (node.type === SemanticNodeType.LocationRestriction) {
+			if (node.restriction.kind === LocationRestrictionKind.In) {
+				if (node.restriction.refs.length === 0) {
+					state.unsupportedReasons.push("in_location_empty_refs");
+					continue;
+				}
+				for (const ref of node.restriction.refs) {
+					const target = mergeTargets(context.target, refToHierarchyPath(ref));
+					executeTreeSequential(
+						node.children,
+						{ ...context, target },
+						counter,
+						state,
+					);
+				}
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.MatterPreceding) {
+				const matterPrecedingTarget = mergeTargets(
+					context.target,
+					refToHierarchyPath(node.restriction.ref),
+				);
+				executeTreeSequential(
+					node.children,
+					{
+						...context,
+						matterPreceding: node.restriction.ref,
+						matterPrecedingTarget,
+					},
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.AtEnd) {
+				const target = mergeTargets(
+					context.target,
+					node.restriction.ref
+						? refToHierarchyPath(node.restriction.ref)
+						: null,
+				);
+				executeTreeSequential(
+					node.children,
+					{
+						...context,
+						target,
+						unanchoredInsertMode: "add_at_end",
+						atEndOnly: true,
+					},
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.SentenceOrdinal) {
+				executeTreeSequential(
+					node.children,
+					{ ...context, sentenceOrdinal: node.restriction.ordinal },
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.SentenceLast) {
+				executeTreeSequential(
+					node.children,
+					{ ...context, sentenceOrdinal: -1 },
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.MatterFollowing) {
+				const matterFollowingTarget = mergeTargets(
+					context.target,
+					refToHierarchyPath(node.restriction.ref),
+				);
+				executeTreeSequential(
+					node.children,
+					{ ...context, matterFollowingTarget },
+					counter,
+					state,
+				);
+				continue;
+			}
+
+			state.unsupportedReasons.push(
+				`location_${node.restriction.kind}_not_supported`,
+			);
+			continue;
+		}
+
+		if (node.type !== SemanticNodeType.Edit) continue;
+		const nested = resolveEdit(
+			state.resolutionModel,
+			node,
+			context,
+			counter,
+			state.issues,
+		);
+		state.unsupportedReasons.push(...nested.unsupportedReasons);
+		state.resolvedOperationCount += nested.resolved.length;
+		for (const operation of nested.resolved) {
+			const appliedPatches = executeResolvedOperation(
+				state,
+				operation,
+				context.classificationOverrides,
+			);
+			if (appliedPatches.length > 0) {
+				registerAppliedRedesignation(context, operation);
+			}
+		}
+	}
+}
+
 // --- Apply summary / debug helpers ---
 
 function mapIssueToFailureReason(
@@ -1069,13 +1328,22 @@ function makeUnsupportedResult(
 export function applyAmendmentEditTreeToSection(
 	args: ApplyEditTreeArgs,
 ): AmendmentEffect {
-	const model = buildAmendmentDocumentModel(
+	const initialModel = buildAmendmentDocumentModel(
 		args.sectionBody,
 		args.parsedDocument,
 	);
 	const counter = { index: 0 };
-	const walked = walkTree(
-		model,
+	const execution: SequentialExecutionState = {
+		resolutionModel: initialModel,
+		renderPlainText: initialModel.plainText,
+		renderSpans: initialModel.spans,
+		resolvedOperationCount: 0,
+		patches: [],
+		attempts: [],
+		issues: [],
+		unsupportedReasons: [],
+	};
+	executeTreeSequential(
 		args.tree.children,
 		{
 			target: [],
@@ -1093,26 +1361,23 @@ export function applyAmendmentEditTreeToSection(
 			redesignations: new Map(),
 		},
 		counter,
+		execution,
 	);
 
-	if (walked.resolved.length === 0) {
+	if (execution.resolvedOperationCount === 0) {
 		return makeUnsupportedResult(
 			args,
-			{ plainText: model.plainText, spans: model.spans },
+			{ plainText: initialModel.plainText, spans: initialModel.spans },
 			0,
 			[],
-			walked.unsupportedReasons[0] ?? "no_edit_tree_operations",
+			execution.unsupportedReasons[0] ?? "no_edit_tree_operations",
 			{ resolvedOperationCount: 0, plannedPatchCount: 0, resolutionIssues: [] },
 		);
 	}
 
-	const { patches, attempts } = planEdits(
-		model,
-		walked.resolved,
-		args.classificationOverrides,
-	);
-	const applied = applyPlannedPatchesTransaction(model, patches);
-	const workingText = applied.plainText;
+	const patches = execution.patches;
+	const attempts = execution.attempts;
+	const workingText = execution.renderPlainText;
 
 	const changes = patches.map((patch) => ({
 		deleted: patch.deletedPlain,
@@ -1131,21 +1396,21 @@ export function applyAmendmentEditTreeToSection(
 				}`,
 		)
 		.filter((value) => value.length > 0);
-	const applySummary = buildApplySummary(attempts, walked.issues);
+	const applySummary = buildApplySummary(attempts, execution.issues);
 
 	if (changes.length === 0) {
 		return makeUnsupportedResult(
 			args,
-			{ plainText: model.plainText, spans: model.spans },
-			walked.resolved.length,
+			{ plainText: initialModel.plainText, spans: initialModel.spans },
+			execution.resolvedOperationCount,
 			attempts,
-			walked.unsupportedReasons[0] ??
-				walked.issues[0]?.kind ??
+			execution.unsupportedReasons[0] ??
+				execution.issues[0]?.kind ??
 				"no_patches_applied",
 			{
-				resolvedOperationCount: walked.resolved.length,
+				resolvedOperationCount: execution.resolvedOperationCount,
 				plannedPatchCount: patches.length,
-				resolutionIssues: walked.issues,
+				resolutionIssues: execution.issues,
 			},
 		);
 	}
@@ -1153,7 +1418,10 @@ export function applyAmendmentEditTreeToSection(
 	return {
 		status: "ok",
 		sectionPath: args.sectionPath,
-		renderModel: { plainText: applied.plainText, spans: applied.spans },
+		renderModel: {
+			plainText: execution.renderPlainText,
+			spans: execution.renderSpans,
+		},
 		segments: [{ kind: "unchanged", text: workingText }],
 		changes,
 		deleted,
@@ -1162,14 +1430,14 @@ export function applyAmendmentEditTreeToSection(
 		applySummary,
 		debug: {
 			sectionTextLength: args.sectionBody.length,
-			operationCount: walked.resolved.length,
+			operationCount: execution.resolvedOperationCount,
 			operationAttempts: attempts,
 			failureReason: null,
 			pipeline: {
-				resolvedOperationCount: walked.resolved.length,
+				resolvedOperationCount: execution.resolvedOperationCount,
 				plannedPatchCount: patches.length,
-				resolutionIssueCount: walked.issues.length,
-				resolutionIssues: walked.issues,
+				resolutionIssueCount: execution.issues.length,
+				resolutionIssues: execution.issues,
 			},
 		},
 	};

@@ -801,3 +801,35 @@ describe.skipIf(!hasHr1Fixture)(
 		});
 	},
 );
+
+describe("normalizeQuotedText", () => {
+	it("strips curly quotes from inline insertion content", () => {
+		const ast = parseInstructionAst(
+			`Section 455(d)(1) of the Higher Education Act of 1965 (20 U.S.C. 1087e(d)(1)) is amended by inserting \u201cbefore June 30, 2028,\u201d before \u201can income contingent repayment plan\u201d.`,
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		const queue = [...result.tree.children];
+		let insertEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.Insert
+			) {
+				insertEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit)
+				queue.push(...current.children);
+		}
+		if (!insertEdit || insertEdit.edit.kind !== UltimateEditKind.Insert) {
+			throw new Error("Expected insert edit.");
+		}
+		expect(insertEdit.edit.content.text).toBe("before June 30, 2028,");
+	});
+});

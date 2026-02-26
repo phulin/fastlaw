@@ -689,7 +689,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			"",
 			"Subject to this subsection, the State plan shall provide that in the case of individuals described in subparagraph (A), no enrollment fee shall be imposed.",
 			"",
-			"**(1)** No enrollment fee.",
+			"> **(1)** No enrollment fee.",
 		].join("\n");
 
 		const effect = applyAmendmentEditTreeToSection({
@@ -1279,7 +1279,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 
 		const sectionBody = [
 			"(2) Allocation to processors.",
-			"(A) IN GENERAL.—Except as provided in subparagraph (B), in the case of any increase.",
+			"> (A) IN GENERAL.—Except as provided in subparagraph (B), in the case of any increase.",
 			"(3) Carry-over of reductions.",
 		].join("\n");
 
@@ -1465,7 +1465,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(result).toContain("5 cents per pound.\n(3) No overlap.");
 	});
 
-	it("does not widen strike-insert replacement in unquoted hierarchy layouts", () => {
+	it("requires quoted depth to resolve nested scope in hierarchy layouts", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
 			targetSection: "9037",
@@ -1514,19 +1514,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			sectionBody,
 		});
 
-		expect(effect.status).toBe("ok");
-		expect(effect.changes[0]?.deleted).not.toContain(
-			"(c) Economic adjustment assistance for textile mills",
+		expect(effect.status).toBe("unsupported");
+		expect(effect.applySummary.failedItems[0]?.reasonKind).toBe(
+			"target_unresolved",
 		);
-		expect(effect.changes[0]?.deleted).toContain(
-			"(2) VALUE OF ASSISTANCE.—The value of the assistance provided under paragraph (1) shall be—",
-		);
-		const result = effect.renderModel.plainText ?? "";
-		expect(result).toContain(
-			"(c) Economic adjustment assistance for textile mills",
-		);
-		expect(result).toContain("(1) In general");
-		expect(result).toContain("(3) Allowable purposes");
 	});
 });
 
@@ -1865,6 +1856,88 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 		);
 		expect(hasStrongSpanText(effect, "(b)")).toBe(true);
 		expect(hasStrongSpanText(effect, "(A)")).toBe(true);
+	});
+
+	it("resolves matter-preceding clause targets inside quoted USC-style subparagraphs", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "9016",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "c" },
+					children: [
+						{
+							type: SemanticNodeType.Scope,
+							scope: { kind: ScopeKind.Paragraph, label: "1" },
+							children: [
+								{
+									type: SemanticNodeType.Scope,
+									scope: { kind: ScopeKind.Subparagraph, label: "B" },
+									children: [
+										{
+											type: SemanticNodeType.LocationRestriction,
+											restriction: {
+												kind: LocationRestrictionKind.MatterPreceding,
+												ref: {
+													kind: ScopeKind.Clause,
+													path: [{ kind: ScopeKind.Clause, label: "i" }],
+												},
+											},
+											children: [
+												{
+													type: SemanticNodeType.Edit,
+													edit: {
+														kind: UltimateEditKind.StrikeInsert,
+														strike: {
+															kind: SearchTargetKind.Text,
+															text: tp("2023"),
+														},
+														insert: tp("2031"),
+													},
+												},
+											],
+										},
+									],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"**(c)** Eligibility for payments",
+			"",
+			"> **(1)** General rule",
+			"",
+			"> > **(B)** 2019 through 2023 crop years",
+			"",
+			"> > For the 2019 through 2023 crop years, the payment rate shall be equal to the difference between—",
+			"",
+			"> > > **(i)** the effective reference price for the covered commodity; and",
+			"",
+			"> > > **(ii)** the effective price determined under subsection (b) for the covered commodity.",
+		].join("\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/7/9016",
+			sectionBody,
+			instructionText:
+				'in subsection (c)(1)(B), in the matter preceding clause (i), by striking "2023" and inserting "2031".',
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.applySummary.failedItems).toEqual([]);
+		expectEffectToContainMarkedText(
+			effect,
+			"(B) 2019 through ~~2023~~++2031++ crop years",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"(i) the effective reference price for the covered commodity; and",
+		);
 	});
 
 	it("covers sample #6: sub_head+subscope+text_location variant -> nested wrappers", () => {

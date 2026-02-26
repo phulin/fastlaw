@@ -75,6 +75,24 @@ function translateCrossReferences(
 	);
 }
 
+function computeFallbackAnchorRegexSearch(anchorText: string): RegExp | null {
+	// If the anchor mentions a section number, wildcard it so "section 1916" can
+	// match "section 1396o" (SSA → USC codification discrepancy).
+	const match = anchorText.match(/section\s+([^()\s]+)/i);
+	if (!match || !match[1]) return null;
+
+	const pubLawSec = match[1];
+	const escaped = anchorText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const regexStr = escaped.replace(
+		new RegExp(
+			`section\\s+${pubLawSec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+			"i",
+		),
+		"section\\s+(?<base>\\S+?)",
+	);
+	return new RegExp(regexStr, "i");
+}
+
 function computeFallbackRegexSearch(
 	strikeText: string,
 	classificationOverrides?: ClassificationOverride[],
@@ -244,7 +262,7 @@ function isStructuralMarkerLine(line: string): boolean {
 }
 
 const MARKER_LINE_WITH_PREFIX_RE =
-	/^(\s*(?:>\s*)*)((?:\([A-Za-z0-9ivxIVX]+\))+)\s+([A-Za-z0-9][A-Za-z0-9 '"()\-.,/&]*?)\.\u2014(?:\s*(.*))?$/;
+	/^(\s*(?:>\s*)*)((?:\([A-Za-z0-9ivxIVX]+\))+)\s+([A-Za-z0-9][A-Za-z0-9 '"()\-.,/&;]*?)\.\u2014(?:\s*(.*))?$/;
 const MARKER_PARAGRAPH_RE =
 	/^(\s*)((?:\([A-Za-z0-9ivxIVX]+\))+)(?:\s+([\s\S]*))?$/;
 const HEADING_PARAGRAPH_RE = /^[A-Za-z0-9][A-Za-z0-9 '"()\-.,/&]*$/;
@@ -317,7 +335,6 @@ function withSymbolicMarkerHeadingSpans(
 		if (markerEnd > markerStart && !hasStrongSpan(markerStart, markerEnd)) {
 			output.push({ start: markerStart, end: markerEnd, type: "strong" });
 		}
-
 		if (!isStandaloneSectionHeading(trailing)) continue;
 		let headingStart = markerEnd;
 		while (text[headingStart - paragraph.start] === " ") {
@@ -1170,13 +1187,26 @@ function planPatchForOperation(
 
 			if (operation.edit.before) {
 				const anchor = textFromEditTarget(operation.edit.before);
+				const translatedAnchor = anchor
+					? translateCrossReferences(anchor, classificationOverrides)
+					: null;
 				let anchorStart: number | null = null;
-				if (anchor) {
-					const localIndex = scopedText.indexOf(anchor);
-					attempt.searchText = anchor;
+				let resolvedAnchor: string | null = translatedAnchor;
+				if (translatedAnchor) {
+					let localIndex = scopedText.indexOf(translatedAnchor);
+					if (localIndex < 0) {
+						const fallback = computeFallbackAnchorRegexSearch(translatedAnchor);
+						const fallbackMatch = fallback ? scopedText.match(fallback) : null;
+						if (fallbackMatch && fallbackMatch.index !== undefined) {
+							localIndex = fallbackMatch.index;
+							resolvedAnchor = fallbackMatch[0];
+						}
+					}
+					attempt.searchText = resolvedAnchor ?? translatedAnchor;
 					attempt.searchTextKind = "anchor_before";
 					attempt.searchIndex =
 						localIndex >= 0 ? range.start + localIndex : null;
+					if (resolvedAnchor !== anchor) attempt.wasTranslated = true;
 					if (localIndex >= 0) anchorStart = range.start + localIndex;
 				} else if (operation.resolvedAnchorTargetId !== null) {
 					const anchorRange = getScopeRangeFromNodeId(
@@ -1201,8 +1231,9 @@ function planPatchForOperation(
 					range.targetLevel ?? 0,
 				);
 				const formattedText = formatted.text;
-				const suffix = anchor
-					? /[A-Za-z0-9)]$/.test(formattedText) && /^[A-Za-z0-9(]/.test(anchor)
+				const suffix = resolvedAnchor
+					? /[A-Za-z0-9)]$/.test(formattedText) &&
+						/^[A-Za-z0-9(]/.test(resolvedAnchor)
 						? " "
 						: ""
 					: formattedText.endsWith("\n")
@@ -1220,15 +1251,31 @@ function planPatchForOperation(
 
 			if (operation.edit.after) {
 				const anchor = textFromEditTarget(operation.edit.after);
+				const translatedAnchor = anchor
+					? translateCrossReferences(anchor, classificationOverrides)
+					: null;
 				let anchorEnd: number | null = null;
-				if (anchor) {
-					const localIndex = scopedText.indexOf(anchor);
-					attempt.searchText = anchor;
+				let resolvedAnchor: string | null = translatedAnchor;
+				if (translatedAnchor) {
+					let localIndex = scopedText.indexOf(translatedAnchor);
+					if (localIndex < 0) {
+						const fallback = computeFallbackAnchorRegexSearch(translatedAnchor);
+						const fallbackMatch = fallback ? scopedText.match(fallback) : null;
+						if (fallbackMatch && fallbackMatch.index !== undefined) {
+							localIndex = fallbackMatch.index;
+							resolvedAnchor = fallbackMatch[0];
+						}
+					}
+					attempt.searchText = resolvedAnchor;
 					attempt.searchTextKind = "anchor_after";
 					attempt.searchIndex =
 						localIndex >= 0 ? range.start + localIndex : null;
+					if (resolvedAnchor !== anchor) attempt.wasTranslated = true;
 					if (localIndex >= 0)
-						anchorEnd = range.start + localIndex + anchor.length;
+						anchorEnd =
+							range.start +
+							localIndex +
+							(resolvedAnchor ?? translatedAnchor).length;
 				} else if (operation.resolvedAnchorTargetId !== null) {
 					const anchorRange = getScopeRangeFromNodeId(
 						model,
@@ -1253,8 +1300,9 @@ function planPatchForOperation(
 					range.targetLevel ?? 0,
 				);
 				const formattedText = formatted.text;
-				const prefix = anchor
-					? /[A-Za-z0-9)]$/.test(anchor) && /^[A-Za-z0-9(]/.test(formattedText)
+				const prefix = translatedAnchor
+					? /[A-Za-z0-9)]$/.test(translatedAnchor) &&
+						/^[A-Za-z0-9(]/.test(formattedText)
 						? " "
 						: ""
 					: plainText[anchorEnd - 1] === "\n" || anchorEnd === 0
@@ -1393,6 +1441,14 @@ function planPatchForOperation(
 	}
 
 	return { patches, attempt };
+}
+
+export function planOperationEdit(
+	model: DocumentModel,
+	operation: ResolvedInstructionOperation,
+	classificationOverrides?: ClassificationOverride[],
+): { patches: PlannedPatch[]; attempt: OperationMatchAttempt } {
+	return planPatchForOperation(model, operation, classificationOverrides);
 }
 
 export function planEdits(

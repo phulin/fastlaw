@@ -393,3 +393,37 @@ export function applyPlannedPatchesTransaction(
 		spans: materialized.spans,
 	};
 }
+
+export function applyPlannedPatchesToWorkingText(
+	plainText: string,
+	patches: PlannedPatch[],
+): string {
+	const orderedPatches = patches
+		.map((patch, patchId) => ({ patch, patchId }))
+		.sort((left, right) => {
+			if (left.patch.start !== right.patch.start) {
+				return right.patch.start - left.patch.start;
+			}
+			return right.patchId - left.patchId;
+		});
+
+	let workingText = plainText;
+
+	for (const { patch } of orderedPatches) {
+		const deleteStart = patch.start;
+		const deleteEnd = patch.end;
+		const normalizedAffixes = normalizeInsertionAffixes({
+			workingText,
+			insertAt: patch.insertAt,
+			deleteStart,
+			deleteEnd,
+			insertedPlain: patch.insertedPlain,
+			insertedPrefixPlain: patch.insertedPrefixPlain ?? "",
+			insertedSuffixPlain: patch.insertedSuffixPlain ?? "",
+		});
+		const replacementText = `${normalizedAffixes.outsidePrefixPlain}${normalizedAffixes.insertedPrefixPlain}${patch.insertedPlain}${normalizedAffixes.insertedSuffixPlain}${normalizedAffixes.outsideSuffixPlain}`;
+		workingText = `${workingText.slice(0, deleteStart)}${replacementText}${workingText.slice(deleteEnd)}`;
+	}
+
+	return workingText;
+}

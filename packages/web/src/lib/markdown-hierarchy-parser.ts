@@ -1,5 +1,3 @@
-import { buildInferredMarkerLevels } from "./marker-level-inference";
-
 export interface HierarchyParagraph {
 	index: number;
 	startLine: number;
@@ -76,15 +74,8 @@ function collectMarkers(paragraphs: ParsedParagraph[]): {
 } {
 	const occurrences: MarkerOccurrence[] = [];
 	const firstLevelByParagraph = new Map<number, number>();
-	const inferredByParagraph = buildInferredMarkerLevels(
-		paragraphs.map((paragraph) => ({
-			markers: paragraph.leadingLabels,
-			indentationHint: paragraph.quoteDepth,
-		})),
-	);
 
 	for (const paragraph of paragraphs) {
-		const inferred = inferredByParagraph[paragraph.index] ?? [];
 		for (
 			let markerIndex = 0;
 			markerIndex < paragraph.leadingLabels.length;
@@ -92,7 +83,7 @@ function collectMarkers(paragraphs: ParsedParagraph[]): {
 		) {
 			const label = paragraph.leadingLabels[markerIndex];
 			if (!label) continue;
-			const inferredRank = inferred[markerIndex]?.rank ?? markerIndex + 1;
+			const inferredRank = Math.min(7, paragraph.quoteDepth + markerIndex + 1);
 			const level = paragraph.quoteDepth * 10 + inferredRank;
 			occurrences.push({
 				label,

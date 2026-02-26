@@ -127,7 +127,7 @@ const expandSingleLineBreaks = (input: string): string => {
 };
 
 const HEADING_WITH_DASH_RE =
-	/^\(([^)]+)\)\s+([A-Z0-9][A-Z0-9 '"()\-.,/&]*?)(\.\u2014)([\s\S]*)$/;
+	/^\(([^)]+)\)\s+([A-Z0-9][A-Z0-9 '"()\-.,/&]*?)(\.—)([\s\S]*)$/;
 
 const emphasizeInsertedMarkerHeadings = (tree: Root) => {
 	visit(tree as Node, "paragraph", (node) => {

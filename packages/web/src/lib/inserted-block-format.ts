@@ -29,7 +29,7 @@ export function formatInsertedBlockContent(
 		.filter((match): match is RegExpMatchArray => match !== null);
 
 	if (markerLines.length === 0) {
-		if (!content.includes("\n")) return content;
+		if (!content.includes("\n")) return sanitizeQuotedLine(content);
 		if (!options.quotePlainMultiline) return content;
 		return rawLines
 			.map((rawLine) => {

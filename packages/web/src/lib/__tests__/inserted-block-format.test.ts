@@ -9,4 +9,12 @@ describe("formatInsertedBlockContent", () => {
 		});
 		expect(formatted).toBe("(k)(3))) described");
 	});
+
+	it("strips surrounding curly quotes from single-line content", () => {
+		const formatted = formatInsertedBlockContent(
+			"\u201cbefore June 30, 2028,\u201d",
+			{ baseDepth: 0, quotePlainMultiline: true },
+		);
+		expect(formatted).toBe("before June 30, 2028,");
+	});
 });
