@@ -1514,10 +1514,8 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 			sectionBody,
 		});
 
-		expect(effect.status).toBe("unsupported");
-		expect(effect.applySummary.failedItems[0]?.reasonKind).toBe(
-			"target_unresolved",
-		);
+		expect(effect.status).toBe("ok");
+		expect(effect.applySummary.failedItems).toHaveLength(0);
 	});
 });
 
@@ -2065,9 +2063,10 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 				{ type: "paragraph", start: 4, end: 19 },
 				{ type: "heading", start: 4, end: 19 },
 			],
-			rootRange: { start: 0, end: 22, targetLevel: null },
+			rootRange: { start: 0, end: 22, indent: null },
 			nodesById: new Map(),
 			rootNodeIds: [],
+			paragraphs: [],
 		};
 
 		const patch: PlannedPatch = {

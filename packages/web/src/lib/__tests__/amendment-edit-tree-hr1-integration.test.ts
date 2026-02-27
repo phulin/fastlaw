@@ -61,11 +61,9 @@ const toLeveledLines = (
 			`Line count mismatch: got ${lines.length} lines and ${lineLevels.length} levels.`,
 		);
 	}
-	const minLevel =
-		lineLevels.length === 0 ? 0 : Math.min(...lineLevels.map((level) => level));
 	return lines.map((line, index) => ({
 		text: line,
-		level: (lineLevels[index] ?? 0) - minLevel,
+		level: lineLevels[index] ?? 0,
 	}));
 };
 
@@ -244,7 +242,7 @@ const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
 “(u) THRIFTY FOOD PLAN.—
 “(1) IN GENERAL.—The term ‘thrifty food plan’ means the diet...”`,
 		instructionLineLevels: [1, 1, 2],
-		expectedEditedExcerpt: "(u) THRIFTY FOOD PLAN.—",
+		expectedEditedExcerpt: "(u) Thrifty food plan",
 	},
 	{
 		citation: "7 U.S.C. 2015(o)(4)",
@@ -260,7 +258,7 @@ const SELECTED_INSTRUCTION_BLOCKS: SelectedInstructionBlock[] = [
 		expectedEditedExcerpt: `(ii) is in a noncontiguous State and has an unemployment rate that is at or above 1.5 times the national unemployment rate.
 (B) Report
 The Secretary shall report the basis for a waiver under subparagraph (A) to the Committee on Agriculture of the House of Representatives and the Committee on Agriculture, Nutrition, and Forestry of the Senate.
-(C) DEFINITION OF NONCONTIGUOUS STATE.—`,
+(C) Definition of noncontiguous state`,
 	},
 	{
 		citation: "7 U.S.C. 2015(f)",
@@ -297,9 +295,10 @@ The income (less, at State option, a pro rata share) and financial resources of 
 (2) by adding at the end the following:
 “(2) STATE QUALITY CONTROL INCENTIVE.—”`,
 		instructionLineLevels: [1, 2, 1, 2, 2, 2],
-		expectedEditedExcerpt: `(a) PROGRAM.—
-(1) ESTABLISHMENT.—Subject to the availability of funds appropriated under section 2027 of this title, the Secretary is authorized to formulate and administer a supplemental nutrition assistance program under which, at the request of the State agency, eligible households within the State shall be provided an opportunity to obtain a more nutritious diet through the issuance to them of an allotment, except that a State may not participate in the supplemental nutrition assistance program if the Secretary determines that State or local sales taxes are collected within that State on purchases of food made with benefits issued under this chapter. The benefits so received by such households shall be used only to purchase food from retail food stores which have been approved for participation in the supplemental nutrition assistance program. Benefits issued and used as provided in this chapter shall be redeemable at face value by the Secretary through the facilities of the Treasury of the United States.
-(2) STATE QUALITY CONTROL INCENTIVE.—`,
+		expectedEditedExcerpt: `(a) Program
+(1) Establishment
+Subject to the availability of funds appropriated under section 2027 of this title, the Secretary is authorized to formulate and administer a supplemental nutrition assistance program under which, at the request of the State agency, eligible households within the State shall be provided an opportunity to obtain a more nutritious diet through the issuance to them of an allotment, except that a State may not participate in the supplemental nutrition assistance program if the Secretary determines that State or local sales taxes are collected within that State on purchases of food made with benefits issued under this chapter. The benefits so received by such households shall be used only to purchase food from retail food stores which have been approved for participation in the supplemental nutrition assistance program. Benefits issued and used as provided in this chapter shall be redeemable at face value by the Secretary through the facilities of the Treasury of the United States.
+(2) State quality control incentive`,
 	},
 	{
 		citation: "7 U.S.C. 9011(8)(B)(ii)",
@@ -333,14 +332,13 @@ The income (less, at State option, a pro rata share) and financial resources of 
 “(2) REFUND FOR UPLAND COTTON.—”`,
 		instructionLineLevels: [0, 2, 3, 3, 2, 3, 3, 4, 2],
 		expectedEditedExcerpt: `(b) Repayment rates for upland cotton, long grain rice, and medium grain rice
-(1) IN GENERAL.—The Secretary shall permit producers to repay a marketing assistance loan under section 9031 of this title for upland cotton, long grain rice, and medium grain rice at a rate that is the lesser of—
+(1) In general
+The Secretary shall permit producers to repay a marketing assistance loan under section 9031 of this title for upland cotton, long grain rice, and medium grain rice at a rate that is the lesser of—
 (A) the loan rate established for the commodity under section 9032 of this title, plus interest (determined in accordance with section 7283 of this title); or
-(B) (i) in the case of long grain rice and medium grain rice, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section; or
+(B)(i) in the case of long grain rice and medium grain rice, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section; or
 (ii) in the case of upland cotton, the prevailing world market price for the commodity, as determined and adjusted by the Secretary in accordance with this section.
-(2) REFUND FOR UPLAND COTTON.—`,
-		expectedMarkedEditSnippets: [
-			"~~The Secretary~~++(1) IN GENERAL.—The Secretary++",
-		],
+(2) Refund for upland cotton`,
+		expectedMarkedEditSnippets: ["~~The Secretary~~++(1) In general++"],
 	},
 	{
 		citation: "7 U.S.C. 2036(a)(2)",

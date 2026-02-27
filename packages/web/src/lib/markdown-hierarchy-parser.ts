@@ -1,3 +1,5 @@
+import { buildInferredMarkerLevels } from "./marker-level-inference";
+
 export interface HierarchyParagraph {
 	index: number;
 	startLine: number;
@@ -6,20 +8,21 @@ export interface HierarchyParagraph {
 }
 
 export interface ParsedParagraph extends HierarchyParagraph {
-	quoteDepth: number;
+	indent: number;
 	leadingLabels: string[];
 }
 
 interface MarkerOccurrence {
 	label: string;
-	level: number;
-	quoteDepth: number;
+	indent: number;
+	rank: number;
 	paragraphIndex: number;
 }
 
 export interface HierarchyNode {
 	marker: string;
-	level: number;
+	indent: number;
+	rank: number;
 	startParagraph: number;
 	endParagraph: number;
 	heading: HierarchyParagraph[];
@@ -70,12 +73,20 @@ export function extractLeadingLabels(line: string): string[] {
 
 function collectMarkers(paragraphs: ParsedParagraph[]): {
 	occurrences: MarkerOccurrence[];
-	firstLevelByParagraph: Map<number, number>;
+	firstIndentByParagraph: Map<number, number>;
+	firstRankByParagraph: Map<number, number>;
 } {
 	const occurrences: MarkerOccurrence[] = [];
-	const firstLevelByParagraph = new Map<number, number>();
+	const firstIndentByParagraph = new Map<number, number>();
+	const firstRankByParagraph = new Map<number, number>();
 
 	for (const paragraph of paragraphs) {
+		const inferredLevels = buildInferredMarkerLevels([
+			{
+				markers: paragraph.leadingLabels,
+				indentationHint: paragraph.indent,
+			},
+		])[0];
 		for (
 			let markerIndex = 0;
 			markerIndex < paragraph.leadingLabels.length;
@@ -83,25 +94,27 @@ function collectMarkers(paragraphs: ParsedParagraph[]): {
 		) {
 			const label = paragraph.leadingLabels[markerIndex];
 			if (!label) continue;
-			const inferredRank = Math.min(7, paragraph.quoteDepth + markerIndex + 1);
-			const level = paragraph.quoteDepth * 10 + inferredRank;
+			const indent = paragraph.indent + markerIndex;
+			const rank = inferredLevels?.[markerIndex]?.rank ?? 7;
 			occurrences.push({
 				label,
-				level,
-				quoteDepth: paragraph.quoteDepth,
+				indent,
+				rank,
 				paragraphIndex: paragraph.index,
 			});
-			if (!firstLevelByParagraph.has(paragraph.index)) {
-				firstLevelByParagraph.set(paragraph.index, level);
+			if (!firstIndentByParagraph.has(paragraph.index)) {
+				firstIndentByParagraph.set(paragraph.index, indent);
+				firstRankByParagraph.set(paragraph.index, rank);
 			}
 		}
 	}
-	return { occurrences, firstLevelByParagraph };
+	return { occurrences, firstIndentByParagraph, firstRankByParagraph };
 }
 
 interface MutableNode {
 	marker: string;
-	level: number;
+	indent: number;
+	rank: number;
 	startParagraph: number;
 	endParagraph: number;
 	heading: HierarchyParagraph[];
@@ -147,8 +160,11 @@ export function buildHierarchyFromParagraphs(
 			text: paragraph.text,
 		}),
 	);
-	const { occurrences: markers, firstLevelByParagraph } =
-		collectMarkers(parsedParagraphs);
+	const {
+		occurrences: markers,
+		firstIndentByParagraph,
+		firstRankByParagraph,
+	} = collectMarkers(parsedParagraphs);
 	if (markers.length === 0) {
 		return {
 			paragraphs,
@@ -165,19 +181,26 @@ export function buildHierarchyFromParagraphs(
 		) {
 			const paragraph = parsedParagraphs[paragraphIndex];
 			if (!paragraph) continue;
-			if (paragraph.quoteDepth < marker.quoteDepth) {
+			if (paragraph.indent < marker.indent) {
 				endParagraph = paragraphIndex;
 				break;
 			}
-			const firstMarkerLevel = firstLevelByParagraph.get(paragraphIndex);
-			if (firstMarkerLevel !== undefined && firstMarkerLevel <= marker.level) {
+			const firstMarkerIndent = firstIndentByParagraph.get(paragraphIndex);
+			const firstMarkerRank = firstRankByParagraph.get(paragraphIndex);
+			if (
+				firstMarkerIndent !== undefined &&
+				(firstMarkerIndent < marker.indent ||
+					(firstMarkerIndent === marker.indent &&
+						(firstMarkerRank ?? 7) <= marker.rank))
+			) {
 				endParagraph = paragraphIndex;
 				break;
 			}
 		}
 		return {
 			marker: marker.label,
-			level: marker.level,
+			indent: marker.indent,
+			rank: marker.rank,
 			startParagraph: marker.paragraphIndex,
 			endParagraph,
 			heading: [],
@@ -191,7 +214,11 @@ export function buildHierarchyFromParagraphs(
 	for (const node of nodes) {
 		while (stack.length > 0) {
 			const top = stack[stack.length - 1];
-			if (top && top.level >= node.level) {
+			if (
+				top &&
+				(top.indent > node.indent ||
+					(top.indent === node.indent && top.rank >= node.rank))
+			) {
 				stack.pop();
 				continue;
 			}
@@ -259,7 +286,7 @@ export function parseMarkdownHierarchy(markdown: string): MarkdownHierarchy {
 				startLine: i,
 				endLine: i + 1,
 				text: line,
-				quoteDepth,
+				indent: quoteDepth,
 				leadingLabels: labels,
 			};
 			paragraphs.push(currentParagraph);

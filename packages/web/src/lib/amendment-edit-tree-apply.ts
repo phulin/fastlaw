@@ -2,10 +2,7 @@ import {
 	buildAmendmentDocumentModel,
 	type PlainDocument,
 } from "./amendment-document-model";
-import {
-	applyPlannedPatchesToWorkingText,
-	applyPlannedPatchesTransaction,
-} from "./amendment-edit-apply-transaction";
+import { applyPlannedPatchesTransaction } from "./amendment-edit-apply-transaction";
 import type {
 	ClassificationOverride,
 	DocumentModel,
@@ -995,9 +992,58 @@ function toSpanOnlyModel(
 	return {
 		plainText,
 		spans,
-		rootRange: { start: 0, end: plainText.length, targetLevel: 0 },
+		rootRange: { start: 0, end: plainText.length, indent: 0 },
 		nodesById: new Map(),
 		rootNodeIds: [],
+		paragraphs: [],
+	};
+}
+
+function canonicalPlainDocumentFromRenderModel(
+	renderText: string,
+	renderSpans: FormattingSpan[],
+): PlainDocument {
+	const deletedMask = new Uint8Array(renderText.length);
+	for (const span of renderSpans) {
+		if (span.type !== "deletion") continue;
+		const start = Math.max(0, Math.min(renderText.length, span.start));
+		const end = Math.max(0, Math.min(renderText.length, span.end));
+		for (let index = start; index < end; index += 1) {
+			deletedMask[index] = 1;
+		}
+	}
+
+	const livePrefix = new Array<number>(renderText.length + 1).fill(0);
+	const canonicalChars: string[] = [];
+	for (let index = 0; index < renderText.length; index += 1) {
+		const isDeleted = deletedMask[index] === 1;
+		livePrefix[index + 1] = livePrefix[index] + (isDeleted ? 0 : 1);
+		if (!isDeleted) {
+			canonicalChars.push(renderText[index] ?? "");
+		}
+	}
+	const canonicalText = canonicalChars.join("");
+	const projectedSpans: FormattingSpan[] = [];
+	for (const span of renderSpans) {
+		if (span.type === "deletion") continue;
+		const start =
+			livePrefix[Math.max(0, Math.min(renderText.length, span.start))];
+		const end = livePrefix[Math.max(0, Math.min(renderText.length, span.end))];
+		if (end <= start) continue;
+		projectedSpans.push({
+			...span,
+			start,
+			end,
+		});
+	}
+	const sourceToPlainOffsets = new Array<number>(canonicalText.length + 1);
+	for (let index = 0; index <= canonicalText.length; index += 1) {
+		sourceToPlainOffsets[index] = index;
+	}
+	return {
+		plainText: canonicalText,
+		spans: projectedSpans,
+		sourceToPlainOffsets,
 	};
 }
 
@@ -1024,11 +1070,6 @@ function executeResolvedOperation(
 	const orderedPatches = [...patches].sort(
 		(left, right) => left.start - right.start || left.end - right.end,
 	);
-	const nextResolutionText = applyPlannedPatchesToWorkingText(
-		state.resolutionModel.plainText,
-		orderedPatches,
-	);
-	state.resolutionModel = buildAmendmentDocumentModel(nextResolutionText);
 	const offsetMap = buildCanonicalRenderOffsetMap(
 		state.renderPlainText,
 		state.renderSpans,
@@ -1045,6 +1086,14 @@ function executeResolvedOperation(
 	);
 	state.renderPlainText = appliedRender.plainText;
 	state.renderSpans = appliedRender.spans;
+	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	state.resolutionModel = buildAmendmentDocumentModel(
+		canonicalPlain.plainText,
+		canonicalPlain,
+	);
 	state.patches.push(...orderedPatches);
 	return orderedPatches;
 }

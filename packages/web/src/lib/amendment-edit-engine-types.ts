@@ -20,7 +20,7 @@ export interface HierarchyLevel {
 export interface ScopeRange {
 	start: number;
 	end: number;
-	targetLevel: number | null;
+	indent: number | null;
 }
 
 export type FormattingSpanType =
@@ -49,8 +49,18 @@ export interface StructuralNode {
 	path: HierarchyLevel[];
 	start: number;
 	end: number;
-	targetLevel: number;
+	indent: number;
 	childIds: string[];
+}
+
+export interface DocumentParagraph {
+	index: number;
+	start: number;
+	end: number;
+	startLine: number;
+	endLine: number;
+	indent: number;
+	leadingLabels: string[];
 }
 
 export interface DocumentModel {
@@ -59,6 +69,7 @@ export interface DocumentModel {
 	rootRange: ScopeRange;
 	nodesById: Map<string, StructuralNode>;
 	rootNodeIds: string[];
+	paragraphs: DocumentParagraph[];
 }
 
 export interface ResolutionIssue {

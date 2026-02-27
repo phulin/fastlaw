@@ -5,6 +5,7 @@ import { unified } from "unified";
 import type { Node, Parent } from "unist";
 import type {
 	DocumentModel,
+	DocumentParagraph,
 	FormattingSpan,
 	HierarchyLevel,
 	HierarchyLevelType,
@@ -357,7 +358,7 @@ export function parseMarkdownToPlainDocument(
 	};
 }
 
-function rankToHierarchyType(rank: number): HierarchyLevelType {
+function hierarchyTypeForRank(rank: number): HierarchyLevelType {
 	switch (rank) {
 		case 1:
 			return ScopeKind.Subsection;
@@ -384,16 +385,6 @@ function buildPath(
 	return [...parentPath, { type: kind, val: label }];
 }
 
-function deriveKindFromLevel(level: number): HierarchyLevelType {
-	const rank = level % 10;
-	const normalizedRank = rank === 0 ? 1 : rank;
-	return rankToHierarchyType(normalizedRank);
-}
-
-function targetLevelFromNode(node: HierarchyNode): number {
-	return Math.floor(node.level / 10);
-}
-
 function scopeRangeFromNode(
 	paragraphs: Array<ParsedParagraph & { plainStart: number; plainEnd: number }>,
 	node: HierarchyNode,
@@ -416,7 +407,7 @@ function scopeRangeFromNode(
 	return {
 		start,
 		end,
-		targetLevel: targetLevelFromNode(node),
+		indent: node.indent,
 	};
 }
 
@@ -440,7 +431,7 @@ function buildNodes(args: BuildNodesArgs): string[] {
 	const siblingCounts = new Map<string, number>();
 
 	for (const node of args.nodes) {
-		const kind = deriveKindFromLevel(node.level);
+		const kind = hierarchyTypeForRank(node.rank);
 		const labelLower = node.marker.toLowerCase();
 		const siblingKey = `${kind}:${labelLower}`;
 		const siblingCount = (siblingCounts.get(siblingKey) ?? 0) + 1;
@@ -462,7 +453,7 @@ function buildNodes(args: BuildNodesArgs): string[] {
 			path,
 			start: range.start,
 			end: range.end,
-			targetLevel: range.targetLevel ?? 0,
+			indent: range.indent ?? 0,
 			childIds: [],
 		};
 		args.nodesById.set(nodeId, structuralNode);
@@ -536,7 +527,7 @@ export function buildAmendmentDocumentModel(
 						startLine: currentLine,
 						endLine: currentLine + 1,
 						text: lineText,
-						quoteDepth: (span.metadata?.quoteDepth as number) ?? 0,
+						indent: (span.metadata?.quoteDepth as number) ?? 0,
 						leadingLabels: labels,
 						plainStart: currentPlainOffset,
 						plainEnd: currentPlainOffset + lineText.length,
@@ -564,6 +555,17 @@ export function buildAmendmentDocumentModel(
 		parentPath: [],
 		nodesById,
 	});
+	const documentParagraphs: DocumentParagraph[] = paragraphs.map(
+		(paragraph) => ({
+			index: paragraph.index,
+			start: paragraph.plainStart,
+			end: paragraph.plainEnd,
+			startLine: paragraph.startLine,
+			endLine: paragraph.endLine,
+			indent: paragraph.indent,
+			leadingLabels: paragraph.leadingLabels,
+		}),
+	);
 
 	return {
 		plainText: plain.plainText,
@@ -571,10 +573,11 @@ export function buildAmendmentDocumentModel(
 		rootRange: {
 			start: 0,
 			end: plain.plainText.length,
-			targetLevel: null,
+			indent: null,
 		},
 		nodesById,
 		rootNodeIds,
+		paragraphs: documentParagraphs,
 	};
 }
 
@@ -588,6 +591,6 @@ export function getScopeRangeFromNodeId(
 	return {
 		start: node.start,
 		end: node.end,
-		targetLevel: node.targetLevel,
+		indent: node.indent,
 	};
 }

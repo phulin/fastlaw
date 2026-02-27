@@ -444,5 +444,96 @@ describe("sequential amendment edit engine", () => {
 			expect(effect.changes[1]?.inserted).toBe("Moved");
 			expect(effect.applySummary.failedItems).toHaveLength(0);
 		});
+
+		it("preserves quoted hierarchy for later matter-preceding resolution", () => {
+			const tree: InstructionSemanticTree = {
+				type: SemanticNodeType.InstructionRoot,
+				targetSection: "9016",
+				children: [
+					{
+						type: SemanticNodeType.Scope,
+						scope: { kind: ScopeKind.Subsection, label: "a" },
+						children: [
+							{
+								type: SemanticNodeType.Edit,
+								edit: {
+									kind: UltimateEditKind.StrikeInsert,
+									strike: { kind: SearchTargetKind.Text, text: tp("2023") },
+									insert: tp("2031"),
+								},
+							},
+						],
+					},
+					{
+						type: SemanticNodeType.Scope,
+						scope: { kind: ScopeKind.Subsection, label: "c" },
+						children: [
+							{
+								type: SemanticNodeType.Scope,
+								scope: { kind: ScopeKind.Paragraph, label: "1" },
+								children: [
+									{
+										type: SemanticNodeType.Scope,
+										scope: { kind: ScopeKind.Subparagraph, label: "B" },
+										children: [
+											{
+												type: SemanticNodeType.LocationRestriction,
+												restriction: {
+													kind: LocationRestrictionKind.MatterPreceding,
+													ref: {
+														kind: ScopeKind.Clause,
+														path: [{ kind: ScopeKind.Clause, label: "i" }],
+													},
+												},
+												children: [
+													{
+														type: SemanticNodeType.Edit,
+														edit: {
+															kind: UltimateEditKind.StrikeInsert,
+															strike: {
+																kind: SearchTargetKind.Text,
+																text: tp("2023"),
+															},
+															insert: tp("2031"),
+														},
+													},
+												],
+											},
+										],
+									},
+								],
+							},
+						],
+					},
+				],
+			};
+
+			const sectionBody = `**(a)** **General**
+For 2023, this subsection applies.
+
+**(c)** **Payment rate**
+
+> **(1)** **In general**
+>
+> > **(B)** **2019 through 2023 crop years**
+> >
+> > For the 2019 through 2023 crop years, the payment rate shall be equal to the difference between—
+> >
+> > > **(i)** the effective reference price for the covered commodity; and
+> >
+> > > **(ii)** the effective price determined under subsection (b) for the covered commodity.`;
+
+			const effect = apply(tree, sectionBody);
+
+			expect(effect.status).toBe("ok");
+			expect(effect.applySummary.failedItems).toHaveLength(0);
+			expect(effect.changes).toHaveLength(2);
+			expect(effect.changes[0]?.deleted).toBe("2023");
+			expect(effect.changes[1]?.deleted).toBe("2023");
+			expectEffectToContainMarkedText(
+				effect,
+				"For the 2019 through ~~2023~~++2031++ crop years",
+			);
+		});
 	});
 });

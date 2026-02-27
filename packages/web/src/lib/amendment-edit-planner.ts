@@ -178,12 +178,10 @@ function formatContentRanges(
 			sourceLocation: content.sourceLocation,
 		};
 	}
-	const levels = paragraphs.map((p) => p.level ?? 0);
-	const minLevel = Math.min(...levels);
 	const texts = paragraphTexts(content.sourceLocation);
 	const formattedText = texts
 		.map((text, i) => {
-			const depth = baseDepth + ((levels[i] ?? minLevel) - minLevel);
+			const depth = paragraphs[i]?.level ?? baseDepth;
 			return formatInsertedBlockContent(text, {
 				baseDepth: depth,
 				quotePlainMultiline: true,
@@ -195,16 +193,16 @@ function formatContentRanges(
 
 function formatInsertionContent(
 	content: TextWithProvenance,
-	targetLevel: number,
+	indent: number,
 ): TextWithProvenance {
-	return formatContentRanges(content, targetLevel + 1);
+	return formatContentRanges(content, indent + 1);
 }
 
 function formatReplacementContent(
 	content: TextWithProvenance,
-	targetLevel: number,
+	indent: number,
 ): TextWithProvenance {
-	return formatContentRanges(content, targetLevel);
+	return formatContentRanges(content, indent);
 }
 
 function multilineReplacementSuffix(
@@ -424,9 +422,9 @@ function parseInsertedText(sourceText: string): {
 
 function formatBlockInsertionContent(
 	content: TextWithProvenance,
-	targetLevel: number,
+	indent: number,
 ): TextWithProvenance {
-	return formatContentRanges(content, targetLevel + 1);
+	return formatContentRanges(content, indent + 1);
 }
 
 function resolveSentenceOrdinalRange(
@@ -839,13 +837,13 @@ function planPatchForOperation(
 					);
 					if (!throughRange) break;
 					const sameTargetLevel =
-						throughRange.targetLevel !== undefined &&
-						range.targetLevel !== undefined &&
-						throughRange.targetLevel === range.targetLevel;
+						throughRange.indent !== undefined &&
+						range.indent !== undefined &&
+						throughRange.indent === range.indent;
 					if (!sameTargetLevel) {
 						const formatted = formatReplacementContent(
 							replacementContent,
-							range.targetLevel ?? 0,
+							range.indent ?? 0,
 						);
 						pushPatch({
 							start: range.start,
@@ -865,7 +863,7 @@ function planPatchForOperation(
 					const end = Math.max(range.end, throughRange.end);
 					const formatted = formatReplacementContent(
 						replacementContent,
-						range.targetLevel ?? 0,
+						range.indent ?? 0,
 					);
 					pushPatch({
 						start,
@@ -883,7 +881,7 @@ function planPatchForOperation(
 				}
 				const formatted = formatReplacementContent(
 					replacementContent,
-					range.targetLevel ?? 0,
+					range.indent ?? 0,
 				);
 				pushPatch({
 					start: range.start,
@@ -987,7 +985,7 @@ function planPatchForOperation(
 			};
 			const formatted = formatReplacementContent(
 				replacementContent,
-				range.targetLevel ?? 0,
+				range.indent ?? 0,
 			);
 			pushPatch({
 				start: range.start,
@@ -1050,9 +1048,9 @@ function planPatchForOperation(
 					);
 					if (!throughRange) break;
 					const sameTargetLevel =
-						throughRange.targetLevel !== undefined &&
-						range.targetLevel !== undefined &&
-						throughRange.targetLevel === range.targetLevel;
+						throughRange.indent !== undefined &&
+						range.indent !== undefined &&
+						throughRange.indent === range.indent;
 					if (!sameTargetLevel) {
 						pushPatch({
 							start: range.start,
@@ -1226,10 +1224,7 @@ function planPatchForOperation(
 					}
 				}
 				if (anchorStart === null) break;
-				const formatted = formatInsertionContent(
-					content,
-					range.targetLevel ?? 0,
-				);
+				const formatted = formatInsertionContent(content, range.indent ?? 0);
 				const formattedText = formatted.text;
 				const suffix = resolvedAnchor
 					? /[A-Za-z0-9)]$/.test(formattedText) &&
@@ -1295,10 +1290,7 @@ function planPatchForOperation(
 					}
 				}
 				if (anchorEnd === null) break;
-				const formatted = formatInsertionContent(
-					content,
-					range.targetLevel ?? 0,
-				);
+				const formatted = formatInsertionContent(content, range.indent ?? 0);
 				const formattedText = formatted.text;
 				const prefix = translatedAnchor
 					? /[A-Za-z0-9)]$/.test(translatedAnchor) &&
@@ -1325,7 +1317,7 @@ function planPatchForOperation(
 				const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
 				const formatted = formatBlockInsertionContent(
 					content,
-					range.targetLevel ?? 0,
+					range.indent ?? 0,
 				);
 				const suffix = afterChar && afterChar !== "\n" ? "\n\n" : "\n";
 				pushPatch({
@@ -1343,7 +1335,7 @@ function planPatchForOperation(
 			const insertAt = range.end;
 			const beforeChar = plainText[insertAt - 1] ?? "";
 			const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
-			const formatted = formatInsertionContent(content, range.targetLevel ?? 0);
+			const formatted = formatInsertionContent(content, range.indent ?? 0);
 			pushPatch({
 				start: insertAt,
 				end: insertAt,
