@@ -654,6 +654,8 @@ function buildAttempt(
 	return {
 		operationType: operation.edit.kind,
 		nodeText: operation.nodeText,
+		originalNodeText: operation.originalNodeText,
+		scopeContextTexts: operation.scopeContextTexts,
 		strikingContent: getEditStrikingContent(operation),
 		targetPath: operation.targetPathText,
 		hasExplicitTargetPath: operation.hasExplicitTargetPath,

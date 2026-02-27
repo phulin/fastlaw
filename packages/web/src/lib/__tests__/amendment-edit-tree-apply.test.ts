@@ -2192,6 +2192,7 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 							val: s.label,
 						}),
 					),
+					scopeContextTexts: [],
 					matterPreceding: null,
 					matterPrecedingTarget: null,
 					matterFollowingTarget: null,

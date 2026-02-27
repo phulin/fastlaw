@@ -96,6 +96,8 @@ export interface ResolutionIssue {
 export interface ResolvedInstructionOperation {
 	operationIndex: number;
 	nodeText: string;
+	originalNodeText: string | null;
+	scopeContextTexts: string[];
 	edit: UltimateEdit;
 	/** For Insert edits: context says this should add at end of scope rather than inline. */
 	addAtEnd: boolean;
@@ -123,6 +125,8 @@ export interface ResolvedInstructionOperation {
 export interface OperationMatchAttempt {
 	operationType: string;
 	nodeText: string;
+	originalNodeText: string | null;
+	scopeContextTexts: string[];
 	strikingContent: string | null;
 	targetPath: string | null;
 	hasExplicitTargetPath: boolean;

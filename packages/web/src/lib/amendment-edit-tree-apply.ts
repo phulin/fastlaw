@@ -68,6 +68,8 @@ export interface FailedApplyItem {
 	operationIndex: number;
 	operationType: string;
 	text: string;
+	originalText: string;
+	scopeContextTexts: string[];
 	outcome: Exclude<OperationMatchAttempt["outcome"], "applied">;
 	targetPath: string | null;
 	reasonKind: ApplyFailureReasonKind;
@@ -314,6 +316,7 @@ function resolveSinglePath(
 
 interface TraversalContext {
 	target: HierarchyLevel[];
+	scopeContextTexts: string[];
 	matterPreceding: StructuralReference | null;
 	matterPrecedingTarget: HierarchyLevel[] | null;
 	matterFollowingTarget: HierarchyLevel[] | null;
@@ -388,6 +391,16 @@ function mergeTargets(
 	}
 
 	return [...base, ...override];
+}
+
+function appendScopeContextText(
+	texts: string[],
+	text: string | undefined,
+): string[] {
+	const trimmed = text?.trim();
+	if (!trimmed) return texts;
+	if (texts[texts.length - 1] === trimmed) return texts;
+	return [...texts, trimmed];
 }
 
 function targetPathFromEditTarget(target: EditTarget): HierarchyLevel[] | null {
@@ -467,6 +480,8 @@ function resolveEdit(
 		return {
 			operationIndex,
 			nodeText,
+			originalNodeText: editNode.sourceText?.trim() || null,
+			scopeContextTexts: context.scopeContextTexts,
 			edit,
 			addAtEnd: overrides.addAtEnd ?? false,
 			redesignateMappingIndex: overrides.redesignateMappingIndex ?? 0,
@@ -747,6 +762,8 @@ function resolveEdit(
 					{
 						operationIndex,
 						nodeText: "moving target block",
+						originalNodeText: editNode.sourceText?.trim() || null,
+						scopeContextTexts: context.scopeContextTexts,
 						edit,
 						addAtEnd: false,
 						redesignateMappingIndex: 0,
@@ -790,10 +807,14 @@ export function walkTree(
 			const scopeTarget = mergeTargets(context.target, [
 				{ type: toHierarchyType(node.scope.kind), val: node.scope.label },
 			]);
+			const scopeContextTexts = appendScopeContextText(
+				context.scopeContextTexts,
+				node.sourceText,
+			);
 			const nested = walkTree(
 				model,
 				node.children,
-				{ ...context, target: scopeTarget },
+				{ ...context, target: scopeTarget, scopeContextTexts },
 				counter,
 			);
 			resolved.push(...nested.resolved);
@@ -805,6 +826,10 @@ export function walkTree(
 		}
 
 		if (node.type === SemanticNodeType.LocationRestriction) {
+			const scopeContextTexts = appendScopeContextText(
+				context.scopeContextTexts,
+				node.sourceText,
+			);
 			if (node.restriction.kind === LocationRestrictionKind.In) {
 				if (node.restriction.refs.length === 0) {
 					unsupportedReasons.push("in_location_empty_refs");
@@ -815,7 +840,7 @@ export function walkTree(
 					const nested = walkTree(
 						model,
 						node.children,
-						{ ...context, target },
+						{ ...context, target, scopeContextTexts },
 						counter,
 					);
 					resolved.push(...nested.resolved);
@@ -834,6 +859,7 @@ export function walkTree(
 					node.children,
 					{
 						...context,
+						scopeContextTexts,
 						matterPreceding: node.restriction.ref,
 						matterPrecedingTarget,
 					},
@@ -856,6 +882,7 @@ export function walkTree(
 					node.children,
 					{
 						...context,
+						scopeContextTexts,
 						target,
 						unanchoredInsertMode: "add_at_end",
 						atEndOnly: true,
@@ -871,7 +898,11 @@ export function walkTree(
 				const nested = walkTree(
 					model,
 					node.children,
-					{ ...context, sentenceOrdinal: node.restriction.ordinal },
+					{
+						...context,
+						scopeContextTexts,
+						sentenceOrdinal: node.restriction.ordinal,
+					},
 					counter,
 				);
 				resolved.push(...nested.resolved);
@@ -883,7 +914,7 @@ export function walkTree(
 				const nested = walkTree(
 					model,
 					node.children,
-					{ ...context, sentenceOrdinal: -1 },
+					{ ...context, scopeContextTexts, sentenceOrdinal: -1 },
 					counter,
 				);
 				resolved.push(...nested.resolved);
@@ -899,7 +930,7 @@ export function walkTree(
 				const nested = walkTree(
 					model,
 					node.children,
-					{ ...context, matterFollowingTarget },
+					{ ...context, scopeContextTexts, matterFollowingTarget },
 					counter,
 				);
 				resolved.push(...nested.resolved);
@@ -1125,9 +1156,13 @@ function executeTreeSequential(
 			const scopeTarget = mergeTargets(context.target, [
 				{ type: toHierarchyType(node.scope.kind), val: node.scope.label },
 			]);
+			const scopeContextTexts = appendScopeContextText(
+				context.scopeContextTexts,
+				node.sourceText,
+			);
 			executeTreeSequential(
 				node.children,
-				{ ...context, target: scopeTarget },
+				{ ...context, target: scopeTarget, scopeContextTexts },
 				counter,
 				state,
 			);
@@ -1135,6 +1170,10 @@ function executeTreeSequential(
 		}
 
 		if (node.type === SemanticNodeType.LocationRestriction) {
+			const scopeContextTexts = appendScopeContextText(
+				context.scopeContextTexts,
+				node.sourceText,
+			);
 			if (node.restriction.kind === LocationRestrictionKind.In) {
 				if (node.restriction.refs.length === 0) {
 					state.unsupportedReasons.push("in_location_empty_refs");
@@ -1144,7 +1183,7 @@ function executeTreeSequential(
 					const target = mergeTargets(context.target, refToHierarchyPath(ref));
 					executeTreeSequential(
 						node.children,
-						{ ...context, target },
+						{ ...context, target, scopeContextTexts },
 						counter,
 						state,
 					);
@@ -1160,6 +1199,7 @@ function executeTreeSequential(
 					node.children,
 					{
 						...context,
+						scopeContextTexts,
 						matterPreceding: node.restriction.ref,
 						matterPrecedingTarget,
 					},
@@ -1179,6 +1219,7 @@ function executeTreeSequential(
 					node.children,
 					{
 						...context,
+						scopeContextTexts,
 						target,
 						unanchoredInsertMode: "add_at_end",
 						atEndOnly: true,
@@ -1191,7 +1232,11 @@ function executeTreeSequential(
 			if (node.restriction.kind === LocationRestrictionKind.SentenceOrdinal) {
 				executeTreeSequential(
 					node.children,
-					{ ...context, sentenceOrdinal: node.restriction.ordinal },
+					{
+						...context,
+						scopeContextTexts,
+						sentenceOrdinal: node.restriction.ordinal,
+					},
 					counter,
 					state,
 				);
@@ -1200,7 +1245,7 @@ function executeTreeSequential(
 			if (node.restriction.kind === LocationRestrictionKind.SentenceLast) {
 				executeTreeSequential(
 					node.children,
-					{ ...context, sentenceOrdinal: -1 },
+					{ ...context, scopeContextTexts, sentenceOrdinal: -1 },
 					counter,
 					state,
 				);
@@ -1213,7 +1258,7 @@ function executeTreeSequential(
 				);
 				executeTreeSequential(
 					node.children,
-					{ ...context, matterFollowingTarget },
+					{ ...context, scopeContextTexts, matterFollowingTarget },
 					counter,
 					state,
 				);
@@ -1317,6 +1362,8 @@ function buildApplySummary(
 			operationIndex,
 			operationType: attempt.operationType,
 			text: attempt.nodeText,
+			originalText: attempt.originalNodeText ?? attempt.nodeText,
+			scopeContextTexts: attempt.scopeContextTexts,
 			outcome: attempt.outcome,
 			targetPath: attempt.targetPath,
 			reasonKind: failure.reasonKind,
@@ -1396,6 +1443,7 @@ export function applyAmendmentEditTreeToSection(
 		args.tree.children,
 		{
 			target: [],
+			scopeContextTexts: [],
 			matterPreceding: null,
 			matterPrecedingTarget: null,
 			matterFollowingTarget: null,

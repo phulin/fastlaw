@@ -43,13 +43,15 @@
 
 .pdf-amended-snippet-replacement {
 	margin: 0;
-	padding: 0.35rem 0 0.5rem;
-	border-top: 1px solid rgba(15, 23, 42, 0.1);
+	padding: 0.5rem 0.55rem 0.55rem;
+	border: 1px solid rgba(15, 23, 42, 0.11);
+	border-radius: 0.45rem;
+	background: rgba(15, 23, 42, 0.02);
+	margin-top: 0.45rem;
 }
 
 .pdf-amended-snippet-replacement:first-of-type {
-	border-top: 0;
-	padding-top: 0;
+	margin-top: 0.1rem;
 }
 
 .pdf-amended-snippet-replacements-header {
@@ -85,6 +87,44 @@
 
 .pdf-amended-snippet-replacement .markdown p:first-child {
 	margin-top: 0;
+}
+
+.pdf-amended-snippet-failed-original {
+	padding: 0.35rem 0.45rem;
+	border-radius: 0.35rem;
+	background: rgba(59, 130, 246, 0.09);
+	border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.pdf-amended-snippet-failed-scope {
+	padding: 0.25rem 0.4rem;
+	border-left: 2px solid rgba(100, 116, 139, 0.35);
+	background: rgba(148, 163, 184, 0.08);
+}
+
+.pdf-amended-snippet-failed-scope-line {
+	margin-top: 0.2rem;
+}
+
+.pdf-amended-snippet-failed-scope-line:first-child {
+	margin-top: 0;
+}
+
+.pdf-amended-snippet-failed-target {
+	font-size: 0.82rem;
+	font-weight: 600;
+	color: #0f172a;
+	padding: 0.3rem 0.45rem;
+	border-radius: 0.35rem;
+	background: rgba(2, 132, 199, 0.09);
+	border: 1px solid rgba(2, 132, 199, 0.22);
+}
+
+.pdf-amended-snippet-failed-reason {
+	padding: 0.25rem 0.45rem;
+	border-radius: 0.35rem;
+	background: rgba(220, 38, 38, 0.09);
+	border: 1px solid rgba(220, 38, 38, 0.2);
 }
 
 .pdf-amended-snippet-status-badge {

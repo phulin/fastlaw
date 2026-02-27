@@ -311,17 +311,20 @@ export type UltimateEdit =
 export interface EditNode {
 	type: SemanticNodeType.Edit;
 	edit: UltimateEdit;
+	sourceText?: string;
 }
 
 export interface LocationRestrictionNode {
 	type: SemanticNodeType.LocationRestriction;
 	restriction: LocationRestriction;
+	sourceText?: string;
 	children: Array<LocationRestrictionNode | EditNode>;
 }
 
 export interface ScopeNode {
 	type: SemanticNodeType.Scope;
 	scope: ScopeSelector;
+	sourceText?: string;
 	children: Array<ScopeNode | LocationRestrictionNode | EditNode>;
 }
 

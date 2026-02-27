@@ -31,8 +31,12 @@ import { ParagraphRange } from "./types";
 type TreeChild = ScopeNode | LocationRestrictionNode | EditNode;
 
 type WrapperSpec =
-	| { type: "scope"; scope: ScopeSelector }
-	| { type: "restriction"; restriction: LocationRestriction };
+	| { type: "scope"; scope: ScopeSelector; sourceText: string | null }
+	| {
+			type: "restriction";
+			restriction: LocationRestriction;
+			sourceText: string | null;
+	  };
 
 interface TranslationContext {
 	issues: TranslationIssue[];
@@ -101,6 +105,7 @@ export function translateInstructionAstToEditTree(
 	const baseWrappers: WrapperSpec[] = baseStructuralScope.map((scope) => ({
 		type: "scope",
 		scope,
+		sourceText: null,
 	}));
 	const baseContext: TranslationContext = {
 		issues,
@@ -154,7 +159,11 @@ function translateSubinstruction(
 		if (textLocationNode) {
 			const restriction = parseTextLocation(textLocationNode, localContext);
 			if (restriction) {
-				localWrappers.push({ type: "restriction", restriction });
+				localWrappers.push({
+					type: "restriction",
+					restriction,
+					sourceText: textLocationNode.text.trim(),
+				});
 				if (restriction.kind === LocationRestrictionKind.In) {
 					localContext = {
 						...localContext,
@@ -226,7 +235,11 @@ function translateResolution(
 	if (resolution.textLocation) {
 		const restriction = parseTextLocation(resolution.textLocation, context);
 		if (restriction) {
-			localWrappers.push({ type: "restriction", restriction });
+			localWrappers.push({
+				type: "restriction",
+				restriction,
+				sourceText: resolution.textLocation.text.trim(),
+			});
 			if (restriction.kind === LocationRestrictionKind.In) {
 				localContext = {
 					...localContext,
@@ -251,6 +264,7 @@ function translateEdits(
 		nodes.push({
 			type: SemanticNodeType.Edit,
 			edit,
+			sourceText: editNode.text.trim(),
 		});
 	}
 	return nodes;
@@ -697,7 +711,11 @@ function parseSubscopeWrappers(
 			const mergedPath = mergeScopePaths(context.scopePath, concrete[0].path);
 			const appended = mergedPath.slice(context.scopePath.length);
 			for (const selector of appended) {
-				wrappers.push({ type: "scope", scope: selector });
+				wrappers.push({
+					type: "scope",
+					scope: selector,
+					sourceText: subscope.text.trim(),
+				});
 			}
 			nextContext = {
 				...nextContext,
@@ -714,7 +732,11 @@ function parseSubscopeWrappers(
 				kind: LocationRestrictionKind.In,
 				refs,
 			};
-			wrappers.push({ type: "restriction", restriction });
+			wrappers.push({
+				type: "restriction",
+				restriction,
+				sourceText: subscopePlural.text.trim(),
+			});
 			nextContext = {
 				...nextContext,
 				moveFromRefs: refs,
@@ -1370,6 +1392,7 @@ function wrapNodes(wrappers: WrapperSpec[], leaves: EditNode[]): TreeChild[] {
 				{
 					type: SemanticNodeType.Scope,
 					scope: wrapper.scope,
+					sourceText: wrapper.sourceText ?? undefined,
 					children,
 				},
 			];
@@ -1379,6 +1402,7 @@ function wrapNodes(wrappers: WrapperSpec[], leaves: EditNode[]): TreeChild[] {
 			{
 				type: SemanticNodeType.LocationRestriction,
 				restriction: wrapper.restriction,
+				sourceText: wrapper.sourceText ?? undefined,
 				children: children.filter(
 					(child): child is LocationRestrictionNode | EditNode =>
 						child.type !== SemanticNodeType.Scope,
