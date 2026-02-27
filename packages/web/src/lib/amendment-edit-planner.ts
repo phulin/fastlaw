@@ -181,7 +181,11 @@ function formatContentRanges(
 	const texts = paragraphTexts(content.sourceLocation);
 	const formattedText = texts
 		.map((text, i) => {
-			const depth = paragraphs[i]?.level ?? baseDepth;
+			const paragraphLevel = paragraphs[i]?.level;
+			const depth =
+				paragraphLevel === undefined
+					? baseDepth
+					: Math.max(0, paragraphLevel - 1);
 			return formatInsertedBlockContent(text, {
 				baseDepth: depth,
 				quotePlainMultiline: true,
@@ -203,6 +207,51 @@ function formatReplacementContent(
 	indent: number,
 ): TextWithProvenance {
 	return formatContentRanges(content, indent);
+}
+
+function paragraphIndentAtOffset(
+	model: DocumentModel,
+	offset: number,
+): number | null {
+	const paragraph = model.paragraphs.find(
+		(candidate) => candidate.start <= offset && candidate.end > offset,
+	);
+	return paragraph?.indent ?? null;
+}
+
+function formatStrikeInsertReplacementText(args: {
+	model: DocumentModel;
+	content: TextWithProvenance;
+	insertStart: number;
+	fallbackIndent: number;
+}): string {
+	const { model, content, insertStart, fallbackIndent } = args;
+	if (!content.text.includes("\n")) return content.text;
+	const hostIndent =
+		paragraphIndentAtOffset(model, insertStart) ?? fallbackIndent;
+	const isMidLineInsertion =
+		insertStart > 0 && model.plainText[insertStart - 1] !== "\n";
+	if (!isMidLineInsertion) {
+		return formatReplacementContent(content, hostIndent).text;
+	}
+
+	const lines = content.text.split("\n");
+	if (lines.length <= 1) return content.text;
+	const [firstLine = "", ...remainingLines] = lines;
+	const continuationLine = firstLine.trim().length > 0;
+	if (!continuationLine || isStructuralMarkerLine(firstLine)) {
+		return formatInsertedBlockContent(content.text, {
+			baseDepth: hostIndent + 1,
+			quotePlainMultiline: true,
+		});
+	}
+
+	const remainingText = remainingLines.join("\n");
+	const formattedRemaining = formatInsertedBlockContent(remainingText, {
+		baseDepth: hostIndent + 1,
+		quotePlainMultiline: true,
+	});
+	return `${firstLine}\n${formattedRemaining}`;
 }
 
 function multilineReplacementSuffix(
@@ -263,7 +312,6 @@ const MARKER_LINE_WITH_PREFIX_RE =
 	/^(\s*(?:>\s*)*)((?:\([A-Za-z0-9ivxIVX]+\))+)\s+([A-Za-z0-9][A-Za-z0-9 '"()\-.,/&;]*?)\.\u2014(?:\s*(.*))?$/;
 const MARKER_PARAGRAPH_RE =
 	/^(\s*)((?:\([A-Za-z0-9ivxIVX]+\))+)(?:\s+([\s\S]*))?$/;
-const HEADING_PARAGRAPH_RE = /^[A-Za-z0-9][A-Za-z0-9 '"()\-.,/&]*$/;
 
 function lowercaseHeadingWithUppercaseFirstCharacter(text: string): string {
 	if (text.length === 0) return text;
@@ -296,13 +344,6 @@ function normalizeInsertedMarkerHeadings(sourceText: string): string {
 	return normalized.join("\n");
 }
 
-function isStandaloneSectionHeading(text: string): boolean {
-	const trimmed = text.trim();
-	if (trimmed.length === 0) return false;
-	if (!HEADING_PARAGRAPH_RE.test(trimmed)) return false;
-	return !/[.!?;:]$/.test(trimmed);
-}
-
 function withSymbolicMarkerHeadingSpans(
 	spans: FormattingSpan[],
 	plainText: string,
@@ -325,22 +366,12 @@ function withSymbolicMarkerHeadingSpans(
 
 		const leading = match[1] ?? "";
 		const marker = match[2] ?? "";
-		const trailing = (match[3] ?? "").trim();
 		if (marker.length === 0) continue;
 
 		const markerStart = paragraph.start + leading.length;
 		const markerEnd = markerStart + marker.length;
 		if (markerEnd > markerStart && !hasStrongSpan(markerStart, markerEnd)) {
 			output.push({ start: markerStart, end: markerEnd, type: "strong" });
-		}
-		if (!isStandaloneSectionHeading(trailing)) continue;
-		let headingStart = markerEnd;
-		while (text[headingStart - paragraph.start] === " ") {
-			headingStart += 1;
-		}
-		const headingEnd = paragraph.end;
-		if (headingEnd > headingStart && !hasStrongSpan(headingStart, headingEnd)) {
-			output.push({ start: headingStart, end: headingEnd, type: "strong" });
 		}
 	}
 
@@ -953,21 +984,35 @@ function planPatchForOperation(
 					scopedText,
 					resolvedStrikingContent,
 				)) {
+					const patchStart = range.start + occurrenceIndex;
+					const formattedReplacement = formatStrikeInsertReplacementText({
+						model,
+						content: resolvedReplacementContent,
+						insertStart: patchStart,
+						fallbackIndent: range.indent ?? 0,
+					});
 					pushPatch({
-						start: range.start + occurrenceIndex,
-						end: range.start + occurrenceIndex + resolvedStrikingContent.length,
+						start: patchStart,
+						end: patchStart + resolvedStrikingContent.length,
 						deleted: resolvedStrikingContent,
-						inserted: resolvedReplacementContent.text,
+						inserted: formattedReplacement,
 					});
 				}
 				break;
 			}
 
+			const patchStart = range.start + localIndex;
+			const formattedReplacement = formatStrikeInsertReplacementText({
+				model,
+				content: resolvedReplacementContent,
+				insertStart: patchStart,
+				fallbackIndent: range.indent ?? 0,
+			});
 			pushPatch({
-				start: range.start + localIndex,
-				end: range.start + localIndex + resolvedStrikingContent.length,
+				start: patchStart,
+				end: patchStart + resolvedStrikingContent.length,
 				deleted: resolvedStrikingContent,
-				inserted: resolvedReplacementContent.text,
+				inserted: formattedReplacement,
 			});
 			break;
 		}

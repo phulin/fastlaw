@@ -26,7 +26,12 @@ import {
 	walkTree,
 } from "../amendment-edit-tree-apply";
 import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
-import { expectEffectToContainMarkedText, tp } from "./test-utils";
+import { ParagraphRange } from "../types";
+import {
+	createParagraph,
+	expectEffectToContainMarkedText,
+	tp,
+} from "./test-utils";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(TEST_DIR, "../../..");
@@ -321,6 +326,39 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.renderModel.plainText).toContain("\n(1) Alpha.");
 		expect(effect.renderModel.plainText).toContain("\n(2) Beta.");
 		expect(effect.inserted[0]).toContain("(1) Alpha.");
+	});
+
+	it("reduces PDF-derived indentation levels by one for inserted block content", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Insert,
+						content: {
+							text: "(A) Alpha.",
+							sourceLocation: new ParagraphRange(
+								[createParagraph("(A) Alpha.", { level: 3 })],
+								0,
+								10,
+							),
+						},
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(a) Opening line.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.inserted[0]).toContain("> > (A) Alpha.");
+		expect(effect.inserted[0]).not.toContain("> > > (A) Alpha.");
 	});
 
 	it("formats scoped Rewrite edits with nested marker indentation", () => {
@@ -1362,7 +1400,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		);
 	});
 
-	it("keeps containing paragraph span for multiline strike-insert replacements", () => {
+	it("preserves inserted paragraph spans for multiline strike-insert replacements", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
 			targetSection: "1",
@@ -1398,14 +1436,47 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		);
 		expect(insertionSpan).toBeDefined();
 
-		const parentParagraph = effect.renderModel.spans.find(
+		const insertedParagraphs = effect.renderModel.spans
+			.filter(
+				(span) =>
+					span.type === "paragraph" &&
+					insertionSpan !== undefined &&
+					span.start >= insertionSpan.start &&
+					span.end <= insertionSpan.end,
+			)
+			.map((span) => ({
+				text: effect.renderModel.plainText.slice(span.start, span.end),
+				quoteDepth: Number(span.metadata?.quoteDepth ?? 0),
+			}));
+
+		const containingParagraph = effect.renderModel.spans.find(
 			(span) =>
 				span.type === "paragraph" &&
-				insertionSpan !== undefined &&
-				span.start < insertionSpan.start &&
-				span.end > insertionSpan.end,
+				span.start < (insertionSpan?.start ?? 0) &&
+				span.end > (insertionSpan?.start ?? 0),
 		);
-		expect(parentParagraph).toBeDefined();
+		expect(containingParagraph).toBeDefined();
+		expect(
+			effect.renderModel.plainText.slice(
+				containingParagraph?.start ?? 0,
+				containingParagraph?.end ?? 0,
+			),
+		).toContain("county for not less than—");
+
+		expect(
+			insertedParagraphs.some(
+				(paragraph) =>
+					paragraph.text.startsWith("(aa) 4 consecutive weeks;") &&
+					paragraph.quoteDepth > 0,
+			),
+		).toBe(true);
+		expect(
+			insertedParagraphs.some(
+				(paragraph) =>
+					paragraph.text.startsWith("(bb) 7 of the previous 8 consecutive") &&
+					paragraph.quoteDepth > 0,
+			),
+		).toBe(true);
 	});
 
 	it("does not widen strike-insert replacement to ancestor scope when replacing a single paragraph", () => {

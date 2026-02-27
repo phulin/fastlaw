@@ -194,6 +194,15 @@ function shiftInsertedSpans(
 	}));
 }
 
+function startsAtLineBoundary(text: string, offset: number): boolean {
+	if (offset <= 0) return true;
+	return text[offset - 1] === "\n";
+}
+
+function isStructuralMarkerParagraph(text: string): boolean {
+	return /^\s*\([A-Za-z0-9ivxIVX]+\)(?:\s|$)/.test(text);
+}
+
 function shiftSpansForInsertion(
 	spans: FormattingSpan[],
 	insertAt: number,
@@ -350,8 +359,31 @@ function materializeEditsFromPatches(
 			const insertedHasParagraphs = insertedSpans.some(
 				(span) => span.type === "paragraph",
 			);
-			const shouldSplitContainerSpans =
-				insertedHasParagraphs && deletedLength === 0;
+			const shouldSplitContainerSpans = insertedHasParagraphs;
+			const shiftedInsertStart =
+				insertAt + outsidePrefixPlain.length + insertedPrefixPlain.length;
+			const insertedParagraphs = insertedSpans
+				.filter((span) => span.type === "paragraph")
+				.sort(
+					(left, right) => left.start - right.start || left.end - right.end,
+				);
+			const firstInsertedParagraph = insertedParagraphs[0];
+			const firstInsertedParagraphText =
+				firstInsertedParagraph &&
+				firstInsertedParagraph.end > firstInsertedParagraph.start
+					? insertedPlain.slice(
+							firstInsertedParagraph.start,
+							firstInsertedParagraph.end,
+						)
+					: "";
+			const preserveLeadingContinuationInLeftParagraph =
+				insertedHasParagraphs &&
+				!startsAtLineBoundary(workingText, insertAt) &&
+				insertedPlain.length > 0 &&
+				!insertedPlain.startsWith("\n") &&
+				firstInsertedParagraph?.start === 0 &&
+				firstInsertedParagraphText.trim().length > 0 &&
+				!isStructuralMarkerParagraph(firstInsertedParagraphText);
 			workingSpans = shouldSplitContainerSpans
 				? splitContainerSpansAroundInsertion(
 						workingSpans,
@@ -359,12 +391,43 @@ function materializeEditsFromPatches(
 						totalInsertedLength,
 					)
 				: shiftSpansForInsertion(workingSpans, insertAt, totalInsertedLength);
+			if (
+				preserveLeadingContinuationInLeftParagraph &&
+				firstInsertedParagraph !== undefined
+			) {
+				const leadingContinuationLength = firstInsertedParagraph.end;
+				workingSpans = workingSpans.map((span) => {
+					if (
+						(span.type === "paragraph" || span.type === "heading") &&
+						span.end === insertAt
+					) {
+						return { ...span, end: span.end + leadingContinuationLength };
+					}
+					return span;
+				});
+			}
 			if (insertedTotalLength > 0) {
+				const effectiveInsertedSpans =
+					preserveLeadingContinuationInLeftParagraph &&
+					firstInsertedParagraph !== undefined
+						? insertedSpans
+								.map((span) => {
+									if (span.type !== "paragraph") return span;
+									if (span.end <= firstInsertedParagraph.end) {
+										return null;
+									}
+									if (span.start < firstInsertedParagraph.end) {
+										return {
+											...span,
+											start: firstInsertedParagraph.end,
+										};
+									}
+									return span;
+								})
+								.filter((span): span is FormattingSpan => span !== null)
+						: insertedSpans;
 				workingSpans.push(
-					...shiftInsertedSpans(
-						insertedSpans,
-						insertAt + outsidePrefixPlain.length + insertedPrefixPlain.length,
-					),
+					...shiftInsertedSpans(effectiveInsertedSpans, shiftedInsertStart),
 				);
 				workingSpans.push({
 					type: "insertion",
