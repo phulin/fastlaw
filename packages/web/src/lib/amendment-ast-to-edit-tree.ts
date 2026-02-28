@@ -392,8 +392,24 @@ function parseEdit(
 	}
 
 	if (text.startsWith("inserting ")) {
-		const content =
-			extractInlineContent(normalized) || extractContent(normalized);
+		const inlineContent = extractInlineContent(normalized);
+		const normalizedContent = extractContent(normalized);
+		const fallbackContent =
+			normalized === editNode ? null : extractContent(editNode);
+		const expectsFollowingBlock = /\bthe following\b/i.test(text);
+		const content = expectsFollowingBlock
+			? normalizedContent.text.length > 0
+				? normalizedContent
+				: fallbackContent && fallbackContent.text.length > 0
+					? fallbackContent
+					: normalizedContent
+			: inlineContent.text.length > 0
+				? inlineContent
+				: normalizedContent.text.length > 0
+					? normalizedContent
+					: fallbackContent && fallbackContent.text.length > 0
+						? fallbackContent
+						: normalizedContent;
 		const targetNode =
 			findChild(normalized, GrammarAstNodeType.AfterBeforeTarget) ??
 			findChild(normalized, GrammarAstNodeType.AfterBeforeSearch);

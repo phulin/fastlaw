@@ -1015,6 +1015,219 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expectEffectToContainMarkedText(effect, "~~(a)~~++(b)++ Original text.");
 	});
 
+	it("applies redesignation through-ranges without retargeting the same node repeatedly", () => {
+		const fromLabels = [
+			"H",
+			"I",
+			"J",
+			"K",
+			"L",
+			"M",
+			"N",
+			"O",
+			"P",
+			"Q",
+			"R",
+			"S",
+			"T",
+			"U",
+		];
+		const toLabels = [
+			"I",
+			"J",
+			"K",
+			"L",
+			"M",
+			"N",
+			"O",
+			"P",
+			"Q",
+			"R",
+			"S",
+			"T",
+			"U",
+			"V",
+		];
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Redesignate,
+						mappings: fromLabels.map((from, index) => ({
+							from: {
+								kind: ScopeKind.Paragraph,
+								path: [{ kind: ScopeKind.Paragraph, label: from }],
+							},
+							to: {
+								kind: ScopeKind.Paragraph,
+								path: [
+									{ kind: ScopeKind.Paragraph, label: toLabels[index] ?? from },
+								],
+							},
+						})),
+					},
+				},
+			],
+		};
+
+		const sectionBody = [
+			"(A) A",
+			"(B) B",
+			"(C) C",
+			"(D) D",
+			"(E) E",
+			"(F) F",
+			"(G) G",
+			"(H) H",
+			"(I) I",
+			"(J) J",
+			"(K) K",
+			"(L) L",
+			"(M) M",
+			"(N) N",
+			"(O) O",
+			"(P) P",
+			"(Q) Q",
+			"(R) R",
+			"(S) S",
+			"(T) T",
+			"(U) U",
+		].join("\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody,
+			instructionText:
+				"Section 1 is amended by redesignating paragraphs (H) through (U) as paragraphs (I) through (V), respectively.",
+		});
+		expect(effect.status).toBe("ok");
+		expect(effect.deleted).toEqual([
+			"(H)",
+			"(I)",
+			"(J)",
+			"(K)",
+			"(L)",
+			"(M)",
+			"(N)",
+			"(O)",
+			"(P)",
+			"(Q)",
+			"(R)",
+			"(S)",
+			"(T)",
+			"(U)",
+		]);
+		expect(effect.inserted).toEqual([
+			"(I)",
+			"(J)",
+			"(K)",
+			"(L)",
+			"(M)",
+			"(N)",
+			"(O)",
+			"(P)",
+			"(Q)",
+			"(R)",
+			"(S)",
+			"(T)",
+			"(U)",
+			"(V)",
+		]);
+	});
+
+	it("applies insert-after alongside redesignation in the same subinstruction block", () => {
+		const parser = createHandcraftedInstructionParser();
+		const instruction = `Section 1 of title 10, United States Code, is amended—
+(A) by redesignating subparagraphs (H) through (U) as subparagraphs (I) through (V), respectively; and
+(B) by inserting after subparagraph (G) the following new subparagraph:
+“(H) Added.”.`;
+		const parsed = parser.parseInstructionFromLines(instruction.split("\n"), 0);
+		if (!parsed) throw new Error("Expected instruction to parse.");
+		const translated = translateInstructionAstToEditTree(parsed.ast);
+		expect(translated.issues).toEqual([]);
+		const queue = [...translated.tree.children];
+		const edits: UltimateEditKind[] = [];
+		let insertContent: string | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (current.type === SemanticNodeType.Edit) {
+				edits.push(current.edit.kind);
+				if (current.edit.kind === UltimateEditKind.Insert) {
+					insertContent = current.edit.content.text;
+				}
+				continue;
+			}
+			queue.push(...current.children);
+		}
+		expect(edits).toContain(UltimateEditKind.Redesignate);
+		expect(edits).toContain(UltimateEditKind.Insert);
+		expect(insertContent).toContain("(H) Added.");
+
+		const sectionBody = [
+			"(A) A",
+			"(B) B",
+			"(C) C",
+			"(D) D",
+			"(E) E",
+			"(F) F",
+			"(G) G",
+			"(H) H",
+			"(I) I",
+			"(J) J",
+			"(K) K",
+			"(L) L",
+			"(M) M",
+			"(N) N",
+			"(O) O",
+			"(P) P",
+			"(Q) Q",
+			"(R) R",
+			"(S) S",
+			"(T) T",
+			"(U) U",
+		].join("\n");
+		const effect = applyAmendmentEditTreeToSection({
+			tree: translated.tree,
+			sectionPath: "/statutes/usc/section/10/1",
+			sectionBody,
+			instructionText: instruction,
+		});
+		expect(effect.status).toBe("ok");
+		expect(effect.applySummary.failedItems).toEqual([]);
+		expect(effect.renderModel.plainText).toContain("(H) Added.");
+		const paragraphTexts = effect.renderModel.spans
+			.filter((span) => span.type === "paragraph")
+			.sort((left, right) => left.start - right.start || left.end - right.end)
+			.map((span) => effect.renderModel.plainText.slice(span.start, span.end));
+		expect(paragraphTexts.some((text) => text.includes("(H) Added."))).toBe(
+			true,
+		);
+		expect(paragraphTexts.some((text) => text.includes("(I)"))).toBe(true);
+		expect(paragraphTexts.length).toBeGreaterThan(1);
+		const insertedHSpan = effect.renderModel.spans.find(
+			(span) =>
+				span.type === "insertion" &&
+				effect.renderModel.plainText
+					.slice(span.start, span.end)
+					.includes("(H) Added."),
+		);
+		const oldHDeletionSpan = effect.renderModel.spans.find(
+			(span) =>
+				span.type === "deletion" &&
+				effect.renderModel.plainText.slice(span.start, span.end) === "(H)",
+		);
+		expect(insertedHSpan).toBeDefined();
+		expect(oldHDeletionSpan).toBeDefined();
+		expect(insertedHSpan?.start ?? Number.POSITIVE_INFINITY).toBeLessThan(
+			oldHDeletionSpan?.start ?? Number.NEGATIVE_INFINITY,
+		);
+	});
+
 	it("applies Move edits", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

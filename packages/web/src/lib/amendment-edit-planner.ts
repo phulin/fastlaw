@@ -287,10 +287,15 @@ function normalizeInsertedSpans(
 ): FormattingSpan[] {
 	if (insertedPlain.length === 0) return [];
 	const hasMultiline = insertedPlain.includes("\n");
+	const preserveSingleLineStructuralParagraph =
+		!hasMultiline && isStructuralMarkerWithBodyLine(insertedPlain);
 	return spans
 		.filter((span) => {
 			if (span.type === "insertion" || span.type === "deletion") return false;
 			if (!hasMultiline) {
+				if (preserveSingleLineStructuralParagraph) {
+					return span.type !== "heading";
+				}
 				return span.type !== "paragraph" && span.type !== "heading";
 			}
 			return true;
@@ -309,6 +314,13 @@ function stripQuotePrefix(line: string): string {
 function isStructuralMarkerLine(line: string): boolean {
 	const stripped = stripQuotePrefix(line);
 	return /^\([A-Za-z0-9ivxIVX]+\)(?:\s|$)/.test(stripped);
+}
+
+function isStructuralMarkerWithBodyLine(line: string): boolean {
+	const stripped = stripQuotePrefix(line);
+	return /^\([A-Za-z0-9ivxIVX]+\)(?:\([A-Za-z0-9ivxIVX]+\))*\s+\S/.test(
+		stripped,
+	);
 }
 
 const MARKER_LINE_WITH_PREFIX_RE =

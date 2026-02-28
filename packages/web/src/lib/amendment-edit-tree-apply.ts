@@ -1031,8 +1031,8 @@ function buildCanonicalRenderOffsetMap(
 		let liveCount = 0;
 		const target = Math.max(0, canonicalOffset);
 		for (let index = 0; index < renderText.length; index += 1) {
-			if (deletedMask[index] === 1) continue;
 			if (liveCount === target) return index;
+			if (deletedMask[index] === 1) continue;
 			liveCount += 1;
 		}
 		return renderText.length;
@@ -1053,6 +1053,10 @@ function toSpanOnlyModel(
 		rootNodeIds: [],
 		paragraphs: [],
 	};
+}
+
+function overlaps(left: PlannedPatch, right: PlannedPatch): boolean {
+	return left.start < right.end && right.start < left.end;
 }
 
 function canonicalPlainDocumentFromRenderModel(
@@ -1152,6 +1156,89 @@ function executeResolvedOperation(
 	);
 	state.patches.push(...orderedPatches);
 	return orderedPatches;
+}
+
+function executeResolvedOperationsSnapshot(
+	state: SequentialExecutionState,
+	operations: ResolvedInstructionOperation[],
+	classificationOverrides?: ClassificationOverride[],
+): Set<number> {
+	const tentativePatches: PlannedPatch[] = [];
+	const attempts: { operationIndex: number; attempt: OperationMatchAttempt }[] =
+		[];
+	for (const operation of operations) {
+		const planned = planOperationEdit(
+			state.resolutionModel,
+			operation,
+			classificationOverrides,
+		);
+		tentativePatches.push(...planned.patches);
+		attempts.push({
+			operationIndex: operation.operationIndex,
+			attempt: planned.attempt,
+		});
+	}
+
+	const accepted: PlannedPatch[] = [];
+	for (const patch of tentativePatches.sort(
+		(left, right) =>
+			left.operationIndex - right.operationIndex || left.start - right.start,
+	)) {
+		const hasConflict = accepted.some((existing) => overlaps(existing, patch));
+		if (hasConflict) continue;
+		accepted.push(patch);
+	}
+
+	const appliedCountByOperation = new Map<number, number>();
+	for (const patch of accepted) {
+		appliedCountByOperation.set(
+			patch.operationIndex,
+			(appliedCountByOperation.get(patch.operationIndex) ?? 0) + 1,
+		);
+	}
+	for (const entry of attempts) {
+		if (entry.attempt.outcome !== "scope_unresolved") {
+			const applied =
+				(appliedCountByOperation.get(entry.operationIndex) ?? 0) > 0;
+			entry.attempt.patchApplied = applied;
+			entry.attempt.outcome = applied ? "applied" : "no_patch";
+		}
+		state.attempts.push(entry.attempt);
+	}
+
+	if (accepted.length === 0) {
+		return new Set<number>();
+	}
+
+	const orderedPatches = [...accepted].sort(
+		(left, right) => left.start - right.start || left.end - right.end,
+	);
+	const offsetMap = buildCanonicalRenderOffsetMap(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	const renderPatches = orderedPatches.map((patch) => ({
+		...patch,
+		start: offsetMap.toRenderPoint(patch.start),
+		end: offsetMap.toRenderPoint(patch.end),
+		insertAt: offsetMap.toRenderPoint(patch.insertAt),
+	}));
+	const appliedRender = applyPlannedPatchesTransaction(
+		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
+		renderPatches,
+	);
+	state.renderPlainText = appliedRender.plainText;
+	state.renderSpans = appliedRender.spans;
+	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	state.resolutionModel = buildAmendmentDocumentModel(
+		canonicalPlain.plainText,
+		canonicalPlain,
+	);
+	state.patches.push(...orderedPatches);
+	return new Set<number>(appliedCountByOperation.keys());
 }
 
 function registerAppliedRedesignation(
@@ -1306,6 +1393,21 @@ function executeTreeSequential(
 		);
 		state.unsupportedReasons.push(...nested.unsupportedReasons);
 		state.resolvedOperationCount += nested.resolved.length;
+		if (
+			node.edit.kind === UltimateEditKind.Redesignate &&
+			nested.resolved.length > 1
+		) {
+			const appliedOperations = executeResolvedOperationsSnapshot(
+				state,
+				nested.resolved,
+				context.classificationOverrides,
+			);
+			for (const operation of nested.resolved) {
+				if (!appliedOperations.has(operation.operationIndex)) continue;
+				registerAppliedRedesignation(context, operation);
+			}
+			continue;
+		}
 		for (const operation of nested.resolved) {
 			const appliedPatches = executeResolvedOperation(
 				state,
