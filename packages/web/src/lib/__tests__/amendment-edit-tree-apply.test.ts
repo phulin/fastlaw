@@ -94,6 +94,147 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.inserted).toEqual([]);
 	});
 
+	it("plans structural and-list strikes as discrete deletions", () => {
+		const model = buildAmendmentDocumentModel(
+			"(a) Alpha.\n(b) Bravo.\n(c) Charlie.\n(d) Delta.\n(e) Echo.",
+		);
+		const topLevelNodes = [...model.nodesById.values()].filter(
+			(node) => node.path.length === 1,
+		);
+		const bId =
+			topLevelNodes.find(
+				(node) => node.label === "b" && node.kind === "subsection",
+			)?.id ?? null;
+		const dId =
+			topLevelNodes.find(
+				(node) => node.label === "d" && node.kind === "subsection",
+			)?.id ?? null;
+		if (!bId || !dId) throw new Error("Expected subsection targets.");
+
+		const operation: ResolvedInstructionOperation = {
+			operationIndex: 0,
+			nodeText: "by striking subsections (b) and (d)",
+			originalNodeText: null,
+			scopeContextTexts: [],
+			edit: {
+				kind: UltimateEditKind.Strike,
+				target: {
+					refs: [
+						{
+							kind: ScopeKind.Subsection,
+							path: [{ kind: ScopeKind.Subsection, label: "b" }],
+						},
+						{
+							kind: ScopeKind.Subsection,
+							path: [{ kind: ScopeKind.Subsection, label: "d" }],
+						},
+					],
+				},
+				structuralMode: "discrete",
+			},
+			addAtEnd: false,
+			redesignateMappingIndex: 0,
+			sentenceOrdinal: null,
+			atEndOnly: false,
+			hasMatterPrecedingTarget: false,
+			hasMatterFollowingTarget: false,
+			matterPrecedingRefKind: null,
+			matterPrecedingRefLabel: null,
+			matterFollowingRefKind: null,
+			matterFollowingRefLabel: null,
+			hasExplicitTargetPath: true,
+			targetPathText: "subsection:b",
+			resolvedTargetId: bId,
+			resolvedMatterPrecedingTargetId: null,
+			resolvedMatterFollowingTargetId: null,
+			resolvedThroughTargetId: dId,
+			structuralStrikeMode: "discrete",
+			resolvedStructuralTargetIds: [bId, dId],
+			resolvedAnchorTargetId: null,
+			resolvedMoveFromIds: [],
+			resolvedMoveAnchorId: null,
+		};
+
+		const { patches } = planEdits(model, [operation], []);
+		expect(patches).toHaveLength(2);
+		expect(patches.map((patch) => patch.deletedPlain)).toEqual([
+			"(b) Bravo.\n",
+			"(d) Delta.\n",
+		]);
+	});
+
+	it("plans structural through-range strikes as contiguous deletion", () => {
+		const model = buildAmendmentDocumentModel(
+			"(a) Alpha.\n(b) Bravo.\n(c) Charlie.\n(d) Delta.\n(e) Echo.",
+		);
+		const topLevelNodes = [...model.nodesById.values()].filter(
+			(node) => node.path.length === 1,
+		);
+		const bId =
+			topLevelNodes.find(
+				(node) => node.label === "b" && node.kind === "subsection",
+			)?.id ?? null;
+		const dId =
+			topLevelNodes.find(
+				(node) => node.label === "d" && node.kind === "subsection",
+			)?.id ?? null;
+		if (!bId || !dId) throw new Error("Expected subsection targets.");
+
+		const operation: ResolvedInstructionOperation = {
+			operationIndex: 0,
+			nodeText: "by striking subsections (b) through (d)",
+			originalNodeText: null,
+			scopeContextTexts: [],
+			edit: {
+				kind: UltimateEditKind.Strike,
+				target: {
+					refs: [
+						{
+							kind: ScopeKind.Subsection,
+							path: [{ kind: ScopeKind.Subsection, label: "b" }],
+						},
+						{
+							kind: ScopeKind.Subsection,
+							path: [{ kind: ScopeKind.Subsection, label: "c" }],
+						},
+						{
+							kind: ScopeKind.Subsection,
+							path: [{ kind: ScopeKind.Subsection, label: "d" }],
+						},
+					],
+				},
+				structuralMode: "range",
+			},
+			addAtEnd: false,
+			redesignateMappingIndex: 0,
+			sentenceOrdinal: null,
+			atEndOnly: false,
+			hasMatterPrecedingTarget: false,
+			hasMatterFollowingTarget: false,
+			matterPrecedingRefKind: null,
+			matterPrecedingRefLabel: null,
+			matterFollowingRefKind: null,
+			matterFollowingRefLabel: null,
+			hasExplicitTargetPath: true,
+			targetPathText: "subsection:b",
+			resolvedTargetId: bId,
+			resolvedMatterPrecedingTargetId: null,
+			resolvedMatterFollowingTargetId: null,
+			resolvedThroughTargetId: dId,
+			structuralStrikeMode: "range",
+			resolvedStructuralTargetIds: [bId, dId],
+			resolvedAnchorTargetId: null,
+			resolvedMoveFromIds: [],
+			resolvedMoveAnchorId: null,
+		};
+
+		const { patches } = planEdits(model, [operation], []);
+		expect(patches).toHaveLength(1);
+		expect(patches[0]?.deletedPlain).toBe(
+			"(b) Bravo.\n(c) Charlie.\n(d) Delta.\n",
+		);
+	});
+
 	it("applies StrikeInsert edits at each place when requested", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
@@ -1194,6 +1335,53 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(beforeEffect.renderModel.plainText).toBe("new old text");
 		expect(afterEffect.status).toBe("ok");
 		expect(afterEffect.renderModel.plainText).toBe("old new text");
+	});
+
+	it("applies Insert before and after text anchors across inside-word hyphen differences", () => {
+		const beforeTree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Insert,
+						content: tp("new"),
+						before: { kind: SearchTargetKind.Text, text: tp("taxpayer") },
+					},
+				},
+			],
+		};
+		const afterTree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Insert,
+						content: tp("new"),
+						after: { kind: SearchTargetKind.Text, text: tp("tax-payer") },
+					},
+				},
+			],
+		};
+
+		const beforeEffect = applyAmendmentEditTreeToSection({
+			tree: beforeTree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "tax-payer relief",
+		});
+		const afterEffect = applyAmendmentEditTreeToSection({
+			tree: afterTree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "taxpayer relief",
+		});
+
+		expect(beforeEffect.status).toBe("ok");
+		expect(beforeEffect.renderModel.plainText).toBe("new tax-payer relief");
+		expect(afterEffect.status).toBe("ok");
+		expect(afterEffect.renderModel.plainText).toBe("taxpayer new relief");
 	});
 
 	it("applies Insert at-end variants (atEndOf and at-end location)", () => {

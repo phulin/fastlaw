@@ -320,10 +320,14 @@ function parseEdit(
 					findChild(followingSpec, GrammarAstNodeType.ThroughSpec),
 				)
 			: undefined;
+		const structuralMode = strikingTarget
+			? parseStructuralStrikeMode(strikingTarget, target)
+			: undefined;
 		return {
 			kind: UltimateEditKind.Strike,
 			target,
 			through,
+			...(structuralMode ? { structuralMode } : {}),
 		};
 	}
 
@@ -471,6 +475,27 @@ function parseEdit(
 
 	pushIssue(context, `Unsupported edit form: ${text}`, normalized);
 	return null;
+}
+
+function parseStructuralStrikeMode(
+	strikingTarget: RuleAst<GrammarAstNodeType.StrikingTarget>,
+	target: EditTarget,
+): "discrete" | "range" | null {
+	if (!("refs" in target) || target.refs.length < 2) return null;
+
+	const plural = findChild(
+		strikingTarget,
+		GrammarAstNodeType.SubLocationOrPlural,
+	);
+	const pluralLocations = plural
+		? findChild(plural, GrammarAstNodeType.SubLocationsPlural)
+		: null;
+	if (!pluralLocations) return "discrete";
+
+	const pluralText = pluralLocations.text;
+	if (/\bthrough\b/i.test(pluralText)) return "range";
+	if (/\)\s*-\s*\(/.test(pluralText)) return "range";
+	return "discrete";
 }
 
 function parseStrikingTarget(

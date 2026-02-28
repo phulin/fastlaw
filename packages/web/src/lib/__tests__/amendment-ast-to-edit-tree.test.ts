@@ -597,6 +597,87 @@ describe("translateInstructionAstToEditTree", () => {
 		]);
 	});
 
+	it("marks plural structural strike targets with discrete mode for and-lists", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended by striking subsections (b) and (d).",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const queue = [...result.tree.children];
+		let editNode: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.Strike
+			) {
+				editNode = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!editNode || editNode.type !== SemanticNodeType.Edit) {
+			throw new Error("Expected edit node.");
+		}
+		if (editNode.edit.kind !== UltimateEditKind.Strike) {
+			throw new Error("Expected strike edit.");
+		}
+		if (!("refs" in editNode.edit.target)) {
+			throw new Error("Expected plural structural strike target.");
+		}
+		expect(editNode.edit.structuralMode).toBe("discrete");
+		expect(editNode.edit.target.refs.map((ref) => ref.path[0]?.label)).toEqual([
+			"b",
+			"d",
+		]);
+	});
+
+	it("marks plural structural strike targets with range mode for through-ranges", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended by striking subsections (b) through (d).",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const queue = [...result.tree.children];
+		let editNode: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.Strike
+			) {
+				editNode = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!editNode || editNode.type !== SemanticNodeType.Edit) {
+			throw new Error("Expected edit node.");
+		}
+		if (editNode.edit.kind !== UltimateEditKind.Strike) {
+			throw new Error("Expected strike edit.");
+		}
+		if (!("refs" in editNode.edit.target)) {
+			throw new Error("Expected plural structural strike target.");
+		}
+		expect(editNode.edit.structuralMode).toBe("range");
+		expect(editNode.edit.target.refs.map((ref) => ref.path[0]?.label)).toEqual([
+			"b",
+			"c",
+			"d",
+		]);
+	});
+
 	it("preserves punctuation at-end structural context on strike-insert edit targets", () => {
 		const ast = parseInstructionAst(
 			"Section 101 of title 10, United States Code, is amended by striking the period at the end of subsection (a) and inserting “;”.",

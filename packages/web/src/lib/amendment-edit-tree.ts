@@ -260,6 +260,7 @@ export interface StrikeEdit {
 	kind: UltimateEditKind.Strike;
 	target: EditTarget;
 	through?: EditTarget;
+	structuralMode?: "discrete" | "range";
 }
 
 export interface InsertEdit {

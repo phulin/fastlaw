@@ -470,6 +470,8 @@ function resolveEdit(
 				| "addAtEnd"
 				| "redesignateMappingIndex"
 				| "resolvedThroughTargetId"
+				| "structuralStrikeMode"
+				| "resolvedStructuralTargetIds"
 				| "resolvedAnchorTargetId"
 				| "resolvedMoveFromIds"
 				| "resolvedMoveAnchorId"
@@ -519,6 +521,8 @@ function resolveEdit(
 					)
 				: null,
 			resolvedThroughTargetId: overrides.resolvedThroughTargetId ?? null,
+			structuralStrikeMode: overrides.structuralStrikeMode ?? null,
+			resolvedStructuralTargetIds: overrides.resolvedStructuralTargetIds ?? [],
 			resolvedAnchorTargetId: overrides.resolvedAnchorTargetId ?? null,
 			resolvedMoveFromIds: overrides.resolvedMoveFromIds ?? [],
 			resolvedMoveAnchorId: overrides.resolvedMoveAnchorId ?? null,
@@ -581,6 +585,23 @@ function resolveEdit(
 			const operationIndex = counter.index++;
 			const throughTarget =
 				scopedThroughTarget.length > 0 ? scopedThroughTarget : undefined;
+			const structuralTargets =
+				!strikingContent && "refs" in edit.target && edit.target.refs.length > 1
+					? edit.target.refs.map((ref) =>
+							targetWithContext(refToHierarchyPath(ref)),
+						)
+					: [];
+			const resolvedStructuralTargetIds =
+				structuralTargets.length > 0
+					? structuralTargets.map((target) =>
+							resolve(
+								operationIndex,
+								target,
+								"target_unresolved",
+								"target_ambiguous",
+							),
+						)
+					: [];
 			return {
 				resolved: [
 					makeOp(
@@ -596,6 +617,8 @@ function resolveEdit(
 										"through_target_ambiguous",
 									)
 								: null,
+							structuralStrikeMode: edit.structuralMode ?? null,
+							resolvedStructuralTargetIds,
 						},
 					),
 				],
@@ -781,6 +804,8 @@ function resolveEdit(
 						resolvedMatterPrecedingTargetId: null,
 						resolvedMatterFollowingTargetId: null,
 						resolvedThroughTargetId: null,
+						structuralStrikeMode: null,
+						resolvedStructuralTargetIds: [],
 						resolvedAnchorTargetId: null,
 						resolvedMoveFromIds,
 						resolvedMoveAnchorId,

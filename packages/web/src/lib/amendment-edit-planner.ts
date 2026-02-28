@@ -21,6 +21,7 @@ import {
 	textSearchFromEditTarget,
 	UltimateEditKind,
 } from "./amendment-edit-tree";
+import { findAnchorSearchMatch } from "./anchor-search";
 import { formatInsertedBlockContent } from "./inserted-block-format";
 import { segment } from "./sentence-segment";
 import type { ParagraphRange } from "./types";
@@ -92,6 +93,8 @@ function computeFallbackAnchorRegexSearch(anchorText: string): RegExp | null {
 	);
 	return new RegExp(regexStr, "i");
 }
+
+const INSIDE_WORD_HYPHEN_RE = /(?<=[A-Za-z0-9])-(?=[A-Za-z0-9])/g;
 
 function computeFallbackRegexSearch(
 	strikeText: string,
@@ -1088,6 +1091,33 @@ function planPatchForOperation(
 			}
 
 			if (!strikingContent) {
+				if (operation.structuralStrikeMode === "discrete") {
+					if (operation.resolvedStructuralTargetIds.length === 0) break;
+					if (
+						operation.resolvedStructuralTargetIds.some(
+							(value) => value === null,
+						)
+					) {
+						break;
+					}
+					const targetRanges = operation.resolvedStructuralTargetIds
+						.map((nodeId) => getScopeRangeFromNodeId(model, nodeId))
+						.filter((resolved): resolved is ScopeRange => resolved !== null);
+					if (
+						targetRanges.length !== operation.resolvedStructuralTargetIds.length
+					)
+						break;
+					targetRanges
+						.sort((left, right) => right.start - left.start)
+						.forEach((targetRange) => {
+							pushPatch({
+								start: targetRange.start,
+								end: targetRange.end,
+								deleted: plainText.slice(targetRange.start, targetRange.end),
+							});
+						});
+					break;
+				}
 				if (operation.resolvedThroughTargetId) {
 					const throughRange = getScopeRangeFromNodeId(
 						model,
@@ -1240,6 +1270,20 @@ function planPatchForOperation(
 				if (translatedAnchor) {
 					let localIndex = scopedText.indexOf(translatedAnchor);
 					if (localIndex < 0) {
+						const ignoredTextMatch = findAnchorSearchMatch(
+							scopedText,
+							translatedAnchor,
+							{
+								ignoreInHaystack: INSIDE_WORD_HYPHEN_RE,
+								ignoreInNeedle: INSIDE_WORD_HYPHEN_RE,
+							},
+						);
+						if (ignoredTextMatch) {
+							localIndex = ignoredTextMatch.index;
+							resolvedAnchor = ignoredTextMatch.matchedText;
+						}
+					}
+					if (localIndex < 0) {
 						const fallback = computeFallbackAnchorRegexSearch(translatedAnchor);
 						const fallbackMatch = fallback ? scopedText.match(fallback) : null;
 						if (fallbackMatch && fallbackMatch.index !== undefined) {
@@ -1300,6 +1344,20 @@ function planPatchForOperation(
 				let resolvedAnchor: string | null = translatedAnchor;
 				if (translatedAnchor) {
 					let localIndex = scopedText.indexOf(translatedAnchor);
+					if (localIndex < 0) {
+						const ignoredTextMatch = findAnchorSearchMatch(
+							scopedText,
+							translatedAnchor,
+							{
+								ignoreInHaystack: INSIDE_WORD_HYPHEN_RE,
+								ignoreInNeedle: INSIDE_WORD_HYPHEN_RE,
+							},
+						);
+						if (ignoredTextMatch) {
+							localIndex = ignoredTextMatch.index;
+							resolvedAnchor = ignoredTextMatch.matchedText;
+						}
+					}
 					if (localIndex < 0) {
 						const fallback = computeFallbackAnchorRegexSearch(translatedAnchor);
 						const fallbackMatch = fallback ? scopedText.match(fallback) : null;

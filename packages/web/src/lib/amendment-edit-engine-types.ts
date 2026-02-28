@@ -117,6 +117,8 @@ export interface ResolvedInstructionOperation {
 	resolvedMatterPrecedingTargetId: string | null;
 	resolvedMatterFollowingTargetId: string | null;
 	resolvedThroughTargetId: string | null;
+	structuralStrikeMode: "discrete" | "range" | null;
+	resolvedStructuralTargetIds: Array<string | null>;
 	resolvedAnchorTargetId: string | null;
 	resolvedMoveFromIds: Array<string | null>;
 	resolvedMoveAnchorId: string | null;
