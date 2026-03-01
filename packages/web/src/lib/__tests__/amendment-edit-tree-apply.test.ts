@@ -95,6 +95,59 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.inserted).toEqual([]);
 	});
 
+	it("omits annotatedHtml by default", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Strike,
+						target: {
+							kind: SearchTargetKind.Text,
+							text: tp("old"),
+						},
+					},
+				},
+			],
+		};
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "This is old text.",
+			instructionText: 'Section 1 is amended by striking "old".',
+		});
+		expect(effect.annotatedHtml).toBeUndefined();
+	});
+
+	it("renders annotatedHtml when explicitly requested", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Strike,
+						target: {
+							kind: SearchTargetKind.Text,
+							text: tp("old"),
+						},
+					},
+				},
+			],
+		};
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "This is old text.",
+			instructionText: 'Section 1 is amended by striking "old".',
+			renderAnnotatedHtml: true,
+		});
+		expect(effect.annotatedHtml).toContain("This is");
+	});
+
 	it("plans structural and-list strikes as discrete deletions", () => {
 		const model = buildCanonicalDocument(
 			"(a) Alpha.\n(b) Bravo.\n(c) Charlie.\n(d) Delta.\n(e) Echo.",

@@ -1,6 +1,14 @@
 import type { PageItem } from "../../components/PageRow";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
-import type { ClassificationOverride } from "../amendment-edit-engine-types";
+import {
+	buildCanonicalDocument,
+	type ParsedMarkdownDocument,
+	parseMarkdownToPlainDocument,
+} from "../amendment-document-model";
+import type {
+	CanonicalDocument,
+	ClassificationOverride,
+} from "../amendment-edit-engine-types";
 import {
 	type AmendmentEffect,
 	applyAmendmentEditTreeToSection,
@@ -15,6 +23,28 @@ import {
 	getUscSectionPathFromScopePath,
 } from "./instruction-utils";
 
+interface MutableCache<K, V> {
+	get(key: K): V | undefined;
+	set(key: K, value: V): void;
+}
+
+export interface AmendmentPipelineCaches {
+	parsedMarkdownBySectionKey?: MutableCache<string, ParsedMarkdownDocument>;
+	canonicalDocumentBySectionKey?: MutableCache<string, CanonicalDocument>;
+	amendmentEffectByInstructionKey?: MutableCache<string, AmendmentEffect>;
+}
+
+export interface AmendmentPipelinePerfStats {
+	applyCallCount: number;
+	applyTotalMs: number;
+	parsedCacheHits: number;
+	parsedCacheMisses: number;
+	canonicalCacheHits: number;
+	canonicalCacheMisses: number;
+	effectCacheHits: number;
+	effectCacheMisses: number;
+}
+
 interface BuildPageItemsOptions {
 	paragraphs: Paragraph[];
 	sectionBodyCache: Map<string, NodeContent>;
@@ -25,6 +55,8 @@ interface BuildPageItemsOptions {
 		sourceVersionId?: string,
 	) => Promise<Map<string, NodeContent>>;
 	classificationOverrides?: ClassificationOverride[];
+	caches?: AmendmentPipelineCaches;
+	perfStats?: AmendmentPipelinePerfStats;
 }
 
 const buildUnsupportedEffect = (
@@ -59,12 +91,31 @@ const buildUnsupportedEffect = (
 	};
 };
 
+const normalizeInstructionText = (value: string): string =>
+	value.replace(/\s+/g, " ").trim();
+
+const sectionKeyForCache = (
+	sectionPath: string,
+	sectionBodyText: string,
+): string => `${sectionPath}\u0000${sectionBodyText}`;
+
+const instructionKeyForCache = (args: {
+	sectionPath: string;
+	instructionText: string;
+	treeSignature: string;
+	sourceVersionId: string;
+}): string =>
+	`${args.sectionPath}\u0000${normalizeInstructionText(args.instructionText)}\u0000${args.treeSignature}\u0000${args.sourceVersionId}`;
+
 export const buildPageItemsFromParagraphs = async ({
 	paragraphs,
 	sectionBodyCache,
 	sourceVersionId,
 	numAmendColors,
 	fetchSectionBodies,
+	classificationOverrides,
+	caches,
+	perfStats,
 }: BuildPageItemsOptions): Promise<
 	{ item: PageItem; pageNumber: number }[]
 > => {
@@ -77,6 +128,7 @@ export const buildPageItemsFromParagraphs = async ({
 		number,
 		ReturnType<typeof translateInstructionAstToEditTree>
 	>();
+	const treeSignatureByInstructionIndex = new Map<number, string>();
 
 	for (const [index, span] of instructionSpans.entries()) {
 		const fallbackCodeReferenceLabel = defaultCodeReferenceByParagraph.get(
@@ -94,6 +146,10 @@ export const buildPageItemsFromParagraphs = async ({
 				: undefined,
 		);
 		translatedEditTreeByInstructionIndex.set(index, translatedEditTree);
+		treeSignatureByInstructionIndex.set(
+			index,
+			JSON.stringify(translatedEditTree.tree),
+		);
 		const sectionPath = getUscSectionPathFromScopePath(
 			translatedEditTree.tree.targetScopePath,
 		);
@@ -111,6 +167,15 @@ export const buildPageItemsFromParagraphs = async ({
 			sectionBodyCache.set(path, content);
 		}
 	}
+
+	const sectionBodyTextByPath = new Map<string, string>();
+	const getSectionBodyTextByPath = (sectionPath: string): string => {
+		const cached = sectionBodyTextByPath.get(sectionPath);
+		if (cached !== undefined) return cached;
+		const resolved = getSectionBodyText(sectionBodyCache.get(sectionPath));
+		sectionBodyTextByPath.set(sectionPath, resolved);
+		return resolved;
+	};
 
 	const instructionSpanByStartParagraph = new Map<number, number>();
 	const instructionParagraphIndexes = new Set<number>();
@@ -144,10 +209,9 @@ export const buildPageItemsFromParagraphs = async ({
 				translatedEditTreeByInstructionIndex.get(instructionIndex) ?? null;
 			const sectionPath =
 				sectionPathByInstructionIndex.get(instructionIndex) ?? null;
-			const sectionContent = sectionPath
-				? sectionBodyCache.get(sectionPath)
-				: undefined;
-			const sectionBodyText = getSectionBodyText(sectionContent);
+			const sectionBodyText = sectionPath
+				? getSectionBodyTextByPath(sectionPath)
+				: "";
 			const instructionText = span.paragraphRange.paragraphs
 				.map((instructionParagraph) => instructionParagraph.text)
 				.join("\n");
@@ -155,17 +219,78 @@ export const buildPageItemsFromParagraphs = async ({
 			const uscCitation = translatedEditTree
 				? getUscCitationFromScopePath(translatedEditTree.tree.targetScopePath)
 				: null;
-			const amendmentEffect =
-				sectionPath && sectionBodyText.length > 0 && translatedEditTree
-					? applyAmendmentEditTreeToSection({
-							tree: translatedEditTree.tree,
-							sectionPath,
-							sectionBody: sectionBodyText,
-							instructionText,
-						})
-					: sectionPath && sectionBodyText.length > 0
-						? buildUnsupportedEffect(sectionPath, sectionBodyText)
-						: null;
+			let amendmentEffect: AmendmentEffect | null = null;
+			if (sectionPath && sectionBodyText.length > 0 && translatedEditTree) {
+				const treeSignature =
+					treeSignatureByInstructionIndex.get(instructionIndex) ??
+					JSON.stringify(translatedEditTree.tree);
+				const instructionCacheKey = instructionKeyForCache({
+					sectionPath,
+					instructionText,
+					treeSignature,
+					sourceVersionId,
+				});
+				const cachedEffect =
+					caches?.amendmentEffectByInstructionKey?.get(instructionCacheKey);
+				if (cachedEffect) {
+					amendmentEffect = cachedEffect;
+					if (perfStats) perfStats.effectCacheHits += 1;
+				} else {
+					if (perfStats) perfStats.effectCacheMisses += 1;
+					const sectionCacheKey = sectionKeyForCache(
+						sectionPath,
+						sectionBodyText,
+					);
+					let parsedDocument =
+						caches?.parsedMarkdownBySectionKey?.get(sectionCacheKey);
+					if (!parsedDocument) {
+						parsedDocument = parseMarkdownToPlainDocument(sectionBodyText);
+						caches?.parsedMarkdownBySectionKey?.set(
+							sectionCacheKey,
+							parsedDocument,
+						);
+						if (perfStats) perfStats.parsedCacheMisses += 1;
+					} else if (perfStats) {
+						perfStats.parsedCacheHits += 1;
+					}
+
+					let initialDocument =
+						caches?.canonicalDocumentBySectionKey?.get(sectionCacheKey);
+					if (!initialDocument) {
+						initialDocument = buildCanonicalDocument(
+							sectionBodyText,
+							parsedDocument,
+						);
+						caches?.canonicalDocumentBySectionKey?.set(
+							sectionCacheKey,
+							initialDocument,
+						);
+						if (perfStats) perfStats.canonicalCacheMisses += 1;
+					} else if (perfStats) {
+						perfStats.canonicalCacheHits += 1;
+					}
+
+					const start = performance.now();
+					amendmentEffect = applyAmendmentEditTreeToSection({
+						tree: translatedEditTree.tree,
+						sectionPath,
+						sectionBody: sectionBodyText,
+						initialDocument,
+						instructionText,
+						classificationOverrides,
+					});
+					if (perfStats) {
+						perfStats.applyCallCount += 1;
+						perfStats.applyTotalMs += performance.now() - start;
+					}
+					caches?.amendmentEffectByInstructionKey?.set(
+						instructionCacheKey,
+						amendmentEffect,
+					);
+				}
+			} else if (sectionPath && sectionBodyText.length > 0) {
+				amendmentEffect = buildUnsupportedEffect(sectionPath, sectionBodyText);
+			}
 			const targetScopePath = translatedEditTree
 				? formatTargetScopePath(translatedEditTree.tree.targetScopePath)
 				: "";

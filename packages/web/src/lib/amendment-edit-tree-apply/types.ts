@@ -1,5 +1,6 @@
 import type { ParsedMarkdownDocument } from "../amendment-document-model";
 import type {
+	CanonicalDocument,
 	ClassificationOverride,
 	FormattingSpan,
 	OperationMatchAttempt,
@@ -12,8 +13,10 @@ export interface ApplyEditTreeArgs {
 	sectionPath: string;
 	sectionBody: string;
 	parsedDocument?: ParsedMarkdownDocument;
+	initialDocument?: CanonicalDocument;
 	instructionText?: string;
 	classificationOverrides?: ClassificationOverride[];
+	renderAnnotatedHtml?: boolean;
 }
 
 export type AmendmentSegmentKind = "unchanged" | "deleted" | "inserted";

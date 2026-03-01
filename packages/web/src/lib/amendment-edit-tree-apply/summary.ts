@@ -122,7 +122,9 @@ export function makeUnsupportedResult(
 		changes: [],
 		deleted: [],
 		inserted: [],
-		annotatedHtml: renderMarkdown(args.sectionBody),
+		annotatedHtml: args.renderAnnotatedHtml
+			? renderMarkdown(args.sectionBody)
+			: undefined,
 		applySummary,
 		debug: {
 			sectionTextLength: args.sectionBody.length,

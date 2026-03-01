@@ -1,8 +1,13 @@
 import * as pdfjsLib from "pdfjs-dist";
 import type { ClassificationOverride } from "../amendment-edit-engine-types";
+import { LruCache } from "../lru-cache";
 import { extractParagraphs } from "../text-extract";
 import type { NodeContent, Paragraph } from "../types";
-import { buildPageItemsFromParagraphs } from "./page-items";
+import {
+	type AmendmentPipelineCaches,
+	type AmendmentPipelinePerfStats,
+	buildPageItemsFromParagraphs,
+} from "./page-items";
 
 import type {
 	ProcessingWorkerRequest,
@@ -82,6 +87,8 @@ const createItemsPayload = async (
 	sourceVersionId: string,
 	numAmendColors: number,
 	classificationOverrides: ClassificationOverride[],
+	caches: AmendmentPipelineCaches,
+	perfStats: AmendmentPipelinePerfStats,
 ): Promise<WorkerPageItemsPayload> => {
 	const items = await buildPageItemsFromParagraphs({
 		paragraphs,
@@ -90,6 +97,8 @@ const createItemsPayload = async (
 		numAmendColors,
 		fetchSectionBodies,
 		classificationOverrides,
+		caches,
+		perfStats,
 	});
 	return { items };
 };
@@ -158,6 +167,21 @@ self.addEventListener(
 					targetPage + message.windowRadius,
 				);
 				const sectionBodyCache = new Map<string, NodeContent>();
+				const caches: AmendmentPipelineCaches = {
+					parsedMarkdownBySectionKey: new LruCache(256),
+					canonicalDocumentBySectionKey: new LruCache(256),
+					amendmentEffectByInstructionKey: new LruCache(256),
+				};
+				const perfStats: AmendmentPipelinePerfStats = {
+					applyCallCount: 0,
+					applyTotalMs: 0,
+					parsedCacheHits: 0,
+					parsedCacheMisses: 0,
+					canonicalCacheHits: 0,
+					canonicalCacheMisses: 0,
+					effectCacheHits: 0,
+					effectCacheMisses: 0,
+				};
 				const classificationOverrides = await fetchClassificationOverrides();
 
 				const windowParagraphs = await extractParagraphs(pdf, {
@@ -170,6 +194,8 @@ self.addEventListener(
 					message.sourceVersionId,
 					message.numAmendColors,
 					classificationOverrides,
+					caches,
+					perfStats,
 				);
 				postResponse({
 					type: "windowItems",
@@ -185,6 +211,8 @@ self.addEventListener(
 					message.sourceVersionId,
 					message.numAmendColors,
 					classificationOverrides,
+					caches,
+					perfStats,
 				);
 				postResponse({
 					type: "allItems",
@@ -192,6 +220,23 @@ self.addEventListener(
 					payload: allPayload,
 				});
 				console.log("finished processing all items");
+				if (import.meta.env.DEV) {
+					const applyAverageMs =
+						perfStats.applyCallCount > 0
+							? perfStats.applyTotalMs / perfStats.applyCallCount
+							: 0;
+					console.log("[amendment-perf]", {
+						applyCallCount: perfStats.applyCallCount,
+						applyTotalMs: Number(perfStats.applyTotalMs.toFixed(2)),
+						applyAverageMs: Number(applyAverageMs.toFixed(3)),
+						parsedCacheHits: perfStats.parsedCacheHits,
+						parsedCacheMisses: perfStats.parsedCacheMisses,
+						canonicalCacheHits: perfStats.canonicalCacheHits,
+						canonicalCacheMisses: perfStats.canonicalCacheMisses,
+						effectCacheHits: perfStats.effectCacheHits,
+						effectCacheMisses: perfStats.effectCacheMisses,
+					});
+				}
 			} catch (error: unknown) {
 				postResponse({
 					type: "error",

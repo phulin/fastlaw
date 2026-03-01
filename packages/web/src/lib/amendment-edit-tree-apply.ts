@@ -30,10 +30,9 @@ export type {
 export function applyAmendmentEditTreeToSection(
 	args: ApplyEditTreeArgs,
 ): AmendmentEffect {
-	const initialModel = buildCanonicalDocument(
-		args.sectionBody,
-		args.parsedDocument,
-	);
+	const initialModel =
+		args.initialDocument ??
+		buildCanonicalDocument(args.sectionBody, args.parsedDocument);
 	const counter = { index: 0 };
 	const execution: SequentialExecutionState = {
 		document: initialModel,
@@ -131,7 +130,9 @@ export function applyAmendmentEditTreeToSection(
 		changes,
 		deleted,
 		inserted,
-		annotatedHtml: renderMarkdown(workingText),
+		annotatedHtml: args.renderAnnotatedHtml
+			? renderMarkdown(workingText)
+			: undefined,
 		applySummary,
 		debug: {
 			sectionTextLength: args.sectionBody.length,
