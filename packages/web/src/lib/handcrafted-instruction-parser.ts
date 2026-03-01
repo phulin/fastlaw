@@ -442,8 +442,16 @@ function parseRules(grammarSource: string): GrammarRules {
 	return astRules;
 }
 
-function uniqueSorted(values: Iterable<number>): number[] {
-	return Array.from(new Set(values)).sort((a, b) => a - b);
+function unique(values: Iterable<number>): number[] {
+	return Array.from(new Set(values));
+}
+
+function maxEnd(ends: readonly number[]): number {
+	let max = -1;
+	for (const end of ends) {
+		if (end > max) max = end;
+	}
+	return max;
 }
 
 function getNodeId(node: GrammarNode, ctx: ParseContext): number {
@@ -500,7 +508,7 @@ function parseNodeAll(
 					nextPositions.add(end);
 				}
 			}
-			positions = uniqueSorted(nextPositions);
+			positions = unique(nextPositions);
 			if (positions.length === 0) break;
 		}
 		results = positions;
@@ -511,14 +519,14 @@ function parseNodeAll(
 				endings.add(end);
 			}
 		}
-		results = uniqueSorted(endings);
+		results = unique(endings);
 	} else {
 		if (node.mode === "?") {
 			const endings = new Set<number>([pos]);
 			for (const end of parseNodeAll(node.item, pos, ctx)) {
 				endings.add(end);
 			}
-			results = uniqueSorted(endings);
+			results = unique(endings);
 		} else {
 			const seen = new Set<number>([pos]);
 			const queue: number[] = [pos];
@@ -532,7 +540,7 @@ function parseNodeAll(
 				}
 			}
 			if (node.mode === "+") seen.delete(pos);
-			results = uniqueSorted(seen);
+			results = unique(seen);
 		}
 	}
 
@@ -857,18 +865,6 @@ function buildInstructionAst(
 	};
 }
 
-function pickBestCandidate(
-	candidates: ParseCandidate[],
-): ParseCandidate | null {
-	if (candidates.length === 0) return null;
-	return (
-		candidates.sort((a, b) => {
-			if (a.end !== b.end) return b.end - a.end;
-			return a.parseOffset - b.parseOffset;
-		})[0] ?? null
-	);
-}
-
 function createParseContext(input: string, rules: GrammarRules): ParseContext {
 	return {
 		input,
@@ -941,14 +937,13 @@ export class HandcraftedInstructionParser {
 		options: ParseInstructionOptions = {},
 	): ParsedInstruction | null {
 		if (startOffset < 0 || startOffset >= source.length) return null;
-		const candidates: ParseCandidate[] = [];
-
-		for (const end of this.parsePrefixFromOffset(
-			source,
-			startOffset,
-			"instruction",
-		)) {
-			candidates.push({ parseOffset: startOffset, end });
+		const parseContext = createParseContext(source, this.rules);
+		let best: ParseCandidate | null = null;
+		const initialEnd = maxEnd(
+			parseRuleAll("instruction", startOffset, parseContext),
+		);
+		if (initialEnd >= 0) {
+			best = { parseOffset: startOffset, end: initialEnd };
 		}
 
 		const allowAnchoredOffsets = options.allowAnchoredOffsets ?? true;
@@ -960,35 +955,41 @@ export class HandcraftedInstructionParser {
 					: source.slice(startOffset, lineEnd);
 			for (const anchorIndex of collectAnchorIndexes(firstLine)) {
 				const anchoredStart = startOffset + anchorIndex;
-				for (const anchoredEnd of this.parsePrefixFromOffset(
-					source,
-					anchoredStart,
-					"instruction",
-				)) {
-					candidates.push({
+				const anchoredEnd = maxEnd(
+					parseRuleAll("instruction", anchoredStart, parseContext),
+				);
+				if (anchoredEnd >= 0) {
+					const candidate: ParseCandidate = {
 						parseOffset: anchoredStart,
 						end: anchoredEnd,
-					});
+					};
+					if (
+						!best ||
+						candidate.end > best.end ||
+						(candidate.end === best.end &&
+							candidate.parseOffset < best.parseOffset)
+					) {
+						best = candidate;
+					}
 				}
 			}
 		}
 
-		const best = pickBestCandidate(candidates);
 		if (!best) return null;
 
-		const parseInput = source.slice(best.parseOffset, best.end);
-		const parseContext = createParseContext(parseInput, this.rules);
-		const ruleNode = buildRuleToTarget("instruction", 0, parseInput.length, {
-			parseContext,
-			targetCache: new Map(),
-			sequenceCache: new Map(),
-		});
+		const ruleNode = buildRuleToTarget(
+			"instruction",
+			best.parseOffset,
+			best.end,
+			{
+				parseContext,
+				targetCache: new Map(),
+				sequenceCache: new Map(),
+			},
+		);
 		if (!ruleNode) return null;
-		const ast = buildInstructionAst(ruleNode, parseInput, (start, end) =>
-			resolveRange(
-				best.parseOffset - startOffset + start,
-				best.parseOffset - startOffset + end,
-			),
+		const ast = buildInstructionAst(ruleNode, source, (start, end) =>
+			resolveRange(start - startOffset, end - startOffset),
 		);
 
 		return {
