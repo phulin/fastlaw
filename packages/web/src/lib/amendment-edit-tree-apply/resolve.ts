@@ -354,6 +354,15 @@ function throughTargetPathFromEditTarget(
 	return null;
 }
 
+function throughTargetPathFromExplicitTarget(
+	target: EditTarget,
+): HierarchyLevel[] | null {
+	if ("ref" in target) {
+		return refToHierarchyPath(target.ref);
+	}
+	return throughTargetPathFromEditTarget(target);
+}
+
 function looksLikeBlockContent(content: string): boolean {
 	return /^["""']?\([^)]+\)/.test(content.trim());
 }
@@ -468,9 +477,13 @@ export function resolveEdit(
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.strike),
 			);
-			const scopedThroughTarget = optionalTargetWithContext(
-				throughTargetPathFromEditTarget(edit.strike),
-			);
+			const scopedThroughTarget = edit.through
+				? optionalTargetWithContext(
+						throughTargetPathFromExplicitTarget(edit.through),
+					)
+				: optionalTargetWithContext(
+						throughTargetPathFromEditTarget(edit.strike),
+					);
 			if (!strikingContent && scopedTarget.length === 0) {
 				return {
 					resolved: [],
@@ -505,9 +518,13 @@ export function resolveEdit(
 			const scopedTarget = targetWithContext(
 				targetPathFromEditTarget(edit.target),
 			);
-			const scopedThroughTarget = optionalTargetWithContext(
-				throughTargetPathFromEditTarget(edit.target),
-			);
+			const scopedThroughTarget = edit.through
+				? optionalTargetWithContext(
+						throughTargetPathFromExplicitTarget(edit.through),
+					)
+				: optionalTargetWithContext(
+						throughTargetPathFromEditTarget(edit.target),
+					);
 			if (!strikingContent && scopedTarget.length === 0) {
 				return {
 					resolved: [],

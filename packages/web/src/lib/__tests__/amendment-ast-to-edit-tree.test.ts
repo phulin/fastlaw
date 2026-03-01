@@ -773,6 +773,99 @@ describe("translateInstructionAstToEditTree", () => {
 		expect(strikeTarget.atEnd).toBe(true);
 	});
 
+	it("parses structural through endpoints for strike edits", () => {
+		const ast = parseInstructionAst(
+			"Section 17 of the Mineral Leasing Act (30 U.S.C. 226), as amended by subsection (a), is amended by striking the section designation and all that follows through the end of subsection (a).",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		const queue = [...result.tree.children];
+		let strikeEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.Strike
+			) {
+				strikeEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!strikeEdit) {
+			throw new Error("Expected strike edit node.");
+		}
+		if (strikeEdit.edit.kind !== UltimateEditKind.Strike) {
+			throw new Error("Expected strike edit.");
+		}
+		const target = strikeEdit.edit.target;
+		if (!("inner" in target)) {
+			throw new Error("Expected inner-location strike target.");
+		}
+		expect(target.inner.kind).toBe(InnerLocationTargetKind.SectionDesignation);
+		expect(strikeEdit.edit.through).toBeDefined();
+		if (!strikeEdit.edit.through || !("ref" in strikeEdit.edit.through)) {
+			throw new Error("Expected structural through reference.");
+		}
+		expect(strikeEdit.edit.through.ref.kind).toBe(ScopeKind.Subsection);
+		expect(strikeEdit.edit.through.ref.path[0]?.label).toBe("a");
+	});
+
+	it("parses structural through endpoints for strike-insert edits", () => {
+		const ast = parseInstructionAst(
+			"Section 17 of the Mineral Leasing Act (30 U.S.C. 226), as amended by subsection (a), is amended by striking the section designation and all that follows through the end of subsection (a) and inserting the following: “(a) Revised.”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		const queue = [...result.tree.children];
+		let strikeInsertEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.StrikeInsert
+			) {
+				strikeInsertEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!strikeInsertEdit) {
+			throw new Error("Expected strike-insert edit node.");
+		}
+		if (strikeInsertEdit.edit.kind !== UltimateEditKind.StrikeInsert) {
+			throw new Error("Expected strike-insert edit.");
+		}
+		const strikeTarget = strikeInsertEdit.edit.strike;
+		if (!("inner" in strikeTarget)) {
+			throw new Error("Expected inner-location strike target.");
+		}
+		expect(strikeTarget.inner.kind).toBe(
+			InnerLocationTargetKind.SectionDesignation,
+		);
+		expect(strikeInsertEdit.edit.through).toBeDefined();
+		if (
+			!strikeInsertEdit.edit.through ||
+			!("ref" in strikeInsertEdit.edit.through)
+		) {
+			throw new Error("Expected structural through reference.");
+		}
+		expect(strikeInsertEdit.edit.through.ref.kind).toBe(ScopeKind.Subsection);
+		expect(strikeInsertEdit.edit.through.ref.path[0]?.label).toBe("a");
+	});
+
 	it("keeps hyphen-separated redesignation endpoints as explicit pairs", () => {
 		const ast = parseInstructionAst(
 			"Section 101 of title 10, United States Code, is amended by redesignating clauses (i)-(iii) as clauses (ii)-(iv), respectively.",

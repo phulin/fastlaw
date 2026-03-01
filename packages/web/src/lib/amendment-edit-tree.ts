@@ -280,6 +280,7 @@ export interface InsertEdit {
 export interface StrikeInsertEdit {
 	kind: UltimateEditKind.StrikeInsert;
 	strike: EditTarget;
+	through?: EditTarget;
 	insert: TextWithProvenance;
 }
 

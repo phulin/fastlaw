@@ -304,23 +304,25 @@ function parseEdit(
 			normalized,
 			GrammarAstNodeType.InsertingSpec,
 		);
+		const followingSpec =
+			(strikingSpec
+				? findChild(strikingSpec, GrammarAstNodeType.FollowingSpec)
+				: null) ?? findChild(normalized, GrammarAstNodeType.FollowingSpec);
+		const through = followingSpec
+			? parseThroughSpec(
+					findChild(followingSpec, GrammarAstNodeType.ThroughSpec),
+					context,
+				)
+			: undefined;
 		if (insertingSpec) {
 			return {
 				kind: UltimateEditKind.StrikeInsert,
 				strike: target,
+				through,
 				insert: extractContent(insertingSpec),
 			};
 		}
 
-		const followingSpec = findChild(
-			normalized,
-			GrammarAstNodeType.FollowingSpec,
-		);
-		const through = followingSpec
-			? parseThroughSpec(
-					findChild(followingSpec, GrammarAstNodeType.ThroughSpec),
-				)
-			: undefined;
 		const structuralMode = strikingTarget
 			? parseStructuralStrikeMode(strikingTarget, target)
 			: undefined;
@@ -585,11 +587,18 @@ function parseStrikingTarget(
 
 function parseThroughSpec(
 	node: RuleAst<GrammarAstNodeType.ThroughSpec> | null,
+	context: TranslationContext,
 ): EditTarget | undefined {
 	if (!node) return undefined;
 	const inline = findChild(node, GrammarAstNodeType.Inline);
 	if (inline)
 		return { kind: SearchTargetKind.Text, text: extractInlineContent(inline) };
+
+	const ref = parseStructuralReferenceFromNode(
+		findChild(node, GrammarAstNodeType.SubLocation),
+		context,
+	);
+	if (ref) return { ref };
 
 	if (node.text.includes("period")) {
 		return { punctuation: PunctuationKind.Period };

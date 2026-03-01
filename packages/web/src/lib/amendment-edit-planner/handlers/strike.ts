@@ -123,6 +123,17 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 				operation.edit.target.inner,
 			);
 			if (!innerRange) return;
+			if (operation.resolvedThroughTargetId) {
+				const throughRange = getScopeRangeFromNodeId(
+					model,
+					operation.resolvedThroughTargetId,
+				);
+				if (!throughRange) return;
+				const start = Math.min(innerRange.start, throughRange.start);
+				const end = Math.max(innerRange.end, throughRange.end);
+				pushPatch({ start, end, deleted: plainText.slice(start, end) });
+				return;
+			}
 			const deleted = plainText.slice(innerRange.start, innerRange.end);
 			pushPatch({ start: innerRange.start, end: innerRange.end, deleted });
 			return;

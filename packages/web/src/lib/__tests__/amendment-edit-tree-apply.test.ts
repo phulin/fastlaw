@@ -289,6 +289,65 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		);
 	});
 
+	it("plans section-designation strike-insert through subsection end as full subsection replacement", () => {
+		const model = buildCanonicalDocument("(a) Alpha.\n(b) Bravo.");
+		const topLevelNodes = [...model.nodesById.values()].filter(
+			(node) => node.path.length === 1,
+		);
+		const aId =
+			topLevelNodes.find(
+				(node) => node.label === "a" && node.kind === "subsection",
+			)?.id ?? null;
+		if (!aId) throw new Error("Expected subsection (a) target.");
+
+		const operation: ResolvedInstructionOperation = {
+			operationIndex: 0,
+			nodeText:
+				"by striking the section designation and all that follows through the end of subsection (a) and inserting",
+			originalNodeText: null,
+			scopeContextTexts: [],
+			edit: {
+				kind: UltimateEditKind.StrikeInsert,
+				strike: {
+					inner: { kind: InnerLocationTargetKind.SectionDesignation },
+				},
+				through: {
+					ref: {
+						kind: ScopeKind.Subsection,
+						path: [{ kind: ScopeKind.Subsection, label: "a" }],
+					},
+				},
+				insert: tp("(a) Revised.\n"),
+			},
+			addAtEnd: false,
+			redesignateMappingIndex: 0,
+			sentenceOrdinal: null,
+			atEndOnly: false,
+			hasMatterPrecedingTarget: false,
+			hasMatterFollowingTarget: false,
+			matterPrecedingRefKind: null,
+			matterPrecedingRefLabel: null,
+			matterFollowingRefKind: null,
+			matterFollowingRefLabel: null,
+			hasExplicitTargetPath: true,
+			targetPathText: "subsection:a",
+			resolvedTargetId: aId,
+			resolvedMatterPrecedingTargetId: null,
+			resolvedMatterFollowingTargetId: null,
+			resolvedThroughTargetId: aId,
+			structuralStrikeMode: null,
+			resolvedStructuralTargetIds: [],
+			resolvedAnchorTargetId: null,
+			resolvedMoveFromIds: [],
+			resolvedMoveAnchorId: null,
+		};
+
+		const { patches } = planEdits(model, [operation], []);
+		expect(patches).toHaveLength(1);
+		expect(patches[0]?.deletedPlain).toBe("(a) Alpha.\n");
+		expect(patches[0]?.insertedPlain).toContain("(a) Revised.");
+	});
+
 	it("applies StrikeInsert edits at each place when requested", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,

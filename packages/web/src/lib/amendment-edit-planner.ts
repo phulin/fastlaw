@@ -1062,6 +1062,7 @@ function planPatchForOperation(
 				classificationOverrides,
 				pushPatch,
 				textSearchFromEditTarget,
+				textFromEditTarget,
 				translateCrossReferences,
 				punctuationText,
 				findPunctuationIndexAtEnd,

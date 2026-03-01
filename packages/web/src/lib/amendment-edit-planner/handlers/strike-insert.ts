@@ -35,6 +35,7 @@ interface StrikeInsertHandlerArgs {
 	textSearchFromEditTarget: (
 		target: EditTarget,
 	) => { text: string; eachPlaceItAppears?: boolean; atEnd?: boolean } | null;
+	textFromEditTarget: (target: EditTarget) => string | null;
 	translateCrossReferences: (
 		text: string,
 		classificationOverrides?: ClassificationOverride[],
@@ -83,6 +84,7 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		classificationOverrides,
 		pushPatch,
 		textSearchFromEditTarget,
+		textFromEditTarget,
 		translateCrossReferences,
 		punctuationText,
 		findPunctuationIndexAtEnd,
@@ -114,6 +116,13 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 	};
 	const eachPlaceItAppears = strikeSearch?.eachPlaceItAppears === true;
 	const atEndSearch = strikeSearch?.atEnd === true;
+	const throughContent = operation.edit.through
+		? textFromEditTarget(operation.edit.through)
+		: null;
+	const throughPunctuation =
+		operation.edit.through && "punctuation" in operation.edit.through
+			? operation.edit.through.punctuation
+			: undefined;
 
 	if (!strikingContent && strikePunctuation) {
 		const punctuation = punctuationText(strikePunctuation);
@@ -144,6 +153,29 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 				operation.edit.strike.inner,
 			);
 			if (!innerRange) return;
+			if (operation.resolvedThroughTargetId) {
+				const throughRange = getScopeRangeFromNodeId(
+					model,
+					operation.resolvedThroughTargetId,
+				);
+				if (!throughRange) return;
+				const start = Math.min(innerRange.start, throughRange.start);
+				const end = Math.max(innerRange.end, throughRange.end);
+				const deleted = plainText.slice(start, end);
+				const formattedReplacement = formatStrikeInsertReplacementText({
+					model,
+					content: replacementContent,
+					insertStart: start,
+					fallbackIndent: range.indent ?? 0,
+				});
+				pushPatch({
+					start,
+					end,
+					deleted,
+					inserted: formattedReplacement,
+				});
+				return;
+			}
 			const deleted = plainText.slice(innerRange.start, innerRange.end);
 			const formattedReplacement = formatStrikeInsertReplacementText({
 				model,
@@ -272,7 +304,7 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		text: resolvedReplacementContentText,
 	};
 
-	if (eachPlaceItAppears) {
+	if (eachPlaceItAppears && !throughContent && !throughPunctuation) {
 		for (const occurrenceIndex of findAllOccurrences(
 			scopedText,
 			resolvedStrikingContent,
@@ -295,6 +327,24 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 	}
 
 	const patchStart = range.start + localIndex;
+	let patchEnd = patchStart + resolvedStrikingContent.length;
+	if (throughContent) {
+		const throughStart = scopedText.indexOf(
+			throughContent,
+			localIndex + resolvedStrikingContent.length,
+		);
+		if (throughStart < 0) return;
+		patchEnd = range.start + throughStart + throughContent.length;
+	}
+	if (throughPunctuation) {
+		const punctuation = punctuationText(throughPunctuation);
+		const punctuationIndex = scopedText.indexOf(
+			punctuation,
+			localIndex + resolvedStrikingContent.length,
+		);
+		if (punctuationIndex < 0) return;
+		patchEnd = range.start + punctuationIndex + punctuation.length;
+	}
 	const formattedReplacement = formatStrikeInsertReplacementText({
 		model,
 		content: resolvedReplacementContent,
@@ -303,8 +353,8 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 	});
 	pushPatch({
 		start: patchStart,
-		end: patchStart + resolvedStrikingContent.length,
-		deleted: resolvedStrikingContent,
+		end: patchEnd,
+		deleted: plainText.slice(patchStart, patchEnd),
 		inserted: formattedReplacement,
 	});
 }
