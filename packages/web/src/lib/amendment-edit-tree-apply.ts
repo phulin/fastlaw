@@ -35,7 +35,7 @@ export function applyAmendmentEditTreeToSection(
 	);
 	const counter = { index: 0 };
 	const execution: SequentialExecutionState = {
-		resolutionModel: initialModel,
+		document: initialModel,
 		renderPlainText: initialModel.plainText,
 		renderSpans: initialModel.spans,
 		resolvedOperationCount: 0,

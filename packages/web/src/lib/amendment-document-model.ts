@@ -564,6 +564,7 @@ export function buildCanonicalDocument(
 			endLine: paragraph.endLine,
 			indent: paragraph.indent,
 			leadingLabels: paragraph.leadingLabels,
+			text: paragraph.text,
 		}),
 	);
 
@@ -574,6 +575,141 @@ export function buildCanonicalDocument(
 		rootRange: {
 			start: 0,
 			end: plain.plainText.length,
+			indent: null,
+		},
+		nodesById,
+		rootNodeIds,
+		paragraphs: documentParagraphs,
+	};
+}
+
+function lineIndexForOffset(lineStarts: number[], offset: number): number {
+	let left = 0;
+	let right = lineStarts.length - 1;
+	while (left <= right) {
+		const mid = Math.floor((left + right) / 2);
+		const start = lineStarts[mid] ?? 0;
+		const nextStart = lineStarts[mid + 1] ?? Number.POSITIVE_INFINITY;
+		if (offset < start) {
+			right = mid - 1;
+			continue;
+		}
+		if (offset >= nextStart) {
+			left = mid + 1;
+			continue;
+		}
+		return mid;
+	}
+	return Math.max(0, Math.min(lineStarts.length - 1, left));
+}
+
+export function buildCanonicalParagraphsFromTextAndSpans(
+	plainText: string,
+	spans: FormattingSpan[],
+): DocumentParagraph[] {
+	const lineStarts = getLineStarts(plainText);
+	const paragraphs: DocumentParagraph[] = [];
+	let paragraphIndex = 0;
+
+	for (const span of spans) {
+		if (span.type !== "paragraph") continue;
+		const spanStart = Math.max(0, Math.min(plainText.length, span.start));
+		const spanEnd = Math.max(spanStart, Math.min(plainText.length, span.end));
+		const text = plainText.slice(spanStart, spanEnd);
+		const lines = text.split("\n");
+		let currentOffset = spanStart;
+
+		for (let i = 0; i < lines.length; i += 1) {
+			const lineText = lines[i] ?? "";
+			const labels = extractLeadingLabels(lineText);
+			const lineStart = currentOffset;
+			const lineEnd = currentOffset + lineText.length;
+			const startLine = lineIndexForOffset(lineStarts, lineStart);
+			const endLine = lineIndexForOffset(lineStarts, lineEnd) + 1;
+
+			if (labels.length > 0 || i === 0) {
+				paragraphs.push({
+					index: paragraphIndex++,
+					start: lineStart,
+					end: lineEnd,
+					startLine,
+					endLine,
+					indent: (span.metadata?.quoteDepth as number) ?? 0,
+					leadingLabels: labels,
+					text: lineText,
+				});
+			} else {
+				const previous = paragraphs[paragraphs.length - 1];
+				if (previous) {
+					previous.text += `\n${lineText}`;
+					previous.end = lineEnd;
+					previous.endLine = endLine;
+				}
+			}
+
+			const hasFollowingLine = i < lines.length - 1;
+			currentOffset += lineText.length + (hasFollowingLine ? 1 : 0);
+		}
+	}
+
+	return paragraphs;
+}
+
+export function rebuildCanonicalDocumentFromParagraphs(args: {
+	plainText: string;
+	spans: FormattingSpan[];
+	paragraphs: DocumentParagraph[];
+}): CanonicalDocument {
+	const sortedParagraphs = [...args.paragraphs].sort(
+		(left, right) => left.start - right.start || left.end - right.end,
+	);
+	const normalizedParagraphs: Array<
+		ParsedParagraph & { plainStart: number; plainEnd: number }
+	> = sortedParagraphs.map((paragraph, index) => ({
+		index,
+		startLine: paragraph.startLine,
+		endLine: paragraph.endLine,
+		text: paragraph.text,
+		indent: paragraph.indent,
+		leadingLabels: paragraph.leadingLabels,
+		plainStart: paragraph.start,
+		plainEnd: paragraph.end,
+	}));
+
+	const parsedHierarchy = buildHierarchyFromParagraphs(normalizedParagraphs);
+	const nodesById = new Map<string, StructuralNode>();
+	const rootNodeIds = buildNodes({
+		paragraphs: normalizedParagraphs,
+		nodes: parsedHierarchy.levels,
+		parentPath: [],
+		nodesById,
+	});
+
+	const sourceToPlainOffsets = new Array<number>(args.plainText.length + 1);
+	for (let index = 0; index <= args.plainText.length; index += 1) {
+		sourceToPlainOffsets[index] = index;
+	}
+
+	const documentParagraphs: DocumentParagraph[] = normalizedParagraphs.map(
+		(paragraph) => ({
+			index: paragraph.index,
+			start: paragraph.plainStart,
+			end: paragraph.plainEnd,
+			startLine: paragraph.startLine,
+			endLine: paragraph.endLine,
+			indent: paragraph.indent,
+			leadingLabels: paragraph.leadingLabels,
+			text: paragraph.text,
+		}),
+	);
+
+	return {
+		plainText: args.plainText,
+		spans: args.spans,
+		sourceToPlainOffsets,
+		rootRange: {
+			start: 0,
+			end: args.plainText.length,
 			indent: null,
 		},
 		nodesById,

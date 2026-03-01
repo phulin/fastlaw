@@ -1,6 +1,6 @@
 import {
-	buildCanonicalDocument,
-	type ParsedMarkdownDocument,
+	buildCanonicalParagraphsFromTextAndSpans,
+	rebuildCanonicalDocumentFromParagraphs,
 } from "../amendment-document-model";
 import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
 import type {
@@ -36,7 +36,7 @@ import {
 } from "./resolve";
 
 export interface SequentialExecutionState {
-	resolutionModel: CanonicalDocument;
+	document: CanonicalDocument;
 	renderPlainText: string;
 	renderSpans: FormattingSpan[];
 	resolvedOperationCount: number;
@@ -101,10 +101,10 @@ function overlaps(left: PlannedPatch, right: PlannedPatch): boolean {
 	return left.start < right.end && right.start < left.end;
 }
 
-function canonicalDocumentFromRenderModel(
+function projectRenderModelToCanonical(
 	renderText: string,
 	renderSpans: FormattingSpan[],
-): CanonicalDocument {
+): { plainText: string; spans: FormattingSpan[] } {
 	const deletedMask = new Uint8Array(renderText.length);
 	for (const span of renderSpans) {
 		if (span.type !== "deletion") continue;
@@ -138,30 +138,41 @@ function canonicalDocumentFromRenderModel(
 			end,
 		});
 	}
-	const sourceToPlainOffsets = new Array<number>(canonicalText.length + 1);
-	for (let index = 0; index <= canonicalText.length; index += 1) {
-		sourceToPlainOffsets[index] = index;
-	}
-	const parsedMarkdownDocument: ParsedMarkdownDocument = {
+	return {
 		plainText: canonicalText,
 		spans: projectedSpans,
-		sourceToPlainOffsets,
 	};
-	return buildCanonicalDocument(canonicalText, parsedMarkdownDocument);
 }
 
-function recomputeResolutionModel(state: SequentialExecutionState): void {
-	const canonicalDocument = canonicalDocumentFromRenderModel(
-		state.renderPlainText,
-		state.renderSpans,
-	);
-	state.resolutionModel = canonicalDocument;
+function canonicalDocumentFromProjectedPlain(
+	plainText: string,
+	spans: FormattingSpan[],
+): CanonicalDocument {
+	const paragraphs = buildCanonicalParagraphsFromTextAndSpans(plainText, spans);
+	return rebuildCanonicalDocumentFromParagraphs({
+		plainText,
+		spans,
+		paragraphs,
+	});
 }
 
 function applyAcceptedPatchesToState(
 	state: SequentialExecutionState,
 	orderedPatches: PlannedPatch[],
 ): void {
+	const canonicalApplied = applyPlannedPatchesTransaction(
+		toSpanOnlyModel(state.document.plainText, state.document.spans),
+		orderedPatches,
+	);
+	const projectedCanonical = projectRenderModelToCanonical(
+		canonicalApplied.plainText,
+		canonicalApplied.spans,
+	);
+	state.document = canonicalDocumentFromProjectedPlain(
+		projectedCanonical.plainText,
+		projectedCanonical.spans,
+	);
+
 	const offsetMap = buildCanonicalRenderOffsetMap(
 		state.renderPlainText,
 		state.renderSpans,
@@ -178,7 +189,6 @@ function applyAcceptedPatchesToState(
 	);
 	state.renderPlainText = appliedRender.plainText;
 	state.renderSpans = appliedRender.spans;
-	recomputeResolutionModel(state);
 	state.patches.push(...orderedPatches);
 }
 
@@ -188,7 +198,7 @@ function executeResolvedOperation(
 	classificationOverrides?: ClassificationOverride[],
 ): PlannedPatch[] {
 	const { patches, attempt } = planOperationEdit(
-		state.resolutionModel,
+		state.document,
 		operation,
 		classificationOverrides,
 	);
@@ -219,7 +229,7 @@ function executeResolvedOperationsSnapshot(
 		[];
 	for (const operation of operations) {
 		const planned = planOperationEdit(
-			state.resolutionModel,
+			state.document,
 			operation,
 			classificationOverrides,
 		);
@@ -427,7 +437,7 @@ export function executeTreeSequential(
 
 		if (node.type !== SemanticNodeType.Edit) continue;
 		const nested = resolveEdit(
-			state.resolutionModel,
+			state.document,
 			node,
 			context,
 			counter,

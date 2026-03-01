@@ -61,6 +61,7 @@ export interface DocumentParagraph {
 	endLine: number;
 	indent: number;
 	leadingLabels: string[];
+	text: string;
 }
 
 export interface CanonicalDocument {
