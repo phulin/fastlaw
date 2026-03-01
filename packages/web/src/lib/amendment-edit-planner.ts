@@ -15,6 +15,8 @@ import type {
 } from "./amendment-edit-engine-types";
 
 import {
+	type InnerLocationTarget,
+	InnerLocationTargetKind,
 	PunctuationKind,
 	type TextWithProvenance,
 	textFromEditTarget,
@@ -381,12 +383,38 @@ function withSymbolicMarkerHeadingSpans(
 
 		const leading = match[1] ?? "";
 		const marker = match[2] ?? "";
+		const trailing = (match[3] ?? "").trim();
 		if (marker.length === 0) continue;
 
 		const markerStart = paragraph.start + leading.length;
 		const markerEnd = markerStart + marker.length;
 		if (markerEnd > markerStart && !hasStrongSpan(markerStart, markerEnd)) {
 			output.push({ start: markerStart, end: markerEnd, type: "strong" });
+		}
+
+		// When marker-heading lines are split from ".—" forms (e.g. "(1) Premiums"),
+		// add a strong span for the heading text as well.
+		if (trailing.length > 0 && !/[.!?;:]$/.test(trailing)) {
+			let headingStart = markerEnd;
+			while (
+				headingStart < paragraph.end &&
+				/\s/.test(plainText[headingStart] ?? "")
+			) {
+				headingStart += 1;
+			}
+			let headingEnd = paragraph.end;
+			while (
+				headingEnd > headingStart &&
+				/\s/.test(plainText[headingEnd - 1] ?? "")
+			) {
+				headingEnd -= 1;
+			}
+			if (
+				headingEnd > headingStart &&
+				!hasStrongSpan(headingStart, headingEnd)
+			) {
+				output.push({ start: headingStart, end: headingEnd, type: "strong" });
+			}
 		}
 	}
 
@@ -520,6 +548,140 @@ function resolveSentenceOrdinalRange(
 	const sentence = validSentences[sentenceIndex];
 	if (!sentence) return null;
 	return { start: sentence.start, end: sentence.end };
+}
+
+function resolveLeadingSectionDesignationRange(
+	scopedText: string,
+): { start: number; end: number } | null {
+	const markerMatch = scopedText.match(/^\s*\([A-Za-z0-9ivxIVX]+\)/);
+	if (!markerMatch) return null;
+	return {
+		start: markerMatch.index ?? 0,
+		end: (markerMatch.index ?? 0) + markerMatch[0].length,
+	};
+}
+
+function resolveLeadingSubsectionHeadingRange(
+	scopedText: string,
+): { start: number; end: number } | null {
+	const designation = resolveLeadingSectionDesignationRange(scopedText);
+	if (!designation) return null;
+
+	let headingStart = designation.end;
+	while (
+		headingStart < scopedText.length &&
+		/\s/.test(scopedText[headingStart] ?? "")
+	) {
+		headingStart += 1;
+	}
+	if (headingStart >= scopedText.length) return null;
+
+	const paragraphEnd = scopedText.indexOf("\n", headingStart);
+	const searchEnd = paragraphEnd >= 0 ? paragraphEnd : scopedText.length;
+	const emDashIndex = scopedText.indexOf("—", headingStart);
+	if (emDashIndex >= 0 && emDashIndex < searchEnd) {
+		return {
+			start: headingStart,
+			end: emDashIndex,
+		};
+	}
+
+	let headingEnd = searchEnd;
+	while (
+		headingEnd > headingStart &&
+		/\s/.test(scopedText[headingEnd - 1] ?? "")
+	) {
+		headingEnd -= 1;
+	}
+	if (headingEnd <= headingStart) return null;
+	return { start: headingStart, end: headingEnd };
+}
+
+function resolveHeadingSpanRange(
+	model: DocumentModel,
+	range: ScopeRange,
+): { start: number; end: number } | null {
+	const headingSpan = model.spans.find(
+		(span) =>
+			span.type === "heading" &&
+			span.start >= range.start &&
+			span.end <= range.end,
+	);
+	if (!headingSpan) return null;
+	return { start: headingSpan.start, end: headingSpan.end };
+}
+
+function resolveInnerLocationRangeInScope(
+	model: DocumentModel,
+	range: ScopeRange,
+	target: InnerLocationTarget,
+): ScopeRange | null {
+	const scopedText = model.plainText.slice(range.start, range.end);
+	switch (target.kind) {
+		case InnerLocationTargetKind.Punctuation: {
+			const punctuationIndex = findPunctuationIndexAtEnd(
+				scopedText,
+				target.punctuation,
+			);
+			if (punctuationIndex < 0) return null;
+			const punctuation = punctuationText(target.punctuation);
+			return {
+				start: range.start + punctuationIndex,
+				end: range.start + punctuationIndex + punctuation.length,
+				indent: range.indent,
+			};
+		}
+		case InnerLocationTargetKind.SectionDesignation: {
+			const designation = resolveLeadingSectionDesignationRange(scopedText);
+			if (!designation) return null;
+			return {
+				start: range.start + designation.start,
+				end: range.start + designation.end,
+				indent: range.indent,
+			};
+		}
+		case InnerLocationTargetKind.SubsectionHeading: {
+			const heading = resolveLeadingSubsectionHeadingRange(scopedText);
+			if (!heading) return null;
+			return {
+				start: range.start + heading.start,
+				end: range.start + heading.end,
+				indent: range.indent,
+			};
+		}
+		case InnerLocationTargetKind.Heading: {
+			const heading = resolveHeadingSpanRange(model, range);
+			if (heading) {
+				return {
+					start: heading.start,
+					end: heading.end,
+					indent: range.indent,
+				};
+			}
+			const subsectionHeading =
+				resolveLeadingSubsectionHeadingRange(scopedText);
+			if (!subsectionHeading) return null;
+			return {
+				start: range.start + subsectionHeading.start,
+				end: range.start + subsectionHeading.end,
+				indent: range.indent,
+			};
+		}
+		case InnerLocationTargetKind.SentenceOrdinal:
+		case InnerLocationTargetKind.SentenceLast: {
+			const ordinal =
+				target.kind === InnerLocationTargetKind.SentenceLast
+					? -1
+					: target.ordinal;
+			const sentenceRange = resolveSentenceOrdinalRange(scopedText, ordinal);
+			if (!sentenceRange) return null;
+			return {
+				start: range.start + sentenceRange.start,
+				end: range.start + sentenceRange.end,
+				indent: range.indent,
+			};
+		}
+	}
 }
 
 function extractAnchor(
@@ -805,6 +967,44 @@ function planPatchForOperation(
 		}
 	}
 
+	if (range && operation.beforeInnerTarget) {
+		const innerRange = resolveInnerLocationRangeInScope(
+			model,
+			range,
+			operation.beforeInnerTarget,
+		);
+		if (!innerRange) {
+			attempt.outcome = "scope_unresolved";
+			return { patches: [], attempt };
+		}
+		range = { ...range, end: Math.max(range.start, innerRange.start) };
+		attempt.scopedRange = {
+			start: range.start,
+			end: range.end,
+			length: range.end - range.start,
+			preview: previewRange(plainText, range),
+		};
+	}
+
+	if (range && operation.afterInnerTarget) {
+		const innerRange = resolveInnerLocationRangeInScope(
+			model,
+			range,
+			operation.afterInnerTarget,
+		);
+		if (!innerRange) {
+			attempt.outcome = "scope_unresolved";
+			return { patches: [], attempt };
+		}
+		range = { ...range, start: Math.min(range.end, innerRange.end) };
+		attempt.scopedRange = {
+			start: range.start,
+			end: range.end,
+			length: range.end - range.start,
+			preview: previewRange(plainText, range),
+		};
+	}
+
 	const scopedText = range ? plainText.slice(range.start, range.end) : "";
 	const patches: PlannedPatch[] = [];
 	const pushPatch = (args: {
@@ -877,6 +1077,28 @@ function planPatchForOperation(
 			}
 
 			if (!strikingContent) {
+				if ("inner" in operation.edit.strike) {
+					const innerRange = resolveInnerLocationRangeInScope(
+						model,
+						range,
+						operation.edit.strike.inner,
+					);
+					if (!innerRange) break;
+					const deleted = plainText.slice(innerRange.start, innerRange.end);
+					const formattedReplacement = formatStrikeInsertReplacementText({
+						model,
+						content: replacementContent,
+						insertStart: innerRange.start,
+						fallbackIndent: range.indent ?? 0,
+					});
+					pushPatch({
+						start: innerRange.start,
+						end: innerRange.end,
+						deleted,
+						inserted: formattedReplacement,
+					});
+					break;
+				}
 				// Range replace (through-target)
 				if (operation.resolvedThroughTargetId) {
 					const throughRange = getScopeRangeFromNodeId(
@@ -1103,6 +1325,21 @@ function planPatchForOperation(
 			}
 
 			if (!strikingContent) {
+				if ("inner" in operation.edit.target) {
+					const innerRange = resolveInnerLocationRangeInScope(
+						model,
+						range,
+						operation.edit.target.inner,
+					);
+					if (!innerRange) break;
+					const deleted = plainText.slice(innerRange.start, innerRange.end);
+					pushPatch({
+						start: innerRange.start,
+						end: innerRange.end,
+						deleted,
+					});
+					break;
+				}
 				if (operation.structuralStrikeMode === "discrete") {
 					if (operation.resolvedStructuralTargetIds.length === 0) break;
 					if (

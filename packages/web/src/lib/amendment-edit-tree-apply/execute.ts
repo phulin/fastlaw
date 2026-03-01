@@ -1,0 +1,480 @@
+import {
+	buildAmendmentDocumentModel,
+	type PlainDocument,
+} from "../amendment-document-model";
+import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
+import type {
+	ClassificationOverride,
+	DocumentModel,
+	FormattingSpan,
+	OperationMatchAttempt,
+	PlannedPatch,
+	ResolutionIssue,
+	ResolvedInstructionOperation,
+} from "../amendment-edit-engine-types";
+import { planOperationEdit } from "../amendment-edit-planner";
+import {
+	type InstructionSemanticTree,
+	LocationRestrictionKind,
+	SemanticNodeType,
+	UltimateEditKind,
+} from "../amendment-edit-tree";
+import {
+	appendScopeContextText,
+	mergeTargets,
+	normalizePath,
+	pathToText,
+	refToHierarchyPath,
+	resolveEdit,
+	type TraversalContext,
+	toHierarchyType,
+} from "./resolve";
+
+export interface SequentialExecutionState {
+	resolutionModel: DocumentModel;
+	renderPlainText: string;
+	renderSpans: FormattingSpan[];
+	resolvedOperationCount: number;
+	patches: PlannedPatch[];
+	attempts: OperationMatchAttempt[];
+	issues: ResolutionIssue[];
+	unsupportedReasons: string[];
+}
+
+interface CanonicalRenderOffsetMap {
+	toRenderPoint(canonicalOffset: number): number;
+}
+
+function buildCanonicalRenderOffsetMap(
+	renderText: string,
+	spans: FormattingSpan[],
+): CanonicalRenderOffsetMap {
+	const deletedMask = new Uint8Array(renderText.length);
+	for (const span of spans) {
+		if (span.type !== "deletion") continue;
+		const start = Math.max(0, Math.min(renderText.length, span.start));
+		const end = Math.max(0, Math.min(renderText.length, span.end));
+		for (let index = start; index < end; index += 1) {
+			deletedMask[index] = 1;
+		}
+	}
+
+	const toRenderPoint = (canonicalOffset: number): number => {
+		let liveCount = 0;
+		const target = Math.max(0, canonicalOffset);
+		for (let index = 0; index < renderText.length; index += 1) {
+			if (liveCount === target) return index;
+			if (deletedMask[index] === 1) continue;
+			liveCount += 1;
+		}
+		return renderText.length;
+	};
+
+	return { toRenderPoint };
+}
+
+function toSpanOnlyModel(
+	plainText: string,
+	spans: FormattingSpan[],
+): DocumentModel {
+	return {
+		plainText,
+		spans,
+		rootRange: { start: 0, end: plainText.length, indent: 0 },
+		nodesById: new Map(),
+		rootNodeIds: [],
+		paragraphs: [],
+	};
+}
+
+function overlaps(left: PlannedPatch, right: PlannedPatch): boolean {
+	return left.start < right.end && right.start < left.end;
+}
+
+function canonicalPlainDocumentFromRenderModel(
+	renderText: string,
+	renderSpans: FormattingSpan[],
+): PlainDocument {
+	const deletedMask = new Uint8Array(renderText.length);
+	for (const span of renderSpans) {
+		if (span.type !== "deletion") continue;
+		const start = Math.max(0, Math.min(renderText.length, span.start));
+		const end = Math.max(0, Math.min(renderText.length, span.end));
+		for (let index = start; index < end; index += 1) {
+			deletedMask[index] = 1;
+		}
+	}
+
+	const livePrefix = new Array<number>(renderText.length + 1).fill(0);
+	const canonicalChars: string[] = [];
+	for (let index = 0; index < renderText.length; index += 1) {
+		const isDeleted = deletedMask[index] === 1;
+		livePrefix[index + 1] = livePrefix[index] + (isDeleted ? 0 : 1);
+		if (!isDeleted) {
+			canonicalChars.push(renderText[index] ?? "");
+		}
+	}
+	const canonicalText = canonicalChars.join("");
+	const projectedSpans: FormattingSpan[] = [];
+	for (const span of renderSpans) {
+		if (span.type === "deletion") continue;
+		const start =
+			livePrefix[Math.max(0, Math.min(renderText.length, span.start))];
+		const end = livePrefix[Math.max(0, Math.min(renderText.length, span.end))];
+		if (end <= start) continue;
+		projectedSpans.push({
+			...span,
+			start,
+			end,
+		});
+	}
+	const sourceToPlainOffsets = new Array<number>(canonicalText.length + 1);
+	for (let index = 0; index <= canonicalText.length; index += 1) {
+		sourceToPlainOffsets[index] = index;
+	}
+	return {
+		plainText: canonicalText,
+		spans: projectedSpans,
+		sourceToPlainOffsets,
+	};
+}
+
+function executeResolvedOperation(
+	state: SequentialExecutionState,
+	operation: ResolvedInstructionOperation,
+	classificationOverrides?: ClassificationOverride[],
+): PlannedPatch[] {
+	const { patches, attempt } = planOperationEdit(
+		state.resolutionModel,
+		operation,
+		classificationOverrides,
+	);
+	if (attempt.outcome !== "scope_unresolved") {
+		attempt.patchApplied = patches.length > 0;
+		attempt.outcome = patches.length > 0 ? "applied" : "no_patch";
+	}
+	state.attempts.push(attempt);
+
+	if (patches.length === 0) {
+		return [];
+	}
+
+	const orderedPatches = [...patches].sort(
+		(left, right) => left.start - right.start || left.end - right.end,
+	);
+	const offsetMap = buildCanonicalRenderOffsetMap(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	const renderPatches = orderedPatches.map((patch) => ({
+		...patch,
+		start: offsetMap.toRenderPoint(patch.start),
+		end: offsetMap.toRenderPoint(patch.end),
+		insertAt: offsetMap.toRenderPoint(patch.insertAt),
+	}));
+	const appliedRender = applyPlannedPatchesTransaction(
+		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
+		renderPatches,
+	);
+	state.renderPlainText = appliedRender.plainText;
+	state.renderSpans = appliedRender.spans;
+	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	state.resolutionModel = buildAmendmentDocumentModel(
+		canonicalPlain.plainText,
+		canonicalPlain,
+	);
+	state.patches.push(...orderedPatches);
+	return orderedPatches;
+}
+
+function executeResolvedOperationsSnapshot(
+	state: SequentialExecutionState,
+	operations: ResolvedInstructionOperation[],
+	classificationOverrides?: ClassificationOverride[],
+): Set<number> {
+	const tentativePatches: PlannedPatch[] = [];
+	const attempts: { operationIndex: number; attempt: OperationMatchAttempt }[] =
+		[];
+	for (const operation of operations) {
+		const planned = planOperationEdit(
+			state.resolutionModel,
+			operation,
+			classificationOverrides,
+		);
+		tentativePatches.push(...planned.patches);
+		attempts.push({
+			operationIndex: operation.operationIndex,
+			attempt: planned.attempt,
+		});
+	}
+
+	const accepted: PlannedPatch[] = [];
+	for (const patch of tentativePatches.sort(
+		(left, right) =>
+			left.operationIndex - right.operationIndex || left.start - right.start,
+	)) {
+		const hasConflict = accepted.some((existing) => overlaps(existing, patch));
+		if (hasConflict) continue;
+		accepted.push(patch);
+	}
+
+	const appliedCountByOperation = new Map<number, number>();
+	for (const patch of accepted) {
+		appliedCountByOperation.set(
+			patch.operationIndex,
+			(appliedCountByOperation.get(patch.operationIndex) ?? 0) + 1,
+		);
+	}
+	for (const entry of attempts) {
+		if (entry.attempt.outcome !== "scope_unresolved") {
+			const applied =
+				(appliedCountByOperation.get(entry.operationIndex) ?? 0) > 0;
+			entry.attempt.patchApplied = applied;
+			entry.attempt.outcome = applied ? "applied" : "no_patch";
+		}
+		state.attempts.push(entry.attempt);
+	}
+
+	if (accepted.length === 0) {
+		return new Set<number>();
+	}
+
+	const orderedPatches = [...accepted].sort(
+		(left, right) => left.start - right.start || left.end - right.end,
+	);
+	const offsetMap = buildCanonicalRenderOffsetMap(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	const renderPatches = orderedPatches.map((patch) => ({
+		...patch,
+		start: offsetMap.toRenderPoint(patch.start),
+		end: offsetMap.toRenderPoint(patch.end),
+		insertAt: offsetMap.toRenderPoint(patch.insertAt),
+	}));
+	const appliedRender = applyPlannedPatchesTransaction(
+		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
+		renderPatches,
+	);
+	state.renderPlainText = appliedRender.plainText;
+	state.renderSpans = appliedRender.spans;
+	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	state.resolutionModel = buildAmendmentDocumentModel(
+		canonicalPlain.plainText,
+		canonicalPlain,
+	);
+	state.patches.push(...orderedPatches);
+	return new Set<number>(appliedCountByOperation.keys());
+}
+
+function registerAppliedRedesignation(
+	context: TraversalContext,
+	operation: ResolvedInstructionOperation,
+): void {
+	if (operation.edit.kind !== UltimateEditKind.Redesignate) return;
+	const mapping = operation.edit.mappings[operation.redesignateMappingIndex];
+	if (!mapping) return;
+	const toHierarchy = refToHierarchyPath(mapping.to);
+	const fullToPath = pathToText(
+		normalizePath(mergeTargets(context.target, toHierarchy)),
+	);
+	const fromLabel = mapping.from.path[mapping.from.path.length - 1]?.label;
+	if (!fullToPath || !fromLabel) return;
+	context.redesignations.set(fullToPath, fromLabel);
+}
+
+export function executeTreeSequential(
+	nodes: InstructionSemanticTree["children"],
+	context: TraversalContext,
+	counter: { index: number },
+	state: SequentialExecutionState,
+): void {
+	for (const node of nodes) {
+		if (node.type === SemanticNodeType.Scope) {
+			const scopeTarget = mergeTargets(context.target, [
+				{ type: toHierarchyType(node.scope.kind), val: node.scope.label },
+			]);
+			const scopeContextTexts = appendScopeContextText(
+				context.scopeContextTexts,
+				node.sourceText,
+			);
+			executeTreeSequential(
+				node.children,
+				{ ...context, target: scopeTarget, scopeContextTexts },
+				counter,
+				state,
+			);
+			continue;
+		}
+
+		if (node.type === SemanticNodeType.LocationRestriction) {
+			const scopeContextTexts = appendScopeContextText(
+				context.scopeContextTexts,
+				node.sourceText,
+			);
+			if (node.restriction.kind === LocationRestrictionKind.In) {
+				if (node.restriction.refs.length === 0) {
+					state.unsupportedReasons.push("in_location_empty_refs");
+					continue;
+				}
+				for (const ref of node.restriction.refs) {
+					const target = mergeTargets(context.target, refToHierarchyPath(ref));
+					executeTreeSequential(
+						node.children,
+						{ ...context, target, scopeContextTexts },
+						counter,
+						state,
+					);
+				}
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.MatterPreceding) {
+				const matterPrecedingTarget = mergeTargets(
+					context.target,
+					refToHierarchyPath(node.restriction.ref),
+				);
+				executeTreeSequential(
+					node.children,
+					{
+						...context,
+						scopeContextTexts,
+						matterPreceding: node.restriction.ref,
+						matterPrecedingTarget,
+					},
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.AtEnd) {
+				const target = mergeTargets(
+					context.target,
+					node.restriction.ref
+						? refToHierarchyPath(node.restriction.ref)
+						: null,
+				);
+				executeTreeSequential(
+					node.children,
+					{
+						...context,
+						scopeContextTexts,
+						target,
+						unanchoredInsertMode: "add_at_end",
+						atEndOnly: true,
+					},
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.SentenceOrdinal) {
+				executeTreeSequential(
+					node.children,
+					{
+						...context,
+						scopeContextTexts,
+						sentenceOrdinal: node.restriction.ordinal,
+					},
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.SentenceLast) {
+				executeTreeSequential(
+					node.children,
+					{ ...context, scopeContextTexts, sentenceOrdinal: -1 },
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.MatterFollowing) {
+				const matterFollowingTarget = mergeTargets(
+					context.target,
+					refToHierarchyPath(node.restriction.ref),
+				);
+				executeTreeSequential(
+					node.children,
+					{ ...context, scopeContextTexts, matterFollowingTarget },
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.Before) {
+				executeTreeSequential(
+					node.children,
+					{
+						...context,
+						scopeContextTexts,
+						beforeInnerTarget: node.restriction.target,
+					},
+					counter,
+					state,
+				);
+				continue;
+			}
+			if (node.restriction.kind === LocationRestrictionKind.After) {
+				executeTreeSequential(
+					node.children,
+					{
+						...context,
+						scopeContextTexts,
+						afterInnerTarget: node.restriction.target,
+					},
+					counter,
+					state,
+				);
+				continue;
+			}
+
+			state.unsupportedReasons.push(
+				`location_${node.restriction.kind}_not_supported`,
+			);
+			continue;
+		}
+
+		if (node.type !== SemanticNodeType.Edit) continue;
+		const nested = resolveEdit(
+			state.resolutionModel,
+			node,
+			context,
+			counter,
+			state.issues,
+		);
+		state.unsupportedReasons.push(...nested.unsupportedReasons);
+		state.resolvedOperationCount += nested.resolved.length;
+		if (
+			node.edit.kind === UltimateEditKind.Redesignate &&
+			nested.resolved.length > 1
+		) {
+			const appliedOperations = executeResolvedOperationsSnapshot(
+				state,
+				nested.resolved,
+				context.classificationOverrides,
+			);
+			for (const operation of nested.resolved) {
+				if (!appliedOperations.has(operation.operationIndex)) continue;
+				registerAppliedRedesignation(context, operation);
+			}
+			continue;
+		}
+		for (const operation of nested.resolved) {
+			const appliedPatches = executeResolvedOperation(
+				state,
+				operation,
+				context.classificationOverrides,
+			);
+			if (appliedPatches.length > 0) {
+				registerAppliedRedesignation(context, operation);
+			}
+		}
+	}
+}

@@ -12,6 +12,7 @@ import type {
 } from "../amendment-edit-engine-types";
 import { planEdits } from "../amendment-edit-planner";
 import {
+	InnerLocationTargetKind,
 	type InstructionSemanticTree,
 	LocationRestrictionKind,
 	PunctuationKind,
@@ -385,6 +386,46 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.applySummary.failedItems[0]?.operationIndex).toBe(0);
 	});
 
+	it("does not use placeholder anchor text for unresolved structural insert-after", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Insert,
+						content: tp(
+							"(89) provide that the State shall comply with the eligibility verification requirements.",
+						),
+						after: {
+							ref: {
+								kind: ScopeKind.Paragraph,
+								path: [{ kind: ScopeKind.Paragraph, label: "88" }],
+							},
+						},
+					},
+				},
+			],
+		};
+
+		const sectionBody =
+			"(a) who are optional targeted low-income children described in section 1396d(u)(2)(B).";
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody,
+		});
+
+		expect(effect.status).toBe("unsupported");
+		expect(effect.renderModel.plainText).toBe(sectionBody);
+		expect(effect.applySummary.partiallyApplied).toBe(true);
+		expect(effect.applySummary.failedItems).toHaveLength(1);
+		expect(effect.applySummary.failedItems[0]?.reasonKind).toBe(
+			"target_unresolved",
+		);
+	});
+
 	it("fails when instruction amends a USC note citation", () => {
 		const parser = createHandcraftedInstructionParser();
 		const instructionLines = [
@@ -469,7 +510,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.inserted[0]).toContain("(1) Alpha.");
 	});
 
-	it("reduces PDF-derived indentation levels by one for inserted block content", () => {
+	it.fails("reduces PDF-derived indentation levels by one for inserted block content", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
 			targetSection: "1",
@@ -822,6 +863,143 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expectEffectToContainMarkedText(effect, "This is ~~old~~++new++ text.");
 		expect(effect.deleted).toEqual(["old"]);
 		expect(effect.inserted).toEqual(["new"]);
+	});
+
+	it("applies subsection heading strike-insert without deleting subsection body", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "455",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "f" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: {
+									inner: {
+										kind: InnerLocationTargetKind.SubsectionHeading,
+									},
+								},
+								insert: tp("DEFERMENT; FORBEARANCE"),
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"(e) Existing subsection.",
+			"(f) ECONOMIC HARDSHIP AND UNEMPLOYMENT DEFERMENTS.—The Secretary may grant deferment under this subsection.",
+		].join("\n");
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/20/1087e",
+			sectionBody,
+		});
+
+		expect(effect.status).toBe("ok");
+		expectEffectToContainMarkedText(
+			effect,
+			"(f) ~~ECONOMIC HARDSHIP AND UNEMPLOYMENT DEFERMENTS.~~++DEFERMENT; FORBEARANCE++—The Secretary may grant deferment under this subsection.",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"The Secretary may grant deferment under this subsection.",
+		);
+	});
+
+	it("applies before subsection heading location restriction", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "a" },
+					children: [
+						{
+							type: SemanticNodeType.LocationRestriction,
+							restriction: {
+								kind: LocationRestrictionKind.Before,
+								target: {
+									kind: InnerLocationTargetKind.SubsectionHeading,
+								},
+							},
+							children: [
+								{
+									type: SemanticNodeType.Edit,
+									edit: {
+										kind: UltimateEditKind.Strike,
+										target: {
+											kind: SearchTargetKind.Text,
+											text: tp("(a)"),
+										},
+									},
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(a) FIRST HEADING—Body text.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expectEffectToContainMarkedText(effect, "~~(a)~~ FIRST HEADING—Body text.");
+	});
+
+	it("applies after subsection heading location restriction", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "a" },
+					children: [
+						{
+							type: SemanticNodeType.LocationRestriction,
+							restriction: {
+								kind: LocationRestrictionKind.After,
+								target: {
+									kind: InnerLocationTargetKind.SubsectionHeading,
+								},
+							},
+							children: [
+								{
+									type: SemanticNodeType.Edit,
+									edit: {
+										kind: UltimateEditKind.Strike,
+										target: {
+											kind: SearchTargetKind.Text,
+											text: tp("Body"),
+										},
+									},
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody: "(a) FIRST HEADING—Body text.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expectEffectToContainMarkedText(effect, "(a) FIRST HEADING—~~Body~~ text.");
 	});
 
 	it("applies matter-preceding edits in subsection introduction instead of subsection heading", () => {

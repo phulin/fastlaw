@@ -1,4 +1,4 @@
-import type { UltimateEdit } from "./amendment-edit-tree";
+import type { InnerLocationTarget, UltimateEdit } from "./amendment-edit-tree";
 
 export type HierarchyLevelType =
 	| "section"
@@ -117,6 +117,8 @@ export interface ResolvedInstructionOperation {
 	resolvedMatterPrecedingTargetId: string | null;
 	resolvedMatterFollowingTargetId: string | null;
 	resolvedThroughTargetId: string | null;
+	beforeInnerTarget?: InnerLocationTarget | null;
+	afterInnerTarget?: InnerLocationTarget | null;
 	structuralStrikeMode: "discrete" | "range" | null;
 	resolvedStructuralTargetIds: Array<string | null>;
 	resolvedAnchorTargetId: string | null;
