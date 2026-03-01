@@ -4,7 +4,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import type { Node, Parent } from "unist";
 import type {
-	DocumentModel,
+	CanonicalDocument,
 	DocumentParagraph,
 	FormattingSpan,
 	HierarchyLevel,
@@ -22,7 +22,7 @@ import {
 
 const parseProcessor = unified().use(remarkParse).use(remarkGfm);
 
-export interface PlainDocument {
+export interface ParsedMarkdownDocument {
 	plainText: string;
 	spans: FormattingSpan[];
 	sourceToPlainOffsets: number[];
@@ -335,7 +335,7 @@ function buildOffsetMaps(
 
 export function parseMarkdownToPlainDocument(
 	sourceText: string,
-): PlainDocument {
+): ParsedMarkdownDocument {
 	const tree = parseProcessor.parse(sourceText) as Root;
 	const state = {
 		plainParts: [] as string[],
@@ -474,10 +474,10 @@ function buildNodes(args: BuildNodesArgs): string[] {
 	return builtNodeIds;
 }
 
-export function buildAmendmentDocumentModel(
+export function buildCanonicalDocument(
 	sourceText: string,
-	parsedPlain?: PlainDocument,
-): DocumentModel {
+	parsedPlain?: ParsedMarkdownDocument,
+): CanonicalDocument {
 	const plain = parsedPlain ?? parseMarkdownToPlainDocument(sourceText);
 	const lineStarts = getLineStarts(sourceText);
 
@@ -570,6 +570,7 @@ export function buildAmendmentDocumentModel(
 	return {
 		plainText: plain.plainText,
 		spans: plain.spans,
+		sourceToPlainOffsets: plain.sourceToPlainOffsets,
 		rootRange: {
 			start: 0,
 			end: plain.plainText.length,
@@ -582,7 +583,7 @@ export function buildAmendmentDocumentModel(
 }
 
 export function getScopeRangeFromNodeId(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	nodeId: string | null,
 ): ScopeRange | null {
 	if (nodeId === null) return model.rootRange;

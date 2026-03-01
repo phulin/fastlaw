@@ -1,6 +1,6 @@
 import { getScopeRangeFromNodeId } from "../../amendment-document-model";
 import type {
-	DocumentModel,
+	CanonicalDocument,
 	ResolvedInstructionOperation,
 	ScopeRange,
 } from "../../amendment-edit-engine-types";
@@ -16,7 +16,7 @@ interface PushPatchArgs {
 }
 
 interface MoveHandlerArgs {
-	model: DocumentModel;
+	model: CanonicalDocument;
 	operation: ResolvedInstructionOperation;
 	plainText: string;
 	pushPatch: (args: PushPatchArgs) => void;

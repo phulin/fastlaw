@@ -1,7 +1,7 @@
 import { getScopeRangeFromNodeId } from "../../amendment-document-model";
 import type {
+	CanonicalDocument,
 	ClassificationOverride,
-	DocumentModel,
 	OperationMatchAttempt,
 	ResolvedInstructionOperation,
 	ScopeRange,
@@ -21,7 +21,7 @@ interface PushPatchArgs {
 }
 
 interface InsertHandlerArgs {
-	model: DocumentModel;
+	model: CanonicalDocument;
 	operation: ResolvedInstructionOperation;
 	range: ScopeRange | null;
 	scopedText: string;

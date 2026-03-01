@@ -1,7 +1,7 @@
 import { getScopeRangeFromNodeId } from "../../amendment-document-model";
 import type {
+	CanonicalDocument,
 	ClassificationOverride,
-	DocumentModel,
 	OperationMatchAttempt,
 	ResolvedInstructionOperation,
 	ScopeRange,
@@ -24,7 +24,7 @@ interface PushPatchArgs {
 }
 
 interface StrikeInsertHandlerArgs {
-	model: DocumentModel;
+	model: CanonicalDocument;
 	operation: ResolvedInstructionOperation;
 	range: ScopeRange | null;
 	scopedText: string;
@@ -45,12 +45,12 @@ interface StrikeInsertHandlerArgs {
 		kind: PunctuationKind,
 	) => number;
 	resolveInnerLocationRangeInScope: (
-		model: DocumentModel,
+		model: CanonicalDocument,
 		range: ScopeRange,
 		target: InnerLocationTarget,
 	) => ScopeRange | null;
 	formatStrikeInsertReplacementText: (args: {
-		model: DocumentModel;
+		model: CanonicalDocument;
 		content: TextWithProvenance;
 		insertStart: number;
 		fallbackIndent: number;

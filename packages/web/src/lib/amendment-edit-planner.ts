@@ -3,8 +3,8 @@ import {
 	parseMarkdownToPlainDocument,
 } from "./amendment-document-model";
 import type {
+	CanonicalDocument,
 	ClassificationOverride,
-	DocumentModel,
 	FormattingSpan,
 	OperationMatchAttempt,
 	PlanEditsResult,
@@ -222,7 +222,7 @@ function formatReplacementContent(
 }
 
 function paragraphIndentAtOffset(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	offset: number,
 ): number | null {
 	const paragraph = model.paragraphs.find(
@@ -232,7 +232,7 @@ function paragraphIndentAtOffset(
 }
 
 function formatStrikeInsertReplacementText(args: {
-	model: DocumentModel;
+	model: CanonicalDocument;
 	content: TextWithProvenance;
 	insertStart: number;
 	fallbackIndent: number;
@@ -605,7 +605,7 @@ function resolveLeadingSubsectionHeadingRange(
 }
 
 function resolveHeadingSpanRange(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	range: ScopeRange,
 ): { start: number; end: number } | null {
 	const headingSpan = model.spans.find(
@@ -619,7 +619,7 @@ function resolveHeadingSpanRange(
 }
 
 function resolveInnerLocationRangeInScope(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	range: ScopeRange,
 	target: InnerLocationTarget,
 ): ScopeRange | null {
@@ -729,7 +729,7 @@ function resolveInlineMatterBoundary(
 }
 
 function trimLeadingSubsectionHeadingFromRange(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	range: ScopeRange,
 ): ScopeRange {
 	const leadingParagraph = model.spans.find(
@@ -862,7 +862,7 @@ function buildAttempt(
 }
 
 function planPatchForOperation(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	operation: ResolvedInstructionOperation,
 	classificationOverrides?: ClassificationOverride[],
 ): { patches: PlannedPatch[]; attempt: OperationMatchAttempt } {
@@ -1147,7 +1147,7 @@ function planPatchForOperation(
 }
 
 export function planOperationEdit(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	operation: ResolvedInstructionOperation,
 	classificationOverrides?: ClassificationOverride[],
 ): { patches: PlannedPatch[]; attempt: OperationMatchAttempt } {
@@ -1155,7 +1155,7 @@ export function planOperationEdit(
 }
 
 export function planEdits(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	operations: ResolvedInstructionOperation[],
 	classificationOverrides?: ClassificationOverride[],
 ): PlanEditsResult {

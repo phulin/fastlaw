@@ -1,4 +1,4 @@
-import { buildAmendmentDocumentModel } from "./amendment-document-model";
+import { buildCanonicalDocument } from "./amendment-document-model";
 import {
 	executeTreeSequential,
 	type SequentialExecutionState,
@@ -29,7 +29,7 @@ export type {
 export function applyAmendmentEditTreeToSection(
 	args: ApplyEditTreeArgs,
 ): AmendmentEffect {
-	const initialModel = buildAmendmentDocumentModel(
+	const initialModel = buildCanonicalDocument(
 		args.sectionBody,
 		args.parsedDocument,
 	);

@@ -63,9 +63,10 @@ export interface DocumentParagraph {
 	leadingLabels: string[];
 }
 
-export interface DocumentModel {
+export interface CanonicalDocument {
 	plainText: string;
 	spans: FormattingSpan[];
+	sourceToPlainOffsets: number[];
 	rootRange: ScopeRange;
 	nodesById: Map<string, StructuralNode>;
 	rootNodeIds: string[];

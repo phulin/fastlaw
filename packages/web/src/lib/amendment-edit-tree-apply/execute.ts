@@ -1,11 +1,11 @@
 import {
-	buildAmendmentDocumentModel,
-	type PlainDocument,
+	buildCanonicalDocument,
+	type ParsedMarkdownDocument,
 } from "../amendment-document-model";
 import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
 import type {
+	CanonicalDocument,
 	ClassificationOverride,
-	DocumentModel,
 	FormattingSpan,
 	OperationMatchAttempt,
 	PlannedPatch,
@@ -36,7 +36,7 @@ import {
 } from "./resolve";
 
 export interface SequentialExecutionState {
-	resolutionModel: DocumentModel;
+	resolutionModel: CanonicalDocument;
 	renderPlainText: string;
 	renderSpans: FormattingSpan[];
 	resolvedOperationCount: number;
@@ -81,10 +81,15 @@ function buildCanonicalRenderOffsetMap(
 function toSpanOnlyModel(
 	plainText: string,
 	spans: FormattingSpan[],
-): DocumentModel {
+): CanonicalDocument {
+	const sourceToPlainOffsets = new Array<number>(plainText.length + 1);
+	for (let index = 0; index <= plainText.length; index += 1) {
+		sourceToPlainOffsets[index] = index;
+	}
 	return {
 		plainText,
 		spans,
+		sourceToPlainOffsets,
 		rootRange: { start: 0, end: plainText.length, indent: 0 },
 		nodesById: new Map(),
 		rootNodeIds: [],
@@ -96,10 +101,10 @@ function overlaps(left: PlannedPatch, right: PlannedPatch): boolean {
 	return left.start < right.end && right.start < left.end;
 }
 
-function canonicalPlainDocumentFromRenderModel(
+function canonicalDocumentFromRenderModel(
 	renderText: string,
 	renderSpans: FormattingSpan[],
-): PlainDocument {
+): CanonicalDocument {
 	const deletedMask = new Uint8Array(renderText.length);
 	for (const span of renderSpans) {
 		if (span.type !== "deletion") continue;
@@ -137,22 +142,20 @@ function canonicalPlainDocumentFromRenderModel(
 	for (let index = 0; index <= canonicalText.length; index += 1) {
 		sourceToPlainOffsets[index] = index;
 	}
-	return {
+	const parsedMarkdownDocument: ParsedMarkdownDocument = {
 		plainText: canonicalText,
 		spans: projectedSpans,
 		sourceToPlainOffsets,
 	};
+	return buildCanonicalDocument(canonicalText, parsedMarkdownDocument);
 }
 
 function recomputeResolutionModel(state: SequentialExecutionState): void {
-	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
+	const canonicalDocument = canonicalDocumentFromRenderModel(
 		state.renderPlainText,
 		state.renderSpans,
 	);
-	state.resolutionModel = buildAmendmentDocumentModel(
-		canonicalPlain.plainText,
-		canonicalPlain,
-	);
+	state.resolutionModel = canonicalDocument;
 }
 
 function applyAcceptedPatchesToState(

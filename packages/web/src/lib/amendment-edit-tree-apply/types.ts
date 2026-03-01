@@ -1,5 +1,5 @@
-import type { PlainDocument } from "../amendment-document-model";
 import type {
+	CanonicalDocument,
 	ClassificationOverride,
 	FormattingSpan,
 	OperationMatchAttempt,
@@ -11,7 +11,7 @@ export interface ApplyEditTreeArgs {
 	tree: InstructionSemanticTree;
 	sectionPath: string;
 	sectionBody: string;
-	parsedDocument?: PlainDocument;
+	parsedDocument?: CanonicalDocument;
 	instructionText?: string;
 	classificationOverrides?: ClassificationOverride[];
 }

@@ -3,10 +3,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
-import { buildAmendmentDocumentModel } from "../amendment-document-model";
+import { buildCanonicalDocument } from "../amendment-document-model";
 import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
 import type {
-	DocumentModel,
+	CanonicalDocument,
 	PlannedPatch,
 	ResolvedInstructionOperation,
 } from "../amendment-edit-engine-types";
@@ -96,7 +96,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 	});
 
 	it("plans structural and-list strikes as discrete deletions", () => {
-		const model = buildAmendmentDocumentModel(
+		const model = buildCanonicalDocument(
 			"(a) Alpha.\n(b) Bravo.\n(c) Charlie.\n(d) Delta.\n(e) Echo.",
 		);
 		const topLevelNodes = [...model.nodesById.values()].filter(
@@ -165,7 +165,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 	});
 
 	it("plans structural through-range strikes as contiguous deletion", () => {
-		const model = buildAmendmentDocumentModel(
+		const model = buildCanonicalDocument(
 			"(a) Alpha.\n(b) Bravo.\n(c) Charlie.\n(d) Delta.\n(e) Echo.",
 		);
 		const topLevelNodes = [...model.nodesById.values()].filter(
@@ -1536,7 +1536,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 	it("keeps inline punctuation insertions paragraph-covered when followed by add-at-end block insertion", () => {
 		const originalText =
 			"(II) which is directly adjoining to any census tract described in subclause (I).";
-		const model = buildAmendmentDocumentModel(originalText);
+		const model = buildCanonicalDocument(originalText);
 		const periodIndex = originalText.lastIndexOf(".");
 		expect(periodIndex).toBeGreaterThan(-1);
 
@@ -2706,13 +2706,14 @@ describe("applyAmendmentEditTreeToSection unit tree-shape coverage", () => {
 
 describe("applyAmendmentEditTreeToSection integration", () => {
 	it("shifts post-insertion spans when inserted text has paragraph spans", () => {
-		const model: DocumentModel = {
+		const model: CanonicalDocument = {
 			plainText: "AAA\n(c) Enforcement\nZZZ",
 			spans: [
 				{ type: "paragraph", start: 0, end: 3 },
 				{ type: "paragraph", start: 4, end: 19 },
 				{ type: "heading", start: 4, end: 19 },
 			],
+			sourceToPlainOffsets: Array.from({ length: 23 }, (_, i) => i),
 			rootRange: { start: 0, end: 22, indent: null },
 			nodesById: new Map(),
 			rootNodeIds: [],
@@ -2759,7 +2760,7 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 			const translated = translateInstructionAstToEditTree(parsed.ast);
 			expect(translated.issues).toEqual([]);
 
-			const model = buildAmendmentDocumentModel(sectionBody);
+			const model = buildCanonicalDocument(sectionBody);
 			const counter = { index: allOperations.length };
 			const walked = walkTree(
 				model,
@@ -2790,7 +2791,7 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 			allOperations.push(...walked.resolved);
 		}
 
-		const model = buildAmendmentDocumentModel(sectionBody);
+		const model = buildCanonicalDocument(sectionBody);
 		const { patches } = planEdits(model, allOperations, []);
 		const applied = applyPlannedPatchesTransaction(model, patches);
 		const finalBody = applied.plainText;

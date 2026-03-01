@@ -23,8 +23,17 @@
 ## Phase 4: Rebuild Model Boundary
 - Encapsulate resolution-model rebuild flow behind a single internal API.
 
-## Phase 5: Canonical Internal Operation Adapter
+## Phase 5: Canonical Document Unification (PlainDocument + DocumentModel)
+- Replace dual model flow with one immutable canonical document type used for both:
+  - rendering (`text` + `spans`)
+  - resolution/planning (`paragraphs` + structural node index)
+- Introduce `CanonicalDocument` and adapters from existing structures during migration.
+- Make patch application return updated `CanonicalDocument` directly.
+- Remove projection/rebuild helpers once migration is complete (e.g. render->canonical conversion helpers).
+- Keep external behavior and public API unchanged while collapsing internal state.
+
+## Phase 6: Canonical Internal Operation Adapter
 - Add internal canonical operation type and adapter from current resolved operations.
 
-## Phase 6: Cleanup
+## Phase 7: Cleanup
 - Remove dead internal indirection and helpers introduced during migration.

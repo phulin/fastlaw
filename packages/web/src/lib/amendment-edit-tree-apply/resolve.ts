@@ -1,6 +1,6 @@
 import type {
+	CanonicalDocument,
 	ClassificationOverride,
-	DocumentModel,
 	HierarchyLevel,
 	ResolutionIssue,
 	ResolvedInstructionOperation,
@@ -52,7 +52,7 @@ function labelMatchesSegment(
 }
 
 function filterCandidateIds(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	candidateIds: string[],
 	segment: HierarchyLevel,
 ): string[] {
@@ -69,7 +69,10 @@ function filterCandidateIds(
 	});
 }
 
-function collectDescendantIds(model: DocumentModel, nodeId: string): string[] {
+function collectDescendantIds(
+	model: CanonicalDocument,
+	nodeId: string,
+): string[] {
 	const descendants: string[] = [];
 	const stack = [...(model.nodesById.get(nodeId)?.childIds ?? [])];
 	while (stack.length > 0) {
@@ -86,7 +89,7 @@ function collectDescendantIds(model: DocumentModel, nodeId: string): string[] {
 }
 
 function resolvePathCandidates(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	path: HierarchyLevel[] | undefined,
 ): string[] {
 	if (!path || path.length === 0) return [];
@@ -157,7 +160,7 @@ function resolvePathCandidates(
 }
 
 function resolveSinglePath(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	operationIndex: number,
 	path: HierarchyLevel[] | undefined,
 	unresolvedKind: ResolutionIssue["kind"],
@@ -356,7 +359,7 @@ function looksLikeBlockContent(content: string): boolean {
 }
 
 export function resolveEdit(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	editNode: EditNode,
 	context: TraversalContext,
 	counter: { index: number },
@@ -747,7 +750,7 @@ export function resolveEdit(
 }
 
 export function walkTree(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	nodes: InstructionSemanticTree["children"],
 	context: TraversalContext,
 	counter: { index: number },

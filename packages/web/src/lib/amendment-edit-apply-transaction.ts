@@ -1,6 +1,6 @@
 import type {
 	ApplyPlannedPatchesResult,
-	DocumentModel,
+	CanonicalDocument,
 	FormattingSpan,
 	PlannedPatch,
 } from "./amendment-edit-engine-types";
@@ -301,7 +301,7 @@ function normalizeParagraphSpanContainment(
 }
 
 function materializeEditsFromPatches(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	patches: PlannedPatch[],
 ): { plainText: string; spans: FormattingSpan[] } {
 	const orderedPatches = patches
@@ -447,7 +447,7 @@ function materializeEditsFromPatches(
 }
 
 export function applyPlannedPatchesTransaction(
-	model: DocumentModel,
+	model: CanonicalDocument,
 	patches: PlannedPatch[],
 ): ApplyPlannedPatchesResult {
 	const materialized = materializeEditsFromPatches(model, patches);
