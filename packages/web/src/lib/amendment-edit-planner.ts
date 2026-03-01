@@ -334,8 +334,12 @@ function isStructuralMarkerWithBodyLine(line: string): boolean {
 
 const MARKER_LINE_WITH_PREFIX_RE =
 	/^(\s*(?:>\s*)*)((?:\([A-Za-z0-9ivxIVX]+\))+)\s+([A-Za-z0-9][A-Za-z0-9 '"()\-.,/&;]*?)\.\u2014(?:\s*(.*))?$/;
-const MARKER_PARAGRAPH_RE =
-	/^(\s*)((?:\([A-Za-z0-9ivxIVX]+\))+)(?:\s+([\s\S]*))?$/;
+const LEADING_MARKER_CHAIN_RE = /^\s*((?:\([A-Za-z0-9ivxIVX]+\))+)(?:\s|$)/;
+
+interface SourceOffsetRange {
+	start: number;
+	end: number;
+}
 
 function lowercaseHeadingWithUppercaseFirstCharacter(text: string): string {
 	if (text.length === 0) return text;
@@ -343,14 +347,29 @@ function lowercaseHeadingWithUppercaseFirstCharacter(text: string): string {
 	return lower[0].toUpperCase() + lower.slice(1);
 }
 
-function normalizeInsertedMarkerHeadings(sourceText: string): string {
-	if (sourceText.length === 0) return sourceText;
+function normalizeInsertedMarkerHeadings(sourceText: string): {
+	normalizedText: string;
+	headingStrongSourceRanges: SourceOffsetRange[];
+} {
+	if (sourceText.length === 0) {
+		return { normalizedText: sourceText, headingStrongSourceRanges: [] };
+	}
 	const lines = sourceText.split("\n");
 	const normalized: string[] = [];
+	const headingStrongSourceRanges: SourceOffsetRange[] = [];
+	let outputOffset = 0;
+
+	const appendLine = (line: string): number => {
+		normalized.push(line);
+		const lineStart = outputOffset;
+		outputOffset += line.length + 1;
+		return lineStart;
+	};
+
 	for (const line of lines) {
 		const match = line.match(MARKER_LINE_WITH_PREFIX_RE);
 		if (!match) {
-			normalized.push(line);
+			appendLine(line);
 			continue;
 		}
 		const prefix = match[1] ?? "";
@@ -359,24 +378,35 @@ function normalizeInsertedMarkerHeadings(sourceText: string): string {
 			(match[3] ?? "").trim(),
 		);
 		const tail = (match[4] ?? "").trim();
-		normalized.push(`${prefix}${marker} ${heading}`);
+		const headingLine = `${prefix}${marker} ${heading}`;
+		const headingLineStart = appendLine(headingLine);
+		const markerStart = headingLineStart + prefix.length;
+		const markerEnd = markerStart + marker.length;
+		const headingStart = markerEnd + 1;
+		const headingEnd = headingStart + heading.length;
+		headingStrongSourceRanges.push({ start: markerStart, end: markerEnd });
+		headingStrongSourceRanges.push({ start: headingStart, end: headingEnd });
 		if (tail.length > 0) {
-			normalized.push("");
-			normalized.push(`${prefix}${tail}`);
+			appendLine("");
+			appendLine(`${prefix}${tail}`);
 		}
 	}
-	return normalized.join("\n");
+	return {
+		normalizedText: normalized.join("\n"),
+		headingStrongSourceRanges,
+	};
 }
 
-function withSymbolicMarkerHeadingSpans(
+function withNormalizedMarkerHeadingSpans(
 	spans: FormattingSpan[],
 	plainText: string,
+	headingStrongSourceRanges: SourceOffsetRange[],
+	sourceToPlainOffsets: number[],
 ): FormattingSpan[] {
 	const output = spans.map((span) => ({ ...span }));
 	const paragraphSpans = output
 		.filter((span) => span.type === "paragraph")
 		.sort((left, right) => left.start - right.start || left.end - right.end);
-
 	const hasStrongSpan = (start: number, end: number): boolean =>
 		output.some(
 			(span) =>
@@ -385,43 +415,24 @@ function withSymbolicMarkerHeadingSpans(
 
 	for (const paragraph of paragraphSpans) {
 		const text = plainText.slice(paragraph.start, paragraph.end);
-		const match = text.match(MARKER_PARAGRAPH_RE);
-		if (!match) continue;
-
-		const leading = match[1] ?? "";
-		const marker = match[2] ?? "";
-		const trailing = (match[3] ?? "").trim();
-		if (marker.length === 0) continue;
-
-		const markerStart = paragraph.start + leading.length;
-		const markerEnd = markerStart + marker.length;
-		if (markerEnd > markerStart && !hasStrongSpan(markerStart, markerEnd)) {
+		const markerMatch = text.match(LEADING_MARKER_CHAIN_RE);
+		if (!markerMatch) continue;
+		const leadingWhitespace = markerMatch[0].indexOf("(");
+		if (leadingWhitespace < 0) continue;
+		const markerStart = paragraph.start + leadingWhitespace;
+		const markerEnd = markerStart + (markerMatch[1]?.length ?? 0);
+		if (markerEnd <= markerStart) continue;
+		if (!hasStrongSpan(markerStart, markerEnd)) {
 			output.push({ start: markerStart, end: markerEnd, type: "strong" });
 		}
+	}
 
-		// When marker-heading lines are split from ".—" forms (e.g. "(1) Premiums"),
-		// add a strong span for the heading text as well.
-		if (trailing.length > 0 && !/[.!?;:]$/.test(trailing)) {
-			let headingStart = markerEnd;
-			while (
-				headingStart < paragraph.end &&
-				/\s/.test(plainText[headingStart] ?? "")
-			) {
-				headingStart += 1;
-			}
-			let headingEnd = paragraph.end;
-			while (
-				headingEnd > headingStart &&
-				/\s/.test(plainText[headingEnd - 1] ?? "")
-			) {
-				headingEnd -= 1;
-			}
-			if (
-				headingEnd > headingStart &&
-				!hasStrongSpan(headingStart, headingEnd)
-			) {
-				output.push({ start: headingStart, end: headingEnd, type: "strong" });
-			}
+	for (const sourceRange of headingStrongSourceRanges) {
+		const mappedStart = sourceToPlainOffsets[sourceRange.start] ?? 0;
+		const mappedEnd = sourceToPlainOffsets[sourceRange.end] ?? plainText.length;
+		if (mappedEnd <= mappedStart) continue;
+		if (!hasStrongSpan(mappedStart, mappedEnd)) {
+			output.push({ start: mappedStart, end: mappedEnd, type: "strong" });
 		}
 	}
 
@@ -434,7 +445,6 @@ function withSymbolicMarkerHeadingSpans(
 }
 
 function normalizeInsertedParagraphBoundaries(sourceText: string): string {
-	if (!sourceText.includes("\n")) return sourceText;
 	const lines = sourceText.split("\n");
 	const expandedLines = lines.flatMap((line) =>
 		splitInlineStructuralMarkers(line),
@@ -485,15 +495,17 @@ function parseInsertedText(sourceText: string): {
 	if (sourceText.length === 0) {
 		return { insertedPlain: "", insertedSpans: [] };
 	}
-	const normalizedSourceText = normalizeInsertedParagraphBoundaries(
-		normalizeInsertedMarkerHeadings(sourceText),
-	);
-	const normalizedSourceWithHeadings =
+	const normalizedSourceText = normalizeInsertedParagraphBoundaries(sourceText);
+	const normalizedHeadings =
 		normalizeInsertedMarkerHeadings(normalizedSourceText);
-	const parsed = parseMarkdownToPlainDocument(normalizedSourceWithHeadings);
-	const symbolicSpans = withSymbolicMarkerHeadingSpans(
+	const parsed = parseMarkdownToPlainDocument(
+		normalizedHeadings.normalizedText,
+	);
+	const symbolicSpans = withNormalizedMarkerHeadingSpans(
 		parsed.spans,
 		parsed.plainText,
+		normalizedHeadings.headingStrongSourceRanges,
+		parsed.sourceToPlainOffsets,
 	);
 	return {
 		insertedPlain: parsed.plainText,

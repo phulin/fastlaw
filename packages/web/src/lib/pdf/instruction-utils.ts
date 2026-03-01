@@ -42,6 +42,10 @@ export const getUscSectionPathFromScopePath = (
 	targetScopePath: TargetScopeSegment[] | undefined,
 ): string | null => {
 	if (!targetScopePath) return null;
+	const hasNoteReference = targetScopePath.some(
+		(segment) => segment.kind === "note_reference",
+	);
+	if (hasNoteReference) return null;
 	const codeReference = targetScopePath.find(
 		(
 			segment,
@@ -76,7 +80,14 @@ export const getUscCitationFromScopePath = (
 	if (!codeReference || !section) return null;
 	const title = codeReference.label.match(CODE_REFERENCE_TITLE_RE)?.[1];
 	if (!title) return null;
-	return `${title} U.S.C. ${section.label}`;
+	const noteReference = targetScopePath.find(
+		(
+			segment,
+		): segment is Extract<TargetScopeSegment, { kind: "note_reference" }> =>
+			segment.kind === "note_reference",
+	);
+	const noteSuffix = noteReference ? ` ${noteReference.label}` : "";
+	return `${title} U.S.C. ${section.label}${noteSuffix}`;
 };
 
 export const formatTargetScopePath = (

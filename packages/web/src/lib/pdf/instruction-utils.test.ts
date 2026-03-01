@@ -4,6 +4,7 @@ import type { Paragraph } from "../types";
 import {
 	discoverParsedInstructionSpans,
 	discoverTitleScopedCodeReferenceDefaults,
+	getUscCitationFromScopePath,
 	getUscSectionPathFromScopePath,
 } from "./instruction-utils";
 
@@ -27,6 +28,30 @@ describe("getUscSectionPathFromScopePath", () => {
 
 		expect(getUscSectionPathFromScopePath(targetScopePath)).toBe(
 			"/statutes/usc/section/7/1308-1",
+		);
+	});
+
+	it("does not return a USC section path for note targets", () => {
+		const targetScopePath: TargetScopeSegment[] = [
+			{ kind: "code_reference", label: "42 U.S.C." },
+			{ kind: ScopeKind.Section, label: "2210" },
+			{ kind: "note_reference", label: "note" },
+		];
+
+		expect(getUscSectionPathFromScopePath(targetScopePath)).toBeNull();
+	});
+});
+
+describe("getUscCitationFromScopePath", () => {
+	it("includes note suffix for note-target citations", () => {
+		const targetScopePath: TargetScopeSegment[] = [
+			{ kind: "code_reference", label: "42 U.S.C." },
+			{ kind: ScopeKind.Section, label: "2210" },
+			{ kind: "note_reference", label: "note" },
+		];
+
+		expect(getUscCitationFromScopePath(targetScopePath)).toBe(
+			"42 U.S.C. 2210 note",
 		);
 	});
 });

@@ -63,6 +63,20 @@ describe("translateInstructionAstToEditTree", () => {
 		expect(result.tree.targetSection).toBe("1182");
 	});
 
+	it("preserves USC note targeting in target scope path", () => {
+		const ast = parseInstructionAst(
+			"Section 3(d) of the Radiation Exposure Compensation Act (42 U.S.C. 2210 note) is amended by striking “A”.",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		expect(result.tree.targetScopePath).toEqual([
+			{ kind: "code_reference", label: "42 U.S.C." },
+			{ kind: ScopeKind.Section, label: "2210" },
+			{ kind: "note_reference", label: "note" },
+		]);
+		expect(result.tree.targetSection).toBe("2210");
+	});
+
 	it("normalizes IRC references to title 26 scope", () => {
 		const ast = parseInstructionAst(
 			"Section 45D(a) of the Internal Revenue Code of 1986 is amended by striking “A”.",

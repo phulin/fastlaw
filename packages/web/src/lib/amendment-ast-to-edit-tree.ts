@@ -89,6 +89,7 @@ const ORDINAL_TO_NUMBER: Record<string, number> = {
 const USC_TITLE_REFERENCE_RE = /^(\d+)\s+(?:U\.S\.C\.|USC)(?:\s|$)/i;
 const USC_TITLE_UNDERLYING_RE = /title\s+(\d+),\s+United States Code/i;
 const INTERNAL_REVENUE_CODE_RE = /\bInternal Revenue Code of 1986\b/i;
+const USC_NOTE_SUFFIX_RE = /\bnote(?:\s+([A-Za-z0-9-]+))?\s*$/i;
 
 export function translateInstructionAstToEditTree(
 	ast: InstructionAst,
@@ -1244,7 +1245,9 @@ function structuralScopeFromTargetScopePath(
 	if (!targetScopePath) return [];
 	return targetScopePath.filter(
 		(scope): scope is ScopeSelector =>
-			scope.kind !== "code_reference" && scope.kind !== "act_reference",
+			scope.kind !== "code_reference" &&
+			scope.kind !== "act_reference" &&
+			scope.kind !== "note_reference",
 	);
 }
 
@@ -1329,10 +1332,18 @@ function extractUscScopePath(
 		? parseSectionOrSub(uscSectionOrSub).path
 		: [];
 	if (structuralScope.length === 0) return null;
+	const noteMatch = uscRef.text.match(USC_NOTE_SUFFIX_RE);
+	const noteSuffix = noteMatch
+		? ({
+				kind: "note_reference",
+				label: noteMatch[1] ? `note ${noteMatch[1]}` : "note",
+			} as const)
+		: null;
 
 	return [
 		{ kind: "code_reference", label: `${title} U.S.C.` },
 		...structuralScope,
+		...(noteSuffix ? [noteSuffix] : []),
 	];
 }
 

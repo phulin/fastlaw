@@ -441,6 +441,7 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(translated.tree.targetScopePath).toEqual([
 			{ kind: "code_reference", label: "43 U.S.C." },
 			{ kind: ScopeKind.Section, label: "1331" },
+			{ kind: "note_reference", label: "note" },
 		]);
 
 		const effect = applyAmendmentEditTreeToSection({
@@ -721,6 +722,45 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(strongTexts).toContain("Premiums");
 		expect(strongTexts).toContain("In general");
 		expect(strongTexts).toContain("Exclusion of certain services");
+	});
+
+	it("does not auto-bold marker body text when marker line does not use .—", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1905",
+			children: [
+				{
+					type: SemanticNodeType.Edit,
+					edit: {
+						kind: UltimateEditKind.Rewrite,
+						content: tp(
+							[
+								"(1) Premiums",
+								"Beginning October 1, 2028, the State plan shall provide...",
+							].join("\n"),
+						),
+					},
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/42/1905",
+			sectionBody: "(k) placeholder",
+			instructionText: "Section 1905 is amended to read as follows.",
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).toContain(
+			"(1) Premiums\nBeginning October 1, 2028, the State plan shall provide...",
+		);
+
+		const strongTexts = effect.renderModel.spans
+			.filter((span) => span.type === "strong")
+			.map((span) => effect.renderModel.plainText.slice(span.start, span.end));
+		expect(strongTexts).toContain("(1)");
+		expect(strongTexts).not.toContain("Premiums");
 	});
 
 	it("splits inline structural marker transitions into separate paragraphs", () => {
@@ -2765,12 +2805,17 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 				model,
 				translated.tree.children,
 				{
-					target: (translated.tree.targetScopePath ?? []).map(
-						(s: TargetScopeSegment) => ({
+					target: (translated.tree.targetScopePath ?? [])
+						.filter(
+							(
+								s,
+							): s is Exclude<TargetScopeSegment, { kind: "note_reference" }> =>
+								s.kind !== "note_reference",
+						)
+						.map((s) => ({
 							type: s.kind,
 							val: s.label,
-						}),
-					),
+						})),
 					scopeContextTexts: [],
 					matterPreceding: null,
 					matterPrecedingTarget: null,

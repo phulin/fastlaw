@@ -68,6 +68,11 @@ export interface ActReferenceTargetScopeSegment {
 	label: string;
 }
 
+export interface NoteReferenceTargetScopeSegment {
+	kind: "note_reference";
+	label: string;
+}
+
 export interface StructuralTargetScopeSegment {
 	kind: ScopeKind;
 	label: string;
@@ -76,6 +81,7 @@ export interface StructuralTargetScopeSegment {
 export type TargetScopeSegment =
 	| CodeReferenceTargetScopeSegment
 	| ActReferenceTargetScopeSegment
+	| NoteReferenceTargetScopeSegment
 	| StructuralTargetScopeSegment;
 
 export interface StructuralReference {
