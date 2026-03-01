@@ -18,11 +18,11 @@ interface ExprToken {
 interface ParseContext {
 	input: string;
 	rules: GrammarRules;
-	cache: Map<string, number[]>;
-	inFlight: Set<string>;
+	cache: Map<string, Map<number, number[]>>;
+	inFlight: Map<string, Set<number>>;
 	nodeId: WeakMap<GrammarNode, number>;
 	nextNodeId: number;
-	nodeEndsCache: Map<string, number[]>;
+	nodeEndsCache: Map<number, Map<number, number[]>>;
 	charClassRegexCache: Map<string, RegExp>;
 }
 
@@ -464,17 +464,31 @@ function getNodeId(node: GrammarNode, ctx: ParseContext): number {
 }
 
 function parseRuleAll(name: string, pos: number, ctx: ParseContext): number[] {
-	const cacheKey = `${name}@${pos}`;
-	const cached = ctx.cache.get(cacheKey);
-	if (cached) return cached;
-	if (ctx.inFlight.has(cacheKey)) return [];
-	ctx.inFlight.add(cacheKey);
+	const ruleCache = ctx.cache.get(name);
+	if (ruleCache?.has(pos)) {
+		return ruleCache.get(pos) ?? [];
+	}
+
+	let inFlightForRule = ctx.inFlight.get(name);
+	if (!inFlightForRule) {
+		inFlightForRule = new Set<number>();
+		ctx.inFlight.set(name, inFlightForRule);
+	}
+	if (inFlightForRule.has(pos)) return [];
+	inFlightForRule.add(pos);
 
 	const node = ctx.rules.get(name);
 	if (!node) throw new Error(`Unknown rule ${name}`);
 	const results = parseNodeAll(node, pos, ctx);
-	ctx.cache.set(cacheKey, results);
-	ctx.inFlight.delete(cacheKey);
+	if (!ruleCache) {
+		ctx.cache.set(name, new Map([[pos, results]]));
+	} else {
+		ruleCache.set(pos, results);
+	}
+	inFlightForRule.delete(pos);
+	if (inFlightForRule.size === 0) {
+		ctx.inFlight.delete(name);
+	}
 	return results;
 }
 
@@ -483,9 +497,11 @@ function parseNodeAll(
 	pos: number,
 	ctx: ParseContext,
 ): number[] {
-	const nodeKey = `${getNodeId(node, ctx)}@${pos}`;
-	const cached = ctx.nodeEndsCache.get(nodeKey);
-	if (cached) return cached;
+	const nodeId = getNodeId(node, ctx);
+	const nodeCache = ctx.nodeEndsCache.get(nodeId);
+	if (nodeCache?.has(pos)) {
+		return nodeCache.get(pos) ?? [];
+	}
 
 	let results: number[] = [];
 	if (node.type === "literal") {
@@ -544,7 +560,11 @@ function parseNodeAll(
 		}
 	}
 
-	ctx.nodeEndsCache.set(nodeKey, results);
+	if (!nodeCache) {
+		ctx.nodeEndsCache.set(nodeId, new Map([[pos, results]]));
+	} else {
+		nodeCache.set(pos, results);
+	}
 	return results;
 }
 
@@ -870,7 +890,7 @@ function createParseContext(input: string, rules: GrammarRules): ParseContext {
 		input,
 		rules,
 		cache: new Map(),
-		inFlight: new Set(),
+		inFlight: new Map(),
 		nodeId: new WeakMap(),
 		nextNodeId: 1,
 		nodeEndsCache: new Map(),
