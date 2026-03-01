@@ -18,18 +18,20 @@ interface ExprToken {
 interface ParseContext {
 	input: string;
 	rules: GrammarRules;
+	nodeIds: WeakMap<GrammarNode, number>;
 	cache: Map<string, Map<number, number[]>>;
 	inFlight: Map<string, Set<number>>;
-	nodeId: WeakMap<GrammarNode, number>;
-	nextNodeId: number;
 	nodeEndsCache: Map<number, Map<number, number[]>>;
 	charClassRegexCache: Map<string, RegExp>;
 }
 
 interface BuildContext {
 	parseContext: ParseContext;
-	targetCache: Map<string, CstChild[] | null>;
-	sequenceCache: Map<string, CstChild[] | null>;
+	targetCache: Map<string, Map<number, Map<number, CstChild[] | null>>>;
+	sequenceCache: WeakMap<
+		GrammarNode[],
+		Map<number, Map<number, Map<number, CstChild[] | null>>>
+	>;
 }
 
 type RuleName = string;
@@ -455,12 +457,9 @@ function maxEnd(ends: readonly number[]): number {
 }
 
 function getNodeId(node: GrammarNode, ctx: ParseContext): number {
-	const existing = ctx.nodeId.get(node);
+	const existing = ctx.nodeIds.get(node);
 	if (typeof existing === "number") return existing;
-	const assigned = ctx.nextNodeId;
-	ctx.nextNodeId += 1;
-	ctx.nodeId.set(node, assigned);
-	return assigned;
+	throw new Error("Grammar node id missing.");
 }
 
 function parseRuleAll(name: string, pos: number, ctx: ParseContext): number[] {
@@ -581,9 +580,8 @@ function buildRuleToTarget(
 	targetEnd: number,
 	buildCtx: BuildContext,
 ): CstRule | null {
-	const key = `rule:${ruleName}@${pos}->${targetEnd}`;
-	if (buildCtx.targetCache.has(key)) {
-		const cached = buildCtx.targetCache.get(key);
+	const cached = getCachedRuleTarget(buildCtx, ruleName, pos, targetEnd);
+	if (cached !== undefined) {
 		if (!cached) return null;
 		return {
 			kind: "rule",
@@ -597,7 +595,7 @@ function buildRuleToTarget(
 	const rule = buildCtx.parseContext.rules.get(ruleName);
 	if (!rule) throw new Error(`Unknown rule ${ruleName}`);
 	const childNodes = buildNodeToTarget(rule, pos, targetEnd, buildCtx);
-	buildCtx.targetCache.set(key, childNodes);
+	setCachedRuleTarget(buildCtx, ruleName, pos, targetEnd, childNodes);
 	if (!childNodes) return null;
 	return {
 		kind: "rule",
@@ -653,23 +651,34 @@ function buildNodeToTarget(
 	}
 
 	if (node.type === "choice") {
-		const ranked = node.options
-			.map((option, index) => {
-				const ends = parseNodeAll(option, pos, buildCtx.parseContext);
-				return {
-					option,
-					index,
-					canReachTarget: ends.includes(targetEnd),
-					bestEnd: ends.length > 0 ? ends[ends.length - 1] : -1,
-				};
-			})
-			.filter((entry) => entry.canReachTarget)
-			.sort((a, b) => {
-				if (a.bestEnd !== b.bestEnd) return b.bestEnd - a.bestEnd;
-				return a.index - b.index;
-			});
+		const candidates: {
+			option: GrammarNode;
+			index: number;
+			bestEnd: number;
+		}[] = [];
+		for (let index = 0; index < node.options.length; index += 1) {
+			const option = node.options[index];
+			if (!option) continue;
+			const ends = parseNodeAll(option, pos, buildCtx.parseContext);
+			if (!ends.includes(targetEnd)) continue;
+			candidates.push({ option, index, bestEnd: maxEnd(ends) });
+		}
 
-		for (const entry of ranked) {
+		while (candidates.length > 0) {
+			let bestCandidateIndex = 0;
+			for (let i = 1; i < candidates.length; i += 1) {
+				const candidate = candidates[i];
+				const best = candidates[bestCandidateIndex];
+				if (!candidate || !best) continue;
+				if (
+					candidate.bestEnd > best.bestEnd ||
+					(candidate.bestEnd === best.bestEnd && candidate.index < best.index)
+				) {
+					bestCandidateIndex = i;
+				}
+			}
+			const [entry] = candidates.splice(bestCandidateIndex, 1);
+			if (!entry) break;
 			const built = buildNodeToTarget(entry.option, pos, targetEnd, buildCtx);
 			if (built) return built;
 		}
@@ -722,14 +731,14 @@ function buildSequenceToTarget(
 	targetEnd: number,
 	buildCtx: BuildContext,
 ): CstChild[] | null {
-	const seqKey = `seq:${items.length}:${itemIndex}@${pos}->${targetEnd}`;
-	if (buildCtx.sequenceCache.has(seqKey)) {
-		return buildCtx.sequenceCache.get(seqKey) ?? null;
+	const cached = getCachedSequence(buildCtx, items, itemIndex, pos, targetEnd);
+	if (cached !== undefined) {
+		return cached ?? null;
 	}
 
 	if (itemIndex === items.length) {
 		const result = pos === targetEnd ? [] : null;
-		buildCtx.sequenceCache.set(seqKey, result);
+		setCachedSequence(buildCtx, items, itemIndex, pos, targetEnd, result);
 		return result;
 	}
 
@@ -751,12 +760,81 @@ function buildSequenceToTarget(
 		);
 		if (!restBuilt) continue;
 		const result = [...itemBuilt, ...restBuilt];
-		buildCtx.sequenceCache.set(seqKey, result);
+		setCachedSequence(buildCtx, items, itemIndex, pos, targetEnd, result);
 		return result;
 	}
 
-	buildCtx.sequenceCache.set(seqKey, null);
+	setCachedSequence(buildCtx, items, itemIndex, pos, targetEnd, null);
 	return null;
+}
+
+function getCachedRuleTarget(
+	buildCtx: BuildContext,
+	ruleName: string,
+	pos: number,
+	targetEnd: number,
+): CstChild[] | null | undefined {
+	return buildCtx.targetCache.get(ruleName)?.get(pos)?.get(targetEnd);
+}
+
+function setCachedRuleTarget(
+	buildCtx: BuildContext,
+	ruleName: string,
+	pos: number,
+	targetEnd: number,
+	value: CstChild[] | null,
+): void {
+	let byRule = buildCtx.targetCache.get(ruleName);
+	if (!byRule) {
+		byRule = new Map();
+		buildCtx.targetCache.set(ruleName, byRule);
+	}
+	let byPos = byRule.get(pos);
+	if (!byPos) {
+		byPos = new Map();
+		byRule.set(pos, byPos);
+	}
+	byPos.set(targetEnd, value);
+}
+
+function getCachedSequence(
+	buildCtx: BuildContext,
+	items: GrammarNode[],
+	itemIndex: number,
+	pos: number,
+	targetEnd: number,
+): CstChild[] | null | undefined {
+	return buildCtx.sequenceCache
+		.get(items)
+		?.get(itemIndex)
+		?.get(pos)
+		?.get(targetEnd);
+}
+
+function setCachedSequence(
+	buildCtx: BuildContext,
+	items: GrammarNode[],
+	itemIndex: number,
+	pos: number,
+	targetEnd: number,
+	value: CstChild[] | null,
+): void {
+	let byItems = buildCtx.sequenceCache.get(items);
+	if (!byItems) {
+		byItems = new Map();
+		buildCtx.sequenceCache.set(items, byItems);
+	}
+	let byIndex = byItems.get(itemIndex);
+	if (!byIndex) {
+		byIndex = new Map();
+		byItems.set(itemIndex, byIndex);
+	}
+	let byPos = byIndex.get(pos);
+	if (!byPos) {
+		byPos = new Map();
+		byIndex.set(pos, byPos);
+	}
+	byPos.set(targetEnd, value);
 }
 
 function toRuleAst(
@@ -764,13 +842,18 @@ function toRuleAst(
 	input: string,
 	resolveRange: (start: number, end: number) => ParagraphRange,
 ): RuleAst {
-	const children: RuleAst[] = node.children
-		.filter((child): child is CstRule => child.kind === "rule")
-		.filter((child) => child.name !== "sep" && child.name !== "preceding")
-		.map((child) => toRuleAst(child, input, resolveRange));
-	const tokens = node.children
-		.filter((child): child is CstToken => child.kind === "token")
-		.map((child) => child.text);
+	const children: RuleAst[] = [];
+	const tokens: string[] = [];
+	for (const child of node.children) {
+		if (child.kind === "token") {
+			tokens.push(child.text);
+			continue;
+		}
+		if (child.name === "sep" || child.name === "preceding") {
+			continue;
+		}
+		children.push(toRuleAst(child, input, resolveRange));
+	}
 	return {
 		type: toNodeType(node.name),
 		text: input.slice(node.start, node.end),
@@ -780,10 +863,13 @@ function toRuleAst(
 	};
 }
 
+const KNOWN_NODE_TYPES = new Set<string>(
+	Object.values(GrammarAstNodeType) as string[],
+);
+
 function toNodeType(name: string): GrammarAstNodeType {
 	if (name === "by_edit") return GrammarAstNodeType.Edit;
-	const values = Object.values(GrammarAstNodeType) as string[];
-	if (values.includes(name)) return name as GrammarAstNodeType;
+	if (KNOWN_NODE_TYPES.has(name)) return name as GrammarAstNodeType;
 	return GrammarAstNodeType.Unknown;
 }
 
@@ -885,14 +971,48 @@ function buildInstructionAst(
 	};
 }
 
-function createParseContext(input: string, rules: GrammarRules): ParseContext {
+function assignGrammarNodeIds(
+	rules: GrammarRules,
+): WeakMap<GrammarNode, number> {
+	const nodeIds = new WeakMap<GrammarNode, number>();
+	let nextNodeId = 1;
+
+	const visit = (node: GrammarNode): void => {
+		if (nodeIds.has(node)) return;
+		nodeIds.set(node, nextNodeId);
+		nextNodeId += 1;
+
+		if (node.type === "sequence") {
+			for (const item of node.items) visit(item);
+			return;
+		}
+		if (node.type === "choice") {
+			for (const option of node.options) visit(option);
+			return;
+		}
+		if (node.type === "repeat") {
+			visit(node.item);
+		}
+	};
+
+	for (const node of rules.values()) {
+		visit(node);
+	}
+
+	return nodeIds;
+}
+
+function createParseContext(
+	input: string,
+	rules: GrammarRules,
+	nodeIds: WeakMap<GrammarNode, number>,
+): ParseContext {
 	return {
 		input,
 		rules,
+		nodeIds,
 		cache: new Map(),
 		inFlight: new Map(),
-		nodeId: new WeakMap(),
-		nextNodeId: 1,
 		nodeEndsCache: new Map(),
 		charClassRegexCache: new Map(),
 	};
@@ -908,12 +1028,14 @@ function getCharClassRegex(charClass: string, ctx: ParseContext): RegExp {
 
 export class HandcraftedInstructionParser {
 	private readonly rules: GrammarRules;
+	private readonly nodeIds: WeakMap<GrammarNode, number>;
 
 	constructor(grammarSource: string) {
 		this.rules = parseRules(grammarSource);
 		if (!this.rules.has("instruction")) {
 			throw new Error("Grammar must define instruction.");
 		}
+		this.nodeIds = assignGrammarNodeIds(this.rules);
 	}
 
 	parseInstructionFromLines(
@@ -957,7 +1079,7 @@ export class HandcraftedInstructionParser {
 		options: ParseInstructionOptions = {},
 	): ParsedInstruction | null {
 		if (startOffset < 0 || startOffset >= source.length) return null;
-		const parseContext = createParseContext(source, this.rules);
+		const parseContext = createParseContext(source, this.rules, this.nodeIds);
 		let best: ParseCandidate | null = null;
 		const initialEnd = maxEnd(
 			parseRuleAll("instruction", startOffset, parseContext),
@@ -1004,7 +1126,7 @@ export class HandcraftedInstructionParser {
 			{
 				parseContext,
 				targetCache: new Map(),
-				sequenceCache: new Map(),
+				sequenceCache: new WeakMap(),
 			},
 		);
 		if (!ruleNode) return null;
@@ -1023,7 +1145,7 @@ export class HandcraftedInstructionParser {
 	}
 
 	parsePrefix(input: string, startRule = "instruction"): number[] {
-		const ctx = createParseContext(input, this.rules);
+		const ctx = createParseContext(input, this.rules, this.nodeIds);
 		return parseRuleAll(startRule, 0, ctx);
 	}
 
@@ -1032,7 +1154,7 @@ export class HandcraftedInstructionParser {
 		startOffset: number,
 		startRule = "instruction",
 	): number[] {
-		const ctx = createParseContext(input, this.rules);
+		const ctx = createParseContext(input, this.rules, this.nodeIds);
 		return parseRuleAll(startRule, startOffset, ctx);
 	}
 }
