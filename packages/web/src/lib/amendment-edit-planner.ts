@@ -2,7 +2,6 @@ import {
 	getScopeRangeFromNodeId,
 	parseMarkdownToPlainDocument,
 } from "./amendment-document-model";
-
 import type {
 	ClassificationOverride,
 	DocumentModel,
@@ -13,6 +12,11 @@ import type {
 	ResolvedInstructionOperation,
 	ScopeRange,
 } from "./amendment-edit-engine-types";
+import {
+	applyAttemptOutcome,
+	countPatchesByOperation,
+	selectNonOverlappingPatches,
+} from "./amendment-edit-patch-utils";
 import { handleInsertEdit } from "./amendment-edit-planner/handlers/insert";
 import { handleMoveEdit } from "./amendment-edit-planner/handlers/move";
 import { handleRedesignateEdit } from "./amendment-edit-planner/handlers/redesignate";
@@ -1168,29 +1172,18 @@ export function planEdits(
 		tentativePatches.push(...patches);
 	}
 
-	const accepted: PlannedPatch[] = [];
-	for (const patch of tentativePatches.sort(
-		(left, right) =>
-			left.operationIndex - right.operationIndex || left.start - right.start,
-	)) {
-		const hasConflict = accepted.some((existing) => overlaps(existing, patch));
-		if (hasConflict) continue;
-		accepted.push(patch);
-	}
-
-	const appliedCountByOperation = new Map<number, number>();
-	for (const patch of accepted) {
-		appliedCountByOperation.set(
-			patch.operationIndex,
-			(appliedCountByOperation.get(patch.operationIndex) ?? 0) + 1,
-		);
-	}
+	const accepted = selectNonOverlappingPatches(
+		tentativePatches.sort(
+			(left, right) =>
+				left.operationIndex - right.operationIndex || left.start - right.start,
+		),
+		overlaps,
+	);
+	const appliedCountByOperation = countPatchesByOperation(accepted);
 	for (let index = 0; index < attempts.length; index += 1) {
 		const attempt = attempts[index];
-		if (!attempt || attempt.outcome === "scope_unresolved") continue;
-		const count = appliedCountByOperation.get(index) ?? 0;
-		attempt.patchApplied = count > 0;
-		attempt.outcome = count > 0 ? "applied" : "no_patch";
+		if (!attempt) continue;
+		applyAttemptOutcome(attempt, appliedCountByOperation.get(index) ?? 0);
 	}
 
 	return {

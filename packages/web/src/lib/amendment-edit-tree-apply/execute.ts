@@ -12,6 +12,11 @@ import type {
 	ResolutionIssue,
 	ResolvedInstructionOperation,
 } from "../amendment-edit-engine-types";
+import {
+	applyAttemptOutcome,
+	countPatchesByOperation,
+	selectNonOverlappingPatches,
+} from "../amendment-edit-patch-utils";
 import { planOperationEdit } from "../amendment-edit-planner";
 import {
 	type InstructionSemanticTree,
@@ -139,6 +144,41 @@ function canonicalPlainDocumentFromRenderModel(
 	};
 }
 
+function recomputeResolutionModel(state: SequentialExecutionState): void {
+	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	state.resolutionModel = buildAmendmentDocumentModel(
+		canonicalPlain.plainText,
+		canonicalPlain,
+	);
+}
+
+function applyAcceptedPatchesToState(
+	state: SequentialExecutionState,
+	orderedPatches: PlannedPatch[],
+): void {
+	const offsetMap = buildCanonicalRenderOffsetMap(
+		state.renderPlainText,
+		state.renderSpans,
+	);
+	const renderPatches = orderedPatches.map((patch) => ({
+		...patch,
+		start: offsetMap.toRenderPoint(patch.start),
+		end: offsetMap.toRenderPoint(patch.end),
+		insertAt: offsetMap.toRenderPoint(patch.insertAt),
+	}));
+	const appliedRender = applyPlannedPatchesTransaction(
+		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
+		renderPatches,
+	);
+	state.renderPlainText = appliedRender.plainText;
+	state.renderSpans = appliedRender.spans;
+	recomputeResolutionModel(state);
+	state.patches.push(...orderedPatches);
+}
+
 function executeResolvedOperation(
 	state: SequentialExecutionState,
 	operation: ResolvedInstructionOperation,
@@ -162,31 +202,7 @@ function executeResolvedOperation(
 	const orderedPatches = [...patches].sort(
 		(left, right) => left.start - right.start || left.end - right.end,
 	);
-	const offsetMap = buildCanonicalRenderOffsetMap(
-		state.renderPlainText,
-		state.renderSpans,
-	);
-	const renderPatches = orderedPatches.map((patch) => ({
-		...patch,
-		start: offsetMap.toRenderPoint(patch.start),
-		end: offsetMap.toRenderPoint(patch.end),
-		insertAt: offsetMap.toRenderPoint(patch.insertAt),
-	}));
-	const appliedRender = applyPlannedPatchesTransaction(
-		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
-		renderPatches,
-	);
-	state.renderPlainText = appliedRender.plainText;
-	state.renderSpans = appliedRender.spans;
-	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
-		state.renderPlainText,
-		state.renderSpans,
-	);
-	state.resolutionModel = buildAmendmentDocumentModel(
-		canonicalPlain.plainText,
-		canonicalPlain,
-	);
-	state.patches.push(...orderedPatches);
+	applyAcceptedPatchesToState(state, orderedPatches);
 	return orderedPatches;
 }
 
@@ -211,30 +227,19 @@ function executeResolvedOperationsSnapshot(
 		});
 	}
 
-	const accepted: PlannedPatch[] = [];
-	for (const patch of tentativePatches.sort(
-		(left, right) =>
-			left.operationIndex - right.operationIndex || left.start - right.start,
-	)) {
-		const hasConflict = accepted.some((existing) => overlaps(existing, patch));
-		if (hasConflict) continue;
-		accepted.push(patch);
-	}
-
-	const appliedCountByOperation = new Map<number, number>();
-	for (const patch of accepted) {
-		appliedCountByOperation.set(
-			patch.operationIndex,
-			(appliedCountByOperation.get(patch.operationIndex) ?? 0) + 1,
-		);
-	}
+	const accepted = selectNonOverlappingPatches(
+		tentativePatches.sort(
+			(left, right) =>
+				left.operationIndex - right.operationIndex || left.start - right.start,
+		),
+		overlaps,
+	);
+	const appliedCountByOperation = countPatchesByOperation(accepted);
 	for (const entry of attempts) {
-		if (entry.attempt.outcome !== "scope_unresolved") {
-			const applied =
-				(appliedCountByOperation.get(entry.operationIndex) ?? 0) > 0;
-			entry.attempt.patchApplied = applied;
-			entry.attempt.outcome = applied ? "applied" : "no_patch";
-		}
+		applyAttemptOutcome(
+			entry.attempt,
+			appliedCountByOperation.get(entry.operationIndex) ?? 0,
+		);
 		state.attempts.push(entry.attempt);
 	}
 
@@ -245,31 +250,7 @@ function executeResolvedOperationsSnapshot(
 	const orderedPatches = [...accepted].sort(
 		(left, right) => left.start - right.start || left.end - right.end,
 	);
-	const offsetMap = buildCanonicalRenderOffsetMap(
-		state.renderPlainText,
-		state.renderSpans,
-	);
-	const renderPatches = orderedPatches.map((patch) => ({
-		...patch,
-		start: offsetMap.toRenderPoint(patch.start),
-		end: offsetMap.toRenderPoint(patch.end),
-		insertAt: offsetMap.toRenderPoint(patch.insertAt),
-	}));
-	const appliedRender = applyPlannedPatchesTransaction(
-		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
-		renderPatches,
-	);
-	state.renderPlainText = appliedRender.plainText;
-	state.renderSpans = appliedRender.spans;
-	const canonicalPlain = canonicalPlainDocumentFromRenderModel(
-		state.renderPlainText,
-		state.renderSpans,
-	);
-	state.resolutionModel = buildAmendmentDocumentModel(
-		canonicalPlain.plainText,
-		canonicalPlain,
-	);
-	state.patches.push(...orderedPatches);
+	applyAcceptedPatchesToState(state, orderedPatches);
 	return new Set<number>(appliedCountByOperation.keys());
 }
 
