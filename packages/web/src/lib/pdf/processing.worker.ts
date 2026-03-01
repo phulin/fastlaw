@@ -168,15 +168,12 @@ self.addEventListener(
 				);
 				const sectionBodyCache = new Map<string, NodeContent>();
 				const caches: AmendmentPipelineCaches = {
-					parsedMarkdownBySectionKey: new LruCache(256),
 					canonicalDocumentBySectionKey: new LruCache(256),
 					amendmentEffectByInstructionKey: new LruCache(256),
 				};
 				const perfStats: AmendmentPipelinePerfStats = {
 					applyCallCount: 0,
 					applyTotalMs: 0,
-					parsedCacheHits: 0,
-					parsedCacheMisses: 0,
 					canonicalCacheHits: 0,
 					canonicalCacheMisses: 0,
 					effectCacheHits: 0,
@@ -229,8 +226,6 @@ self.addEventListener(
 						applyCallCount: perfStats.applyCallCount,
 						applyTotalMs: Number(perfStats.applyTotalMs.toFixed(2)),
 						applyAverageMs: Number(applyAverageMs.toFixed(3)),
-						parsedCacheHits: perfStats.parsedCacheHits,
-						parsedCacheMisses: perfStats.parsedCacheMisses,
 						canonicalCacheHits: perfStats.canonicalCacheHits,
 						canonicalCacheMisses: perfStats.canonicalCacheMisses,
 						effectCacheHits: perfStats.effectCacheHits,

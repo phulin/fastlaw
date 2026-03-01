@@ -1,4 +1,3 @@
-import type { ParsedMarkdownDocument } from "../amendment-document-model";
 import type {
 	CanonicalDocument,
 	ClassificationOverride,
@@ -12,7 +11,6 @@ export interface ApplyEditTreeArgs {
 	tree: InstructionSemanticTree;
 	sectionPath: string;
 	sectionBody: string;
-	parsedDocument?: ParsedMarkdownDocument;
 	initialDocument?: CanonicalDocument;
 	instructionText?: string;
 	classificationOverrides?: ClassificationOverride[];

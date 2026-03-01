@@ -31,8 +31,7 @@ export function applyAmendmentEditTreeToSection(
 	args: ApplyEditTreeArgs,
 ): AmendmentEffect {
 	const initialModel =
-		args.initialDocument ??
-		buildCanonicalDocument(args.sectionBody, args.parsedDocument);
+		args.initialDocument ?? buildCanonicalDocument(args.sectionBody);
 	const counter = { index: 0 };
 	const execution: SequentialExecutionState = {
 		document: initialModel,

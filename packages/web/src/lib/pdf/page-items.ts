@@ -1,10 +1,6 @@
 import type { PageItem } from "../../components/PageRow";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
-import {
-	buildCanonicalDocument,
-	type ParsedMarkdownDocument,
-	parseMarkdownToPlainDocument,
-} from "../amendment-document-model";
+import { buildCanonicalDocument } from "../amendment-document-model";
 import type {
 	CanonicalDocument,
 	ClassificationOverride,
@@ -29,7 +25,6 @@ interface MutableCache<K, V> {
 }
 
 export interface AmendmentPipelineCaches {
-	parsedMarkdownBySectionKey?: MutableCache<string, ParsedMarkdownDocument>;
 	canonicalDocumentBySectionKey?: MutableCache<string, CanonicalDocument>;
 	amendmentEffectByInstructionKey?: MutableCache<string, AmendmentEffect>;
 }
@@ -37,8 +32,6 @@ export interface AmendmentPipelineCaches {
 export interface AmendmentPipelinePerfStats {
 	applyCallCount: number;
 	applyTotalMs: number;
-	parsedCacheHits: number;
-	parsedCacheMisses: number;
 	canonicalCacheHits: number;
 	canonicalCacheMisses: number;
 	effectCacheHits: number;
@@ -241,26 +234,10 @@ export const buildPageItemsFromParagraphs = async ({
 						sectionPath,
 						sectionBodyText,
 					);
-					let parsedDocument =
-						caches?.parsedMarkdownBySectionKey?.get(sectionCacheKey);
-					if (!parsedDocument) {
-						parsedDocument = parseMarkdownToPlainDocument(sectionBodyText);
-						caches?.parsedMarkdownBySectionKey?.set(
-							sectionCacheKey,
-							parsedDocument,
-						);
-						if (perfStats) perfStats.parsedCacheMisses += 1;
-					} else if (perfStats) {
-						perfStats.parsedCacheHits += 1;
-					}
-
 					let initialDocument =
 						caches?.canonicalDocumentBySectionKey?.get(sectionCacheKey);
 					if (!initialDocument) {
-						initialDocument = buildCanonicalDocument(
-							sectionBodyText,
-							parsedDocument,
-						);
+						initialDocument = buildCanonicalDocument(sectionBodyText);
 						caches?.canonicalDocumentBySectionKey?.set(
 							sectionCacheKey,
 							initialDocument,
