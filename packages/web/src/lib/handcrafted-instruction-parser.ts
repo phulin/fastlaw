@@ -171,6 +171,7 @@ const ANCHORED_START_MARKERS = [
 	"Item ",
 	"Subitem ",
 ] as const;
+const FAST_REJECT_SCAN_WINDOW = 700;
 
 interface ParseCandidate {
 	parseOffset: number;
@@ -179,6 +180,7 @@ interface ParseCandidate {
 
 interface ParseInstructionOptions {
 	allowAnchoredOffsets?: boolean;
+	useFastReject?: boolean;
 }
 
 function collectAnchorIndexes(line: string): number[] {
@@ -188,6 +190,19 @@ function collectAnchorIndexes(line: string): number[] {
 		if (idx !== -1) indexes.add(idx);
 	}
 	return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function couldBeInstructionStart(source: string, startOffset: number): boolean {
+	const firstNewline = source.indexOf("\n", startOffset);
+	const windowEnd = Math.min(
+		source.length,
+		startOffset + FAST_REJECT_SCAN_WINDOW,
+		firstNewline === -1
+			? source.length
+			: firstNewline + FAST_REJECT_SCAN_WINDOW,
+	);
+	const amendedIndex = source.indexOf("amended", startOffset);
+	return amendedIndex !== -1 && amendedIndex < windowEnd;
 }
 
 class ExpressionTokenizer {
@@ -445,6 +460,7 @@ function parseRules(grammarSource: string): GrammarRules {
 }
 
 function unique(values: Iterable<number>): number[] {
+	if (values instanceof Set) return Array.from(values);
 	return Array.from(new Set(values));
 }
 
@@ -517,13 +533,22 @@ function parseNodeAll(
 	} else if (node.type === "sequence") {
 		let positions = [pos];
 		for (const item of node.items) {
-			const nextPositions = new Set<number>();
-			for (const current of positions) {
-				for (const end of parseNodeAll(item, current, ctx)) {
-					nextPositions.add(end);
+			if (positions.length === 1) {
+				const only = positions[0];
+				if (typeof only !== "number") {
+					positions = [];
+					break;
 				}
+				positions = parseNodeAll(item, only, ctx);
+			} else {
+				const nextPositions = new Set<number>();
+				for (const current of positions) {
+					for (const end of parseNodeAll(item, current, ctx)) {
+						nextPositions.add(end);
+					}
+				}
+				positions = unique(nextPositions);
 			}
-			positions = unique(nextPositions);
 			if (positions.length === 0) break;
 		}
 		results = positions;
@@ -568,6 +593,7 @@ function parseNodeAll(
 }
 
 function orderEndsForGreedy(ends: number[], node: GrammarNode): number[] {
+	if (ends.length <= 1) return ends;
 	if (node.type === "ref" && node.name === "act") {
 		return [...ends].sort((a, b) => a - b);
 	}
@@ -1079,6 +1105,10 @@ export class HandcraftedInstructionParser {
 		options: ParseInstructionOptions = {},
 	): ParsedInstruction | null {
 		if (startOffset < 0 || startOffset >= source.length) return null;
+		const useFastReject = options.useFastReject ?? true;
+		if (useFastReject && !couldBeInstructionStart(source, startOffset)) {
+			return null;
+		}
 		const parseContext = createParseContext(source, this.rules, this.nodeIds);
 		let best: ParseCandidate | null = null;
 		const initialEnd = maxEnd(
