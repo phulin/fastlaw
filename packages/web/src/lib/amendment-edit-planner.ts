@@ -13,7 +13,12 @@ import type {
 	ResolvedInstructionOperation,
 	ScopeRange,
 } from "./amendment-edit-engine-types";
-
+import { handleInsertEdit } from "./amendment-edit-planner/handlers/insert";
+import { handleMoveEdit } from "./amendment-edit-planner/handlers/move";
+import { handleRedesignateEdit } from "./amendment-edit-planner/handlers/redesignate";
+import { handleRewriteEdit } from "./amendment-edit-planner/handlers/rewrite";
+import { handleStrikeEdit } from "./amendment-edit-planner/handlers/strike";
+import { handleStrikeInsertEdit } from "./amendment-edit-planner/handlers/strike-insert";
 import {
 	type InnerLocationTarget,
 	InnerLocationTargetKind,
@@ -95,8 +100,6 @@ function computeFallbackAnchorRegexSearch(anchorText: string): RegExp | null {
 	);
 	return new RegExp(regexStr, "i");
 }
-
-const INSIDE_WORD_HYPHEN_RE = /(?<=[A-Za-z0-9])-(?=[A-Za-z0-9])/g;
 
 function computeFallbackRegexSearch(
 	strikeText: string,
@@ -1033,755 +1036,105 @@ function planPatchForOperation(
 
 	switch (operation.edit.kind) {
 		case UltimateEditKind.StrikeInsert: {
-			if (!range) break;
-			const strikeSearch = textSearchFromEditTarget(operation.edit.strike);
-			const strikingContent = strikeSearch?.text ?? null;
-			const strikePunctuation =
-				"punctuation" in operation.edit.strike
-					? operation.edit.strike.punctuation
-					: undefined;
-			let replacementContentText = operation.edit.insert.text;
-
-			// Extract baseline and translate "section X" in the inserted text
-			replacementContentText = translateCrossReferences(
-				replacementContentText,
-				classificationOverrides,
-			);
-
-			const replacementContent = {
-				...operation.edit.insert,
-				text: replacementContentText,
-			};
-			const eachPlaceItAppears = strikeSearch?.eachPlaceItAppears === true;
-			const atEndSearch = strikeSearch?.atEnd === true;
-
-			if (!strikingContent && strikePunctuation) {
-				const punctuation = punctuationText(strikePunctuation);
-				const punctuationIndex = findPunctuationIndexAtEnd(
-					scopedText,
-					strikePunctuation,
-				);
-				attempt.searchText = punctuation;
-				attempt.searchTextKind = "striking";
-				attempt.searchIndex =
-					punctuationIndex >= 0 ? range.start + punctuationIndex : null;
-				if (punctuationIndex < 0) break;
-
-				pushPatch({
-					start: range.start + punctuationIndex,
-					end: range.start + punctuationIndex + punctuation.length,
-					deleted: punctuation,
-					inserted: replacementContent.text,
-				});
-				break;
-			}
-
-			if (!strikingContent) {
-				if ("inner" in operation.edit.strike) {
-					const innerRange = resolveInnerLocationRangeInScope(
-						model,
-						range,
-						operation.edit.strike.inner,
-					);
-					if (!innerRange) break;
-					const deleted = plainText.slice(innerRange.start, innerRange.end);
-					const formattedReplacement = formatStrikeInsertReplacementText({
-						model,
-						content: replacementContent,
-						insertStart: innerRange.start,
-						fallbackIndent: range.indent ?? 0,
-					});
-					pushPatch({
-						start: innerRange.start,
-						end: innerRange.end,
-						deleted,
-						inserted: formattedReplacement,
-					});
-					break;
-				}
-				// Range replace (through-target)
-				if (operation.resolvedThroughTargetId) {
-					const throughRange = getScopeRangeFromNodeId(
-						model,
-						operation.resolvedThroughTargetId,
-					);
-					if (!throughRange) break;
-					const sameTargetLevel =
-						throughRange.indent !== undefined &&
-						range.indent !== undefined &&
-						throughRange.indent === range.indent;
-					if (!sameTargetLevel) {
-						const formatted = formatReplacementContent(
-							replacementContent,
-							range.indent ?? 0,
-						);
-						pushPatch({
-							start: range.start,
-							end: range.end,
-							deleted: scopedText,
-							inserted: formatted.text,
-							insertedSuffixPlain: boundaryAwareReplacementSuffix(
-								formatted,
-								scopedText,
-								plainText,
-								range.end,
-							),
-						});
-						break;
-					}
-					const start = Math.min(range.start, throughRange.start);
-					const end = Math.max(range.end, throughRange.end);
-					const formatted = formatReplacementContent(
-						replacementContent,
-						range.indent ?? 0,
-					);
-					pushPatch({
-						start,
-						end,
-						deleted: plainText.slice(start, end),
-						inserted: formatted.text,
-						insertedSuffixPlain: boundaryAwareReplacementSuffix(
-							formatted,
-							plainText.slice(start, end),
-							plainText,
-							end,
-						),
-					});
-					break;
-				}
-				const formatted = formatReplacementContent(
-					replacementContent,
-					range.indent ?? 0,
-				);
-				pushPatch({
-					start: range.start,
-					end: range.end,
-					deleted: scopedText,
-					inserted: formatted.text,
-					insertedSuffixPlain: boundaryAwareReplacementSuffix(
-						formatted,
-						scopedText,
-						plainText,
-						range.end,
-					),
-				});
-				break;
-			}
-
-			let localIndex =
-				operation.atEndOnly || atEndSearch
-					? scopedText.lastIndexOf(strikingContent)
-					: scopedText.indexOf(strikingContent);
-			let resolvedStrikingContent = strikingContent;
-			let resolvedReplacementContentText = replacementContent.text;
-
-			if (localIndex < 0 && strikingContent) {
-				const fallbackRegex = computeFallbackRegexSearch(
-					strikingContent,
-					classificationOverrides,
-				);
-				if (fallbackRegex) {
-					const match = scopedText.match(fallbackRegex);
-					if (match && match.index !== undefined && match.groups?.base) {
-						localIndex = match.index;
-						resolvedStrikingContent = match[0];
-						attempt.wasTranslated = true;
-
-						// If the replacement string had the identical original base number, use the newly captured one instead.
-						// E.g. strike "section 3(a)" insert "section 3(b)", with target "section 1396a(a)"
-						const originalPubLawBaseMatch =
-							strikingContent.match(/section\s+([^()]+)/i);
-						if (originalPubLawBaseMatch?.[1]) {
-							const originalPubLawBase = originalPubLawBaseMatch[1];
-							// Reconstruct insert using the captured base from target text (match.groups.base)
-							// We bypass the global classification translation because we're reusing the exact base from the matched string
-							resolvedReplacementContentText =
-								operation.edit.insert.text.replace(
-									new RegExp(
-										`section\\s+${originalPubLawBase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-										"i",
-									),
-									`section ${match.groups.base}`,
-								);
-						}
-					}
-				}
-			}
-
-			attempt.searchText = resolvedStrikingContent;
-			attempt.searchTextKind = "striking";
-			attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
-			if (localIndex < 0) break;
-
-			const resolvedReplacementContent = {
-				...replacementContent,
-				text: resolvedReplacementContentText,
-			};
-
-			if (eachPlaceItAppears) {
-				for (const occurrenceIndex of findAllOccurrences(
-					scopedText,
-					resolvedStrikingContent,
-				)) {
-					const patchStart = range.start + occurrenceIndex;
-					const formattedReplacement = formatStrikeInsertReplacementText({
-						model,
-						content: resolvedReplacementContent,
-						insertStart: patchStart,
-						fallbackIndent: range.indent ?? 0,
-					});
-					pushPatch({
-						start: patchStart,
-						end: patchStart + resolvedStrikingContent.length,
-						deleted: resolvedStrikingContent,
-						inserted: formattedReplacement,
-					});
-				}
-				break;
-			}
-
-			const patchStart = range.start + localIndex;
-			const formattedReplacement = formatStrikeInsertReplacementText({
+			handleStrikeInsertEdit({
 				model,
-				content: resolvedReplacementContent,
-				insertStart: patchStart,
-				fallbackIndent: range.indent ?? 0,
-			});
-			pushPatch({
-				start: patchStart,
-				end: patchStart + resolvedStrikingContent.length,
-				deleted: resolvedStrikingContent,
-				inserted: formattedReplacement,
+				operation,
+				range,
+				scopedText,
+				plainText,
+				attempt,
+				classificationOverrides,
+				pushPatch,
+				textSearchFromEditTarget,
+				translateCrossReferences,
+				punctuationText,
+				findPunctuationIndexAtEnd,
+				resolveInnerLocationRangeInScope,
+				formatStrikeInsertReplacementText,
+				formatReplacementContent,
+				boundaryAwareReplacementSuffix,
+				computeFallbackRegexSearch,
+				findAllOccurrences,
 			});
 			break;
 		}
 
 		case UltimateEditKind.Rewrite: {
-			if (!range) break;
-			let replacementContentText = operation.edit.content.text;
-			replacementContentText = translateCrossReferences(
-				replacementContentText,
+			handleRewriteEdit({
+				operation,
+				range,
+				scopedText,
+				plainText,
+				attempt,
 				classificationOverrides,
-			);
-			const replacementContent = {
-				...operation.edit.content,
-				text: replacementContentText,
-			};
-			const formatted = formatReplacementContent(
-				replacementContent,
-				range.indent ?? 0,
-			);
-			pushPatch({
-				start: range.start,
-				end: range.end,
-				deleted: scopedText,
-				inserted: formatted.text,
-				insertedSuffixPlain: boundaryAwareReplacementSuffix(
-					formatted,
-					scopedText,
-					plainText,
-					range.end,
-				),
+				pushPatch,
+				translateCrossReferences,
+				formatReplacementContent,
+				boundaryAwareReplacementSuffix,
 			});
 			break;
 		}
 
 		case UltimateEditKind.Strike: {
-			if (!range) break;
-			const strikeSearch = textSearchFromEditTarget(operation.edit.target);
-			const strikingContent = strikeSearch?.text ?? null;
-			const strikePunctuation =
-				"punctuation" in operation.edit.target
-					? operation.edit.target.punctuation
-					: undefined;
-			const eachPlaceItAppears = strikeSearch?.eachPlaceItAppears === true;
-			const atEndSearch = strikeSearch?.atEnd === true;
-			const throughContent = operation.edit.through
-				? textFromEditTarget(operation.edit.through)
-				: null;
-			const throughPunctuation =
-				operation.edit.through && "punctuation" in operation.edit.through
-					? operation.edit.through.punctuation
-					: undefined;
-
-			if (!strikingContent && strikePunctuation && !throughContent) {
-				const punctuation = punctuationText(strikePunctuation);
-				const punctuationIndex = findPunctuationIndexAtEnd(
-					scopedText,
-					strikePunctuation,
-				);
-				attempt.searchText = punctuation;
-				attempt.searchTextKind = "striking";
-				attempt.searchIndex =
-					punctuationIndex >= 0 ? range.start + punctuationIndex : null;
-				if (punctuationIndex < 0) break;
-
-				pushPatch({
-					start: range.start + punctuationIndex,
-					end: range.start + punctuationIndex + punctuation.length,
-					deleted: punctuation,
-				});
-				break;
-			}
-
-			if (!strikingContent) {
-				if ("inner" in operation.edit.target) {
-					const innerRange = resolveInnerLocationRangeInScope(
-						model,
-						range,
-						operation.edit.target.inner,
-					);
-					if (!innerRange) break;
-					const deleted = plainText.slice(innerRange.start, innerRange.end);
-					pushPatch({
-						start: innerRange.start,
-						end: innerRange.end,
-						deleted,
-					});
-					break;
-				}
-				if (operation.structuralStrikeMode === "discrete") {
-					if (operation.resolvedStructuralTargetIds.length === 0) break;
-					if (
-						operation.resolvedStructuralTargetIds.some(
-							(value) => value === null,
-						)
-					) {
-						break;
-					}
-					const targetRanges = operation.resolvedStructuralTargetIds
-						.map((nodeId) => getScopeRangeFromNodeId(model, nodeId))
-						.filter((resolved): resolved is ScopeRange => resolved !== null);
-					if (
-						targetRanges.length !== operation.resolvedStructuralTargetIds.length
-					)
-						break;
-					targetRanges
-						.sort((left, right) => right.start - left.start)
-						.forEach((targetRange) => {
-							pushPatch({
-								start: targetRange.start,
-								end: targetRange.end,
-								deleted: plainText.slice(targetRange.start, targetRange.end),
-							});
-						});
-					break;
-				}
-				if (operation.resolvedThroughTargetId) {
-					const throughRange = getScopeRangeFromNodeId(
-						model,
-						operation.resolvedThroughTargetId,
-					);
-					if (!throughRange) break;
-					const sameTargetLevel =
-						throughRange.indent !== undefined &&
-						range.indent !== undefined &&
-						throughRange.indent === range.indent;
-					if (!sameTargetLevel) {
-						pushPatch({
-							start: range.start,
-							end: range.end,
-							deleted: scopedText,
-						});
-						break;
-					}
-					const start = Math.min(range.start, throughRange.start);
-					const end = Math.max(range.end, throughRange.end);
-					pushPatch({
-						start,
-						end,
-						deleted: plainText.slice(start, end),
-					});
-					break;
-				}
-				pushPatch({
-					start: range.start,
-					end: range.end,
-					deleted: scopedText,
-				});
-				break;
-			}
-
-			let localStart =
-				operation.atEndOnly || atEndSearch
-					? scopedText.lastIndexOf(strikingContent)
-					: scopedText.indexOf(strikingContent);
-			let resolvedStrikingContent = strikingContent;
-
-			if (
-				localStart < 0 &&
-				strikingContent &&
-				!throughContent &&
-				!throughPunctuation
-			) {
-				// We don't support fallback regex with "through" ranges right now as it's too complex to anchor
-				const fallbackRegex = computeFallbackRegexSearch(
-					strikingContent,
-					classificationOverrides,
-				);
-				if (fallbackRegex) {
-					const match = scopedText.match(fallbackRegex);
-					if (match && match.index !== undefined && match.groups?.base) {
-						localStart = match.index;
-						resolvedStrikingContent = match[0];
-						attempt.wasTranslated = true;
-					}
-				}
-			}
-
-			attempt.searchText = resolvedStrikingContent;
-			attempt.searchTextKind = "striking";
-			attempt.searchIndex = localStart >= 0 ? range.start + localStart : null;
-			if (localStart < 0) break;
-
-			if (eachPlaceItAppears && !throughContent && !throughPunctuation) {
-				for (const occurrenceIndex of findAllOccurrences(
-					scopedText,
-					resolvedStrikingContent,
-				)) {
-					const patchRange = normalizeInlineDeletionRange(
-						plainText,
-						range.start + occurrenceIndex,
-						range.start + occurrenceIndex + resolvedStrikingContent.length,
-					);
-					pushPatch({
-						start: patchRange.start,
-						end: patchRange.end,
-						deleted: plainText.slice(patchRange.start, patchRange.end),
-					});
-				}
-				break;
-			}
-
-			let localEnd = localStart + resolvedStrikingContent.length;
-			if (throughContent) {
-				const throughStart = scopedText.indexOf(
-					throughContent,
-					localStart + resolvedStrikingContent.length,
-				);
-				if (throughStart < 0) break;
-				localEnd = throughStart + throughContent.length;
-			}
-			if (throughPunctuation) {
-				const punctuation = punctuationText(throughPunctuation);
-				const punctuationIndex = scopedText.indexOf(
-					punctuation,
-					localStart + resolvedStrikingContent.length,
-				);
-				if (punctuationIndex < 0) break;
-				localEnd = punctuationIndex + punctuation.length;
-			}
-
-			let patchStart = range.start + localStart;
-			let patchEnd = range.start + localEnd;
-			if (throughContent || throughPunctuation) {
-				const beforeChar = plainText[patchStart - 1] ?? "";
-				const afterChar = plainText[patchEnd] ?? "";
-				if (patchStart === 0 && afterChar === " ") {
-					patchEnd += 1;
-				} else if (patchStart > 0 && beforeChar === " " && afterChar === " ") {
-					patchStart -= 1;
-				}
-			}
-			const patchRange = normalizeInlineDeletionRange(
+			handleStrikeEdit({
+				model,
+				operation,
+				range,
+				scopedText,
 				plainText,
-				patchStart,
-				patchEnd,
-			);
-
-			pushPatch({
-				start: patchRange.start,
-				end: patchRange.end,
-				deleted: plainText.slice(patchRange.start, patchRange.end),
+				attempt,
+				classificationOverrides,
+				pushPatch,
+				textSearchFromEditTarget,
+				textFromEditTarget,
+				punctuationText,
+				findPunctuationIndexAtEnd,
+				resolveInnerLocationRangeInScope,
+				computeFallbackRegexSearch,
+				findAllOccurrences,
+				normalizeInlineDeletionRange,
 			});
 			break;
 		}
 
 		case UltimateEditKind.Insert: {
-			if (!range) break;
-			let contentText = operation.edit.content.text;
-			contentText = translateCrossReferences(
-				contentText,
+			handleInsertEdit({
+				model,
+				operation,
+				range,
+				scopedText,
+				plainText,
+				attempt,
 				classificationOverrides,
-			);
-			const content = {
-				...operation.edit.content,
-				text: contentText,
-			};
-
-			if (operation.edit.before) {
-				const anchor = textFromEditTarget(operation.edit.before);
-				const translatedAnchor = anchor
-					? translateCrossReferences(anchor, classificationOverrides)
-					: null;
-				let anchorStart: number | null = null;
-				let resolvedAnchor: string | null = translatedAnchor;
-				if (translatedAnchor) {
-					let localIndex = scopedText.indexOf(translatedAnchor);
-					if (localIndex < 0) {
-						const ignoredTextMatch = findAnchorSearchMatch(
-							scopedText,
-							translatedAnchor,
-							{
-								ignoreInHaystack: INSIDE_WORD_HYPHEN_RE,
-								ignoreInNeedle: INSIDE_WORD_HYPHEN_RE,
-							},
-						);
-						if (ignoredTextMatch) {
-							localIndex = ignoredTextMatch.index;
-							resolvedAnchor = ignoredTextMatch.matchedText;
-						}
-					}
-					if (localIndex < 0) {
-						const fallback = computeFallbackAnchorRegexSearch(translatedAnchor);
-						const fallbackMatch = fallback ? scopedText.match(fallback) : null;
-						if (fallbackMatch && fallbackMatch.index !== undefined) {
-							localIndex = fallbackMatch.index;
-							resolvedAnchor = fallbackMatch[0];
-						}
-					}
-					attempt.searchText = resolvedAnchor ?? translatedAnchor;
-					attempt.searchTextKind = "anchor_before";
-					attempt.searchIndex =
-						localIndex >= 0 ? range.start + localIndex : null;
-					if (resolvedAnchor !== anchor) attempt.wasTranslated = true;
-					if (localIndex >= 0) anchorStart = range.start + localIndex;
-				} else if (operation.resolvedAnchorTargetId !== null) {
-					const anchorRange = getScopeRangeFromNodeId(
-						model,
-						operation.resolvedAnchorTargetId,
-					);
-					if (anchorRange) anchorStart = anchorRange.start;
-				} else {
-					const extracted = extractAnchor(operation.nodeText, "before");
-					if (extracted) {
-						const localIndex = scopedText.indexOf(extracted);
-						attempt.searchText = extracted;
-						attempt.searchTextKind = "anchor_before";
-						attempt.searchIndex =
-							localIndex >= 0 ? range.start + localIndex : null;
-						if (localIndex >= 0) anchorStart = range.start + localIndex;
-					}
-				}
-				if (anchorStart === null) break;
-				const formatted = formatInsertionContent(content, range.indent ?? 0);
-				const formattedText = formatted.text;
-				const suffix = resolvedAnchor
-					? /[A-Za-z0-9)]$/.test(formattedText) &&
-						/^[A-Za-z0-9(]/.test(resolvedAnchor)
-						? " "
-						: ""
-					: formattedText.endsWith("\n")
-						? ""
-						: "\n";
-				pushPatch({
-					start: anchorStart,
-					end: anchorStart,
-					deleted: "",
-					inserted: formatted.text,
-					insertedSuffixPlain: suffix,
-				});
-				break;
-			}
-
-			if (operation.edit.after) {
-				const anchor = textFromEditTarget(operation.edit.after);
-				const translatedAnchor = anchor
-					? translateCrossReferences(anchor, classificationOverrides)
-					: null;
-				let anchorEnd: number | null = null;
-				let resolvedAnchor: string | null = translatedAnchor;
-				if (translatedAnchor) {
-					let localIndex = scopedText.indexOf(translatedAnchor);
-					if (localIndex < 0) {
-						const ignoredTextMatch = findAnchorSearchMatch(
-							scopedText,
-							translatedAnchor,
-							{
-								ignoreInHaystack: INSIDE_WORD_HYPHEN_RE,
-								ignoreInNeedle: INSIDE_WORD_HYPHEN_RE,
-							},
-						);
-						if (ignoredTextMatch) {
-							localIndex = ignoredTextMatch.index;
-							resolvedAnchor = ignoredTextMatch.matchedText;
-						}
-					}
-					if (localIndex < 0) {
-						const fallback = computeFallbackAnchorRegexSearch(translatedAnchor);
-						const fallbackMatch = fallback ? scopedText.match(fallback) : null;
-						if (fallbackMatch && fallbackMatch.index !== undefined) {
-							localIndex = fallbackMatch.index;
-							resolvedAnchor = fallbackMatch[0];
-						}
-					}
-					attempt.searchText = resolvedAnchor;
-					attempt.searchTextKind = "anchor_after";
-					attempt.searchIndex =
-						localIndex >= 0 ? range.start + localIndex : null;
-					if (resolvedAnchor !== anchor) attempt.wasTranslated = true;
-					if (localIndex >= 0)
-						anchorEnd =
-							range.start +
-							localIndex +
-							(resolvedAnchor ?? translatedAnchor).length;
-				} else if (operation.resolvedAnchorTargetId !== null) {
-					const anchorRange = getScopeRangeFromNodeId(
-						model,
-						operation.resolvedAnchorTargetId,
-					);
-					if (anchorRange) anchorEnd = anchorRange.end;
-				} else {
-					const extracted = extractAnchor(operation.nodeText, "after");
-					if (extracted) {
-						const localIndex = scopedText.indexOf(extracted);
-						attempt.searchText = extracted;
-						attempt.searchTextKind = "anchor_after";
-						attempt.searchIndex =
-							localIndex >= 0 ? range.start + localIndex : null;
-						if (localIndex >= 0)
-							anchorEnd = range.start + localIndex + extracted.length;
-					}
-				}
-				if (anchorEnd === null) break;
-				const formatted = formatInsertionContent(content, range.indent ?? 0);
-				const formattedText = formatted.text;
-				const prefix = translatedAnchor
-					? /[A-Za-z0-9)]$/.test(translatedAnchor) &&
-						/^[A-Za-z0-9(]/.test(formattedText)
-						? " "
-						: ""
-					: plainText[anchorEnd - 1] === "\n" || anchorEnd === 0
-						? ""
-						: "\n";
-				pushPatch({
-					start: anchorEnd,
-					end: anchorEnd,
-					deleted: "",
-					inserted: formatted.text,
-					insertedPrefixPlain: prefix,
-				});
-				break;
-			}
-
-			if (operation.addAtEnd) {
-				const insertAt = range.end;
-				const beforeChar = plainText[insertAt - 1] ?? "";
-				const afterChar = plainText[insertAt] ?? "";
-				const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
-				const formatted = formatBlockInsertionContent(
-					content,
-					range.indent ?? 0,
-				);
-				const suffix = afterChar && afterChar !== "\n" ? "\n\n" : "\n";
-				pushPatch({
-					start: insertAt,
-					end: insertAt,
-					deleted: "",
-					inserted: formatted.text,
-					insertedPrefixPlain: prefix,
-					insertedSuffixPlain: suffix,
-				});
-				break;
-			}
-
-			// Plain insert at end of scope range
-			const insertAt = range.end;
-			const beforeChar = plainText[insertAt - 1] ?? "";
-			const prefix = beforeChar === "\n" || insertAt === 0 ? "" : "\n";
-			const formatted = formatInsertionContent(content, range.indent ?? 0);
-			pushPatch({
-				start: insertAt,
-				end: insertAt,
-				deleted: "",
-				inserted: formatted.text,
-				insertedPrefixPlain: prefix,
+				pushPatch,
+				textFromEditTarget,
+				translateCrossReferences,
+				findAnchorSearchMatch,
+				computeFallbackAnchorRegexSearch,
+				extractAnchor,
+				formatInsertionContent,
+				formatBlockInsertionContent,
 			});
 			break;
 		}
 
 		case UltimateEditKind.Redesignate: {
-			if (!range) break;
-			const mapping =
-				operation.edit.mappings[operation.redesignateMappingIndex];
-			if (!mapping) break;
-			const fromLabel =
-				mapping.from.path[mapping.from.path.length - 1]?.label ?? "";
-			const toLabel = mapping.to.path[mapping.to.path.length - 1]?.label ?? "";
-			const marker = `(${fromLabel})`;
-			const replacement = `(${toLabel})`;
-			const localIndex = scopedText.indexOf(marker);
-			attempt.searchText = marker;
-			attempt.searchTextKind = "striking";
-			attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
-			if (localIndex < 0) break;
-			pushPatch({
-				start: range.start + localIndex,
-				end: range.start + localIndex + marker.length,
-				deleted: marker,
-				inserted: replacement,
+			handleRedesignateEdit({
+				operation,
+				range,
+				scopedText,
+				attempt,
+				pushPatch,
 			});
 			break;
 		}
 
 		case UltimateEditKind.Move: {
-			if (operation.resolvedMoveFromIds.length !== operation.edit.from.length) {
-				break;
-			}
-			if (operation.resolvedMoveFromIds.some((value) => value === null)) break;
-			const fromRanges = operation.resolvedMoveFromIds
-				.map((nodeId) => getScopeRangeFromNodeId(model, nodeId))
-				.filter((resolved): resolved is ScopeRange => resolved !== null)
-				.map((resolved) => ({ start: resolved.start, end: resolved.end }));
-			if (fromRanges.length !== operation.edit.from.length) break;
-			fromRanges.sort((left, right) => left.start - right.start);
-			const movedBlock = fromRanges
-				.map((resolved) => plainText.slice(resolved.start, resolved.end).trim())
-				.join("\n");
-			if (movedBlock.length === 0) break;
-			if (operation.resolvedMoveAnchorId === null) break;
-			const anchorRange = getScopeRangeFromNodeId(
+			handleMoveEdit({
 				model,
-				operation.resolvedMoveAnchorId,
-			);
-			if (!anchorRange) break;
-			const originalInsertIndex = operation.edit.before
-				? anchorRange.start
-				: anchorRange.end;
-			let textWithoutMoved = plainText;
-			for (let index = fromRanges.length - 1; index >= 0; index -= 1) {
-				const segment = fromRanges[index];
-				if (!segment) continue;
-				textWithoutMoved = `${textWithoutMoved.slice(0, segment.start)}${textWithoutMoved.slice(segment.end)}`;
-			}
-			let adjustedInsertIndex = originalInsertIndex;
-			for (const segment of fromRanges) {
-				if (
-					segment.start < originalInsertIndex &&
-					originalInsertIndex < segment.end
-				) {
-					adjustedInsertIndex = -1;
-					break;
-				}
-				if (segment.end <= originalInsertIndex) {
-					adjustedInsertIndex -= segment.end - segment.start;
-				}
-			}
-			if (adjustedInsertIndex < 0) break;
-			const beforeChar = textWithoutMoved[adjustedInsertIndex - 1] ?? "";
-			const afterChar = textWithoutMoved[adjustedInsertIndex] ?? "";
-			const prefix =
-				adjustedInsertIndex === 0 || beforeChar === "\n" ? "" : "\n";
-			const suffix =
-				adjustedInsertIndex >= textWithoutMoved.length || afterChar === "\n"
-					? ""
-					: "\n";
-			const movedText = `${textWithoutMoved.slice(0, adjustedInsertIndex)}${prefix}${movedBlock}${suffix}${textWithoutMoved.slice(adjustedInsertIndex)}`;
-			pushPatch({
-				start: 0,
-				end: plainText.length,
-				deleted: plainText,
-				inserted: movedText,
+				operation,
+				plainText,
+				pushPatch,
 			});
 		}
 	}
