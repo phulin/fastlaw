@@ -97,24 +97,101 @@ export const formatTargetScopePath = (
 		?.map((segment) => `${segment.kind}:${segment.label}`)
 		.join(" > ") ?? "";
 
+function upperBound(values: readonly number[], target: number): number {
+	let low = 0;
+	let high = values.length;
+	while (low < high) {
+		const mid = low + Math.floor((high - low) / 2);
+		const value = values[mid];
+		if (value <= target) {
+			low = mid + 1;
+		} else {
+			high = mid;
+		}
+	}
+	return low;
+}
+
+function paragraphIndexForOffset(
+	paragraphStartOffsets: readonly number[],
+	offset: number,
+): number {
+	if (paragraphStartOffsets.length === 0) return -1;
+	if (offset < 0) return 0;
+	const index = upperBound(paragraphStartOffsets, offset) - 1;
+	if (index < 0) return 0;
+	if (index >= paragraphStartOffsets.length) {
+		return paragraphStartOffsets.length - 1;
+	}
+	return index;
+}
+
+function clampOffset(value: number, max: number): number {
+	if (value < 0) return 0;
+	if (value > max) return max;
+	return value;
+}
+
+function resolveAbsoluteParagraphRange(
+	paragraphs: readonly Paragraph[],
+	paragraphStartOffsets: readonly number[],
+	paragraphEndOffsets: readonly number[],
+	start: number,
+	end: number,
+): ParagraphRange {
+	if (paragraphs.length === 0) return new ParagraphRange([], 0, 0);
+
+	const lastParagraphIndex = paragraphs.length - 1;
+	let startParagraphIndex = paragraphIndexForOffset(
+		paragraphStartOffsets,
+		start,
+	);
+	if (
+		startParagraphIndex < lastParagraphIndex &&
+		start === paragraphEndOffsets[startParagraphIndex]
+	) {
+		startParagraphIndex += 1;
+	}
+	const startParagraph = paragraphs[startParagraphIndex];
+	if (!startParagraph) return new ParagraphRange([], 0, 0);
+	const startFirstOffset = clampOffset(
+		start - paragraphStartOffsets[startParagraphIndex],
+		startParagraph.text.length,
+	);
+
+	let endParagraphIndex = paragraphIndexForOffset(
+		paragraphStartOffsets,
+		end - 1,
+	);
+	if (endParagraphIndex < startParagraphIndex) {
+		endParagraphIndex = startParagraphIndex;
+	}
+	const endParagraph = paragraphs[endParagraphIndex];
+	if (!endParagraph) return new ParagraphRange([], 0, 0);
+	const endLastOffset = clampOffset(
+		end - paragraphStartOffsets[endParagraphIndex],
+		endParagraph.text.length,
+	);
+
+	const rangeParagraphs = paragraphs.slice(
+		startParagraphIndex,
+		endParagraphIndex + 1,
+	);
+	return new ParagraphRange(rangeParagraphs, startFirstOffset, endLastOffset);
+}
+
 export const discoverParsedInstructionSpans = (
 	paragraphs: readonly Paragraph[],
 ): ParsedInstructionSpan[] => {
-	const paragraphStartLineIndexes: number[] = [];
-	const lines: string[] = [];
-	const lineToParagraphIndex: number[] = [];
-
-	for (
-		let paragraphIndex = 0;
-		paragraphIndex < paragraphs.length;
-		paragraphIndex += 1
-	) {
-		paragraphStartLineIndexes.push(lines.length);
-		const paragraphLines = paragraphs[paragraphIndex]?.text.split("\n") ?? [""];
-		for (const line of paragraphLines) {
-			lines.push(line);
-			lineToParagraphIndex.push(paragraphIndex);
-		}
+	const source = paragraphs.map((paragraph) => paragraph.text).join("\n");
+	const paragraphStartOffsets: number[] = [];
+	const paragraphEndOffsets: number[] = [];
+	let currentOffset = 0;
+	for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
+		paragraphStartOffsets[paragraphIndex] = currentOffset;
+		const paragraphEnd = currentOffset + paragraph.text.length;
+		paragraphEndOffsets[paragraphIndex] = paragraphEnd;
+		currentOffset = paragraphEnd + 1;
 	}
 
 	const spans: ParsedInstructionSpan[] = [];
@@ -131,71 +208,35 @@ export const discoverParsedInstructionSpans = (
 			}
 		}
 
-		const startLineIndex = paragraphStartLineIndexes[paragraphIndex];
-		if (startLineIndex === undefined) break;
+		const startOffset = paragraphStartOffsets[paragraphIndex];
+		if (typeof startOffset !== "number") break;
 
-		const sourceParagraphs = paragraphs.slice(paragraphIndex);
 		const resolveRange = (start: number, end: number): ParagraphRange => {
-			let currentOffset = 0;
-			let startParaIdx = -1;
-			let endParaIdx = -1;
-			let startFirstOffset = 0;
-			let endLastOffset = 0;
-
-			for (let i = 0; i < sourceParagraphs.length; i++) {
-				const pLen = sourceParagraphs[i].text.length;
-				const pStart = currentOffset;
-				const pEnd = currentOffset + pLen;
-				const isLastParagraph = i === sourceParagraphs.length - 1;
-
-				if (startParaIdx === -1) {
-					if (start < pEnd || (start === pEnd && isLastParagraph)) {
-						startParaIdx = i;
-						startFirstOffset = Math.max(0, Math.min(pLen, start - pStart));
-					} else if (start === pEnd && !isLastParagraph) {
-						startParaIdx = i + 1;
-						startFirstOffset = 0;
-					}
-				}
-				if (end > pStart) {
-					endParaIdx = i;
-					endLastOffset = Math.min(pLen, end - pStart);
-				}
-
-				currentOffset += pLen + (isLastParagraph ? 0 : 1); // "\n" separator between paragraphs only
-			}
-
-			if (startParaIdx === -1) return new ParagraphRange([], 0, 0);
-			if (startParaIdx >= sourceParagraphs.length) {
-				startParaIdx = sourceParagraphs.length - 1;
-				startFirstOffset = sourceParagraphs[startParaIdx]?.text.length ?? 0;
-			}
-			if (endParaIdx === -1) endParaIdx = startParaIdx;
-
-			const rangeParagraphs = sourceParagraphs.slice(
-				startParaIdx,
-				endParaIdx + 1,
-			);
-			if (rangeParagraphs.length === 0) return new ParagraphRange([], 0, 0);
-
-			return new ParagraphRange(
-				rangeParagraphs,
-				startFirstOffset,
-				endLastOffset,
+			return resolveAbsoluteParagraphRange(
+				paragraphs,
+				paragraphStartOffsets,
+				paragraphEndOffsets,
+				startOffset + start,
+				startOffset + end,
 			);
 		};
 
-		const parsed = instructionParser.parseInstructionFromLines(
-			lines,
-			startLineIndex,
+		const parsed = instructionParser.parseInstructionFromSource(
+			source,
+			startOffset,
 			resolveRange,
+			{ allowAnchoredOffsets: false },
 		);
 		if (!parsed || parsed.parseOffset !== 0) {
 			paragraphIndex += 1;
 			continue;
 		}
 
-		const endParagraphIndex = lineToParagraphIndex[parsed.endIndex];
+		const absoluteEnd = startOffset + parsed.text.length;
+		const endParagraphIndex = paragraphIndexForOffset(
+			paragraphStartOffsets,
+			absoluteEnd - 1,
+		);
 		if (endParagraphIndex === undefined || endParagraphIndex < paragraphIndex) {
 			paragraphIndex += 1;
 			continue;

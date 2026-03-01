@@ -23,6 +23,7 @@ interface ParseContext {
 	nodeId: WeakMap<GrammarNode, number>;
 	nextNodeId: number;
 	nodeEndsCache: Map<string, number[]>;
+	charClassRegexCache: Map<string, RegExp>;
 }
 
 interface BuildContext {
@@ -172,6 +173,10 @@ const ANCHORED_START_MARKERS = [
 interface ParseCandidate {
 	parseOffset: number;
 	end: number;
+}
+
+interface ParseInstructionOptions {
+	allowAnchoredOffsets?: boolean;
 }
 
 function collectAnchorIndexes(line: string): number[] {
@@ -481,7 +486,7 @@ function parseNodeAll(
 			: [];
 	} else if (node.type === "charClass") {
 		if (pos < ctx.input.length) {
-			const re = new RegExp(`^[${node.value}]$`, "u");
+			const re = getCharClassRegex(node.value, ctx);
 			results = re.test(ctx.input[pos] ?? "") ? [pos + 1] : [];
 		}
 	} else if (node.type === "ref") {
@@ -517,9 +522,9 @@ function parseNodeAll(
 		} else {
 			const seen = new Set<number>([pos]);
 			const queue: number[] = [pos];
-			while (queue.length > 0) {
-				const current = queue.shift();
-				if (typeof current !== "number") break;
+			for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+				const current = queue[queueIndex];
+				if (typeof current !== "number") continue;
 				for (const end of parseNodeAll(node.item, current, ctx)) {
 					if (end === current || seen.has(end)) continue;
 					seen.add(end);
@@ -601,7 +606,7 @@ function buildNodeToTarget(
 		if (pos >= buildCtx.parseContext.input.length) return null;
 		const ch = buildCtx.parseContext.input[pos];
 		if (!ch) return null;
-		const re = new RegExp(`^[${node.value}]$`, "u");
+		const re = getCharClassRegex(node.value, buildCtx.parseContext);
 		if (!re.test(ch)) return null;
 		return [
 			{
@@ -873,7 +878,16 @@ function createParseContext(input: string, rules: GrammarRules): ParseContext {
 		nodeId: new WeakMap(),
 		nextNodeId: 1,
 		nodeEndsCache: new Map(),
+		charClassRegexCache: new Map(),
 	};
+}
+
+function getCharClassRegex(charClass: string, ctx: ParseContext): RegExp {
+	const cached = ctx.charClassRegexCache.get(charClass);
+	if (cached) return cached;
+	const compiled = new RegExp(`^[${charClass}]$`, "u");
+	ctx.charClassRegexCache.set(charClass, compiled);
+	return compiled;
 }
 
 export class HandcraftedInstructionParser {
@@ -891,26 +905,71 @@ export class HandcraftedInstructionParser {
 		startIndex: number,
 		resolveRange: (start: number, end: number) => ParagraphRange = () =>
 			new ParagraphRange([], 0, 0),
+		options: ParseInstructionOptions = {},
 	): ParsedInstruction | null {
 		if (startIndex < 0 || startIndex >= lines.length) return null;
 		const source = lines.slice(startIndex).join("\n");
+		const parsed = this.parseInstructionFromSource(
+			source,
+			0,
+			resolveRange,
+			options,
+		);
+		if (!parsed) return null;
+		const parsedText = parsed.text;
+		const newlineCount = (parsedText.match(/\n/g) ?? []).length;
+		const endIndex = startIndex + newlineCount;
+		const lastLineBreak = parsedText.lastIndexOf("\n");
+		const endColumn =
+			lastLineBreak === -1
+				? parsedText.length
+				: parsedText.length - lastLineBreak - 1;
+
+		return {
+			...parsed,
+			startIndex,
+			endIndex,
+			endColumn,
+		};
+	}
+
+	parseInstructionFromSource(
+		source: string,
+		startOffset: number,
+		resolveRange: (start: number, end: number) => ParagraphRange = () =>
+			new ParagraphRange([], 0, 0),
+		options: ParseInstructionOptions = {},
+	): ParsedInstruction | null {
+		if (startOffset < 0 || startOffset >= source.length) return null;
 		const candidates: ParseCandidate[] = [];
 
-		for (const end of this.parsePrefix(source, "instruction")) {
-			candidates.push({ parseOffset: 0, end });
+		for (const end of this.parsePrefixFromOffset(
+			source,
+			startOffset,
+			"instruction",
+		)) {
+			candidates.push({ parseOffset: startOffset, end });
 		}
 
-		const firstLine = lines[startIndex] ?? "";
-		for (const anchorIndex of collectAnchorIndexes(firstLine)) {
-			const anchoredSource = source.slice(anchorIndex);
-			for (const anchoredEnd of this.parsePrefix(
-				anchoredSource,
-				"instruction",
-			)) {
-				candidates.push({
-					parseOffset: anchorIndex,
-					end: anchorIndex + anchoredEnd,
-				});
+		const allowAnchoredOffsets = options.allowAnchoredOffsets ?? true;
+		if (allowAnchoredOffsets) {
+			const lineEnd = source.indexOf("\n", startOffset);
+			const firstLine =
+				lineEnd === -1
+					? source.slice(startOffset)
+					: source.slice(startOffset, lineEnd);
+			for (const anchorIndex of collectAnchorIndexes(firstLine)) {
+				const anchoredStart = startOffset + anchorIndex;
+				for (const anchoredEnd of this.parsePrefixFromOffset(
+					source,
+					anchoredStart,
+					"instruction",
+				)) {
+					candidates.push({
+						parseOffset: anchoredStart,
+						end: anchoredEnd,
+					});
+				}
 			}
 		}
 
@@ -926,24 +985,18 @@ export class HandcraftedInstructionParser {
 		});
 		if (!ruleNode) return null;
 		const ast = buildInstructionAst(ruleNode, parseInput, (start, end) =>
-			resolveRange(best.parseOffset + start, best.parseOffset + end),
+			resolveRange(
+				best.parseOffset - startOffset + start,
+				best.parseOffset - startOffset + end,
+			),
 		);
 
-		const parsedText = source.slice(0, best.end);
-		const newlineCount = (parsedText.match(/\n/g) ?? []).length;
-		const endIndex = startIndex + newlineCount;
-		const lastLineBreak = parsedText.lastIndexOf("\n");
-		const endColumn =
-			lastLineBreak === -1
-				? parsedText.length
-				: parsedText.length - lastLineBreak - 1;
-
 		return {
-			startIndex,
-			endIndex,
-			endColumn,
-			text: parsedText,
-			parseOffset: best.parseOffset,
+			startIndex: 0,
+			endIndex: 0,
+			endColumn: 0,
+			text: source.slice(startOffset, best.end),
+			parseOffset: best.parseOffset - startOffset,
 			ast,
 		};
 	}
@@ -951,6 +1004,15 @@ export class HandcraftedInstructionParser {
 	parsePrefix(input: string, startRule = "instruction"): number[] {
 		const ctx = createParseContext(input, this.rules);
 		return parseRuleAll(startRule, 0, ctx);
+	}
+
+	parsePrefixFromOffset(
+		input: string,
+		startOffset: number,
+		startRule = "instruction",
+	): number[] {
+		const ctx = createParseContext(input, this.rules);
+		return parseRuleAll(startRule, startOffset, ctx);
 	}
 }
 
