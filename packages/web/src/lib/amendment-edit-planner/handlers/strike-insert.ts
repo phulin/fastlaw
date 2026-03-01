@@ -3,9 +3,9 @@ import type {
 	CanonicalDocument,
 	ClassificationOverride,
 	OperationMatchAttempt,
-	ResolvedInstructionOperation,
 	ScopeRange,
 } from "../../amendment-edit-engine-types";
+import type { CanonicalPlanningOperation } from "../../amendment-edit-operation-adapter";
 import type {
 	EditTarget,
 	InnerLocationTarget,
@@ -25,7 +25,7 @@ interface PushPatchArgs {
 
 interface StrikeInsertHandlerArgs {
 	model: CanonicalDocument;
-	operation: ResolvedInstructionOperation;
+	operation: CanonicalPlanningOperation;
 	range: ScopeRange | null;
 	scopedText: string;
 	plainText: string;

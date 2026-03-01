@@ -1,4 +1,5 @@
 import { buildCanonicalDocument } from "./amendment-document-model";
+import { materializeRenderModelFromPatchBatches } from "./amendment-edit-canonical-update";
 import {
 	executeTreeSequential,
 	type SequentialExecutionState,
@@ -36,10 +37,8 @@ export function applyAmendmentEditTreeToSection(
 	const counter = { index: 0 };
 	const execution: SequentialExecutionState = {
 		document: initialModel,
-		renderPlainText: initialModel.plainText,
-		renderSpans: initialModel.spans,
 		resolvedOperationCount: 0,
-		patches: [],
+		patchBatches: [],
 		attempts: [],
 		issues: [],
 		unsupportedReasons: [],
@@ -80,9 +79,13 @@ export function applyAmendmentEditTreeToSection(
 		);
 	}
 
-	const patches = execution.patches;
+	const patches = execution.patchBatches.flat();
 	const attempts = execution.attempts;
-	const workingText = execution.renderPlainText;
+	const renderModel = materializeRenderModelFromPatchBatches(
+		initialModel,
+		execution.patchBatches,
+	);
+	const workingText = renderModel.plainText;
 
 	const changes = patches.map((patch) => ({
 		deleted: patch.deletedPlain,
@@ -123,10 +126,7 @@ export function applyAmendmentEditTreeToSection(
 	return {
 		status: "ok",
 		sectionPath: args.sectionPath,
-		renderModel: {
-			plainText: execution.renderPlainText,
-			spans: execution.renderSpans,
-		},
+		renderModel,
 		segments: [{ kind: "unchanged", text: workingText }],
 		changes,
 		deleted,

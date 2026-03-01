@@ -9,9 +9,9 @@ import type {
 	OperationMatchAttempt,
 	PlanEditsResult,
 	PlannedPatch,
-	ResolvedInstructionOperation,
 	ScopeRange,
 } from "./amendment-edit-engine-types";
+import type { CanonicalPlanningOperation } from "./amendment-edit-operation-adapter";
 import {
 	applyAttemptOutcome,
 	countPatchesByOperation,
@@ -782,7 +782,7 @@ function trimLeadingSubsectionHeadingFromRange(
 }
 
 function getEditStrikingContent(
-	operation: ResolvedInstructionOperation,
+	operation: CanonicalPlanningOperation,
 ): string | null {
 	const { edit } = operation;
 	if (edit.kind === UltimateEditKind.Strike) {
@@ -831,7 +831,7 @@ function normalizeInlineDeletionRange(
 }
 
 function buildAttempt(
-	operation: ResolvedInstructionOperation,
+	operation: CanonicalPlanningOperation,
 	range: ScopeRange | null,
 	plainText: string,
 ): OperationMatchAttempt {
@@ -863,7 +863,7 @@ function buildAttempt(
 
 function planPatchForOperation(
 	model: CanonicalDocument,
-	operation: ResolvedInstructionOperation,
+	operation: CanonicalPlanningOperation,
 	classificationOverrides?: ClassificationOverride[],
 ): { patches: PlannedPatch[]; attempt: OperationMatchAttempt } {
 	const plainText = model.plainText;
@@ -1148,7 +1148,7 @@ function planPatchForOperation(
 
 export function planOperationEdit(
 	model: CanonicalDocument,
-	operation: ResolvedInstructionOperation,
+	operation: CanonicalPlanningOperation,
 	classificationOverrides?: ClassificationOverride[],
 ): { patches: PlannedPatch[]; attempt: OperationMatchAttempt } {
 	return planPatchForOperation(model, operation, classificationOverrides);
@@ -1156,7 +1156,7 @@ export function planOperationEdit(
 
 export function planEdits(
 	model: CanonicalDocument,
-	operations: ResolvedInstructionOperation[],
+	operations: CanonicalPlanningOperation[],
 	classificationOverrides?: ClassificationOverride[],
 ): PlanEditsResult {
 	const attempts: OperationMatchAttempt[] = [];

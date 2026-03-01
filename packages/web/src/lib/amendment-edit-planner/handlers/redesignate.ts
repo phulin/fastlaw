@@ -1,8 +1,8 @@
 import type {
 	OperationMatchAttempt,
-	ResolvedInstructionOperation,
 	ScopeRange,
 } from "../../amendment-edit-engine-types";
+import type { CanonicalPlanningOperation } from "../../amendment-edit-operation-adapter";
 
 interface PushPatchArgs {
 	start: number;
@@ -15,7 +15,7 @@ interface PushPatchArgs {
 }
 
 interface RedesignateHandlerArgs {
-	operation: ResolvedInstructionOperation;
+	operation: CanonicalPlanningOperation;
 	range: ScopeRange | null;
 	scopedText: string;
 	attempt: OperationMatchAttempt;

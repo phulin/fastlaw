@@ -1,9 +1,9 @@
 import { getScopeRangeFromNodeId } from "../../amendment-document-model";
 import type {
 	CanonicalDocument,
-	ResolvedInstructionOperation,
 	ScopeRange,
 } from "../../amendment-edit-engine-types";
+import type { CanonicalPlanningOperation } from "../../amendment-edit-operation-adapter";
 
 interface PushPatchArgs {
 	start: number;
@@ -17,7 +17,7 @@ interface PushPatchArgs {
 
 interface MoveHandlerArgs {
 	model: CanonicalDocument;
-	operation: ResolvedInstructionOperation;
+	operation: CanonicalPlanningOperation;
 	plainText: string;
 	pushPatch: (args: PushPatchArgs) => void;
 }

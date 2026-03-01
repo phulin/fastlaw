@@ -3,9 +3,9 @@ import type {
 	CanonicalDocument,
 	ClassificationOverride,
 	OperationMatchAttempt,
-	ResolvedInstructionOperation,
 	ScopeRange,
 } from "../../amendment-edit-engine-types";
+import type { CanonicalPlanningOperation } from "../../amendment-edit-operation-adapter";
 import type { EditTarget, TextWithProvenance } from "../../amendment-edit-tree";
 
 const INSIDE_WORD_HYPHEN_RE = /(?<=[A-Za-z0-9])-(?=[A-Za-z0-9])/g;
@@ -22,7 +22,7 @@ interface PushPatchArgs {
 
 interface InsertHandlerArgs {
 	model: CanonicalDocument;
-	operation: ResolvedInstructionOperation;
+	operation: CanonicalPlanningOperation;
 	range: ScopeRange | null;
 	scopedText: string;
 	plainText: string;

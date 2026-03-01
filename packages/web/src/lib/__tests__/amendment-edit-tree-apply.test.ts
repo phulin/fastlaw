@@ -2713,7 +2713,6 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 				{ type: "paragraph", start: 4, end: 19 },
 				{ type: "heading", start: 4, end: 19 },
 			],
-			sourceToPlainOffsets: Array.from({ length: 23 }, (_, i) => i),
 			rootRange: { start: 0, end: 22, indent: null },
 			nodesById: new Map(),
 			rootNodeIds: [],

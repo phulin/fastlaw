@@ -560,8 +560,6 @@ export function buildCanonicalDocument(
 			index: paragraph.index,
 			start: paragraph.plainStart,
 			end: paragraph.plainEnd,
-			startLine: paragraph.startLine,
-			endLine: paragraph.endLine,
 			indent: paragraph.indent,
 			leadingLabels: paragraph.leadingLabels,
 			text: paragraph.text,
@@ -571,7 +569,6 @@ export function buildCanonicalDocument(
 	return {
 		plainText: plain.plainText,
 		spans: plain.spans,
-		sourceToPlainOffsets: plain.sourceToPlainOffsets,
 		rootRange: {
 			start: 0,
 			end: plain.plainText.length,
@@ -583,31 +580,10 @@ export function buildCanonicalDocument(
 	};
 }
 
-function lineIndexForOffset(lineStarts: number[], offset: number): number {
-	let left = 0;
-	let right = lineStarts.length - 1;
-	while (left <= right) {
-		const mid = Math.floor((left + right) / 2);
-		const start = lineStarts[mid] ?? 0;
-		const nextStart = lineStarts[mid + 1] ?? Number.POSITIVE_INFINITY;
-		if (offset < start) {
-			right = mid - 1;
-			continue;
-		}
-		if (offset >= nextStart) {
-			left = mid + 1;
-			continue;
-		}
-		return mid;
-	}
-	return Math.max(0, Math.min(lineStarts.length - 1, left));
-}
-
 export function buildCanonicalParagraphsFromTextAndSpans(
 	plainText: string,
 	spans: FormattingSpan[],
 ): DocumentParagraph[] {
-	const lineStarts = getLineStarts(plainText);
 	const paragraphs: DocumentParagraph[] = [];
 	let paragraphIndex = 0;
 
@@ -624,16 +600,12 @@ export function buildCanonicalParagraphsFromTextAndSpans(
 			const labels = extractLeadingLabels(lineText);
 			const lineStart = currentOffset;
 			const lineEnd = currentOffset + lineText.length;
-			const startLine = lineIndexForOffset(lineStarts, lineStart);
-			const endLine = lineIndexForOffset(lineStarts, lineEnd) + 1;
 
 			if (labels.length > 0 || i === 0) {
 				paragraphs.push({
 					index: paragraphIndex++,
 					start: lineStart,
 					end: lineEnd,
-					startLine,
-					endLine,
 					indent: (span.metadata?.quoteDepth as number) ?? 0,
 					leadingLabels: labels,
 					text: lineText,
@@ -643,7 +615,6 @@ export function buildCanonicalParagraphsFromTextAndSpans(
 				if (previous) {
 					previous.text += `\n${lineText}`;
 					previous.end = lineEnd;
-					previous.endLine = endLine;
 				}
 			}
 
@@ -667,8 +638,8 @@ export function rebuildCanonicalDocumentFromParagraphs(args: {
 		ParsedParagraph & { plainStart: number; plainEnd: number }
 	> = sortedParagraphs.map((paragraph, index) => ({
 		index,
-		startLine: paragraph.startLine,
-		endLine: paragraph.endLine,
+		startLine: index,
+		endLine: index + 1,
 		text: paragraph.text,
 		indent: paragraph.indent,
 		leadingLabels: paragraph.leadingLabels,
@@ -685,18 +656,11 @@ export function rebuildCanonicalDocumentFromParagraphs(args: {
 		nodesById,
 	});
 
-	const sourceToPlainOffsets = new Array<number>(args.plainText.length + 1);
-	for (let index = 0; index <= args.plainText.length; index += 1) {
-		sourceToPlainOffsets[index] = index;
-	}
-
 	const documentParagraphs: DocumentParagraph[] = normalizedParagraphs.map(
 		(paragraph) => ({
 			index: paragraph.index,
 			start: paragraph.plainStart,
 			end: paragraph.plainEnd,
-			startLine: paragraph.startLine,
-			endLine: paragraph.endLine,
 			indent: paragraph.indent,
 			leadingLabels: paragraph.leadingLabels,
 			text: paragraph.text,
@@ -706,7 +670,6 @@ export function rebuildCanonicalDocumentFromParagraphs(args: {
 	return {
 		plainText: args.plainText,
 		spans: args.spans,
-		sourceToPlainOffsets,
 		rootRange: {
 			start: 0,
 			end: args.plainText.length,

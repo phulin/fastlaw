@@ -1,9 +1,9 @@
 import type {
 	ClassificationOverride,
 	OperationMatchAttempt,
-	ResolvedInstructionOperation,
 	ScopeRange,
 } from "../../amendment-edit-engine-types";
+import type { CanonicalPlanningOperation } from "../../amendment-edit-operation-adapter";
 import type { TextWithProvenance } from "../../amendment-edit-tree";
 
 interface PushPatchArgs {
@@ -17,7 +17,7 @@ interface PushPatchArgs {
 }
 
 interface RewriteHandlerArgs {
-	operation: ResolvedInstructionOperation;
+	operation: CanonicalPlanningOperation;
 	range: ScopeRange | null;
 	scopedText: string;
 	plainText: string;

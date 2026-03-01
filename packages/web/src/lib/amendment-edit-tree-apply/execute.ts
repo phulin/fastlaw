@@ -1,17 +1,13 @@
-import {
-	buildCanonicalParagraphsFromTextAndSpans,
-	rebuildCanonicalDocumentFromParagraphs,
-} from "../amendment-document-model";
-import { applyPlannedPatchesTransaction } from "../amendment-edit-apply-transaction";
+import { applyPatchesToCanonicalDocument } from "../amendment-edit-canonical-update";
 import type {
 	CanonicalDocument,
 	ClassificationOverride,
-	FormattingSpan,
 	OperationMatchAttempt,
 	PlannedPatch,
 	ResolutionIssue,
 	ResolvedInstructionOperation,
 } from "../amendment-edit-engine-types";
+import { toCanonicalPlanningOperation } from "../amendment-edit-operation-adapter";
 import {
 	applyAttemptOutcome,
 	countPatchesByOperation,
@@ -37,159 +33,26 @@ import {
 
 export interface SequentialExecutionState {
 	document: CanonicalDocument;
-	renderPlainText: string;
-	renderSpans: FormattingSpan[];
 	resolvedOperationCount: number;
-	patches: PlannedPatch[];
+	patchBatches: PlannedPatch[][];
 	attempts: OperationMatchAttempt[];
 	issues: ResolutionIssue[];
 	unsupportedReasons: string[];
-}
-
-interface CanonicalRenderOffsetMap {
-	toRenderPoint(canonicalOffset: number): number;
-}
-
-function buildCanonicalRenderOffsetMap(
-	renderText: string,
-	spans: FormattingSpan[],
-): CanonicalRenderOffsetMap {
-	const deletedMask = new Uint8Array(renderText.length);
-	for (const span of spans) {
-		if (span.type !== "deletion") continue;
-		const start = Math.max(0, Math.min(renderText.length, span.start));
-		const end = Math.max(0, Math.min(renderText.length, span.end));
-		for (let index = start; index < end; index += 1) {
-			deletedMask[index] = 1;
-		}
-	}
-
-	const toRenderPoint = (canonicalOffset: number): number => {
-		let liveCount = 0;
-		const target = Math.max(0, canonicalOffset);
-		for (let index = 0; index < renderText.length; index += 1) {
-			if (liveCount === target) return index;
-			if (deletedMask[index] === 1) continue;
-			liveCount += 1;
-		}
-		return renderText.length;
-	};
-
-	return { toRenderPoint };
-}
-
-function toSpanOnlyModel(
-	plainText: string,
-	spans: FormattingSpan[],
-): CanonicalDocument {
-	const sourceToPlainOffsets = new Array<number>(plainText.length + 1);
-	for (let index = 0; index <= plainText.length; index += 1) {
-		sourceToPlainOffsets[index] = index;
-	}
-	return {
-		plainText,
-		spans,
-		sourceToPlainOffsets,
-		rootRange: { start: 0, end: plainText.length, indent: 0 },
-		nodesById: new Map(),
-		rootNodeIds: [],
-		paragraphs: [],
-	};
 }
 
 function overlaps(left: PlannedPatch, right: PlannedPatch): boolean {
 	return left.start < right.end && right.start < left.end;
 }
 
-function projectRenderModelToCanonical(
-	renderText: string,
-	renderSpans: FormattingSpan[],
-): { plainText: string; spans: FormattingSpan[] } {
-	const deletedMask = new Uint8Array(renderText.length);
-	for (const span of renderSpans) {
-		if (span.type !== "deletion") continue;
-		const start = Math.max(0, Math.min(renderText.length, span.start));
-		const end = Math.max(0, Math.min(renderText.length, span.end));
-		for (let index = start; index < end; index += 1) {
-			deletedMask[index] = 1;
-		}
-	}
-
-	const livePrefix = new Array<number>(renderText.length + 1).fill(0);
-	const canonicalChars: string[] = [];
-	for (let index = 0; index < renderText.length; index += 1) {
-		const isDeleted = deletedMask[index] === 1;
-		livePrefix[index + 1] = livePrefix[index] + (isDeleted ? 0 : 1);
-		if (!isDeleted) {
-			canonicalChars.push(renderText[index] ?? "");
-		}
-	}
-	const canonicalText = canonicalChars.join("");
-	const projectedSpans: FormattingSpan[] = [];
-	for (const span of renderSpans) {
-		if (span.type === "deletion") continue;
-		const start =
-			livePrefix[Math.max(0, Math.min(renderText.length, span.start))];
-		const end = livePrefix[Math.max(0, Math.min(renderText.length, span.end))];
-		if (end <= start) continue;
-		projectedSpans.push({
-			...span,
-			start,
-			end,
-		});
-	}
-	return {
-		plainText: canonicalText,
-		spans: projectedSpans,
-	};
-}
-
-function canonicalDocumentFromProjectedPlain(
-	plainText: string,
-	spans: FormattingSpan[],
-): CanonicalDocument {
-	const paragraphs = buildCanonicalParagraphsFromTextAndSpans(plainText, spans);
-	return rebuildCanonicalDocumentFromParagraphs({
-		plainText,
-		spans,
-		paragraphs,
-	});
-}
-
 function applyAcceptedPatchesToState(
 	state: SequentialExecutionState,
 	orderedPatches: PlannedPatch[],
 ): void {
-	const canonicalApplied = applyPlannedPatchesTransaction(
-		toSpanOnlyModel(state.document.plainText, state.document.spans),
+	state.document = applyPatchesToCanonicalDocument(
+		state.document,
 		orderedPatches,
 	);
-	const projectedCanonical = projectRenderModelToCanonical(
-		canonicalApplied.plainText,
-		canonicalApplied.spans,
-	);
-	state.document = canonicalDocumentFromProjectedPlain(
-		projectedCanonical.plainText,
-		projectedCanonical.spans,
-	);
-
-	const offsetMap = buildCanonicalRenderOffsetMap(
-		state.renderPlainText,
-		state.renderSpans,
-	);
-	const renderPatches = orderedPatches.map((patch) => ({
-		...patch,
-		start: offsetMap.toRenderPoint(patch.start),
-		end: offsetMap.toRenderPoint(patch.end),
-		insertAt: offsetMap.toRenderPoint(patch.insertAt),
-	}));
-	const appliedRender = applyPlannedPatchesTransaction(
-		toSpanOnlyModel(state.renderPlainText, state.renderSpans),
-		renderPatches,
-	);
-	state.renderPlainText = appliedRender.plainText;
-	state.renderSpans = appliedRender.spans;
-	state.patches.push(...orderedPatches);
+	state.patchBatches.push(orderedPatches);
 }
 
 function executeResolvedOperation(
@@ -199,7 +62,7 @@ function executeResolvedOperation(
 ): PlannedPatch[] {
 	const { patches, attempt } = planOperationEdit(
 		state.document,
-		operation,
+		toCanonicalPlanningOperation(operation),
 		classificationOverrides,
 	);
 	if (attempt.outcome !== "scope_unresolved") {
@@ -230,7 +93,7 @@ function executeResolvedOperationsSnapshot(
 	for (const operation of operations) {
 		const planned = planOperationEdit(
 			state.document,
-			operation,
+			toCanonicalPlanningOperation(operation),
 			classificationOverrides,
 		);
 		tentativePatches.push(...planned.patches);

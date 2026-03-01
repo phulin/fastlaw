@@ -57,8 +57,6 @@ export interface DocumentParagraph {
 	index: number;
 	start: number;
 	end: number;
-	startLine: number;
-	endLine: number;
 	indent: number;
 	leadingLabels: string[];
 	text: string;
@@ -67,7 +65,6 @@ export interface DocumentParagraph {
 export interface CanonicalDocument {
 	plainText: string;
 	spans: FormattingSpan[];
-	sourceToPlainOffsets: number[];
 	rootRange: ScopeRange;
 	nodesById: Map<string, StructuralNode>;
 	rootNodeIds: string[];
