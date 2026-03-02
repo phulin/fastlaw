@@ -14,6 +14,10 @@ interface ProjectedText {
 	sourceIndexes: number[];
 }
 
+const PERIOD_BREAK_MARKER_RE =
+	/(?<=\.)(?:[ \t]*(?:\u2014|_|\r?\n|\u2028|\u2029)[ \t]*)+/g;
+const PERIOD_DASH_TOKEN_RE = /\.[ \t]*(?:\u2014|_)/g;
+
 function toGlobalRegExp(pattern: RegExp): RegExp {
 	const flags = pattern.flags.includes("g")
 		? pattern.flags
@@ -40,6 +44,23 @@ function getIgnoredSpans(
 		match = regex.exec(text);
 	}
 	return spans;
+}
+
+function normalizeIgnoredSpans(
+	spans: Array<{ start: number; end: number }>,
+): Array<{ start: number; end: number }> {
+	if (spans.length <= 1) return spans;
+	const sorted = [...spans].sort((left, right) => left.start - right.start);
+	const merged: Array<{ start: number; end: number }> = [];
+	for (const span of sorted) {
+		const last = merged[merged.length - 1];
+		if (!last || span.start > last.end) {
+			merged.push({ start: span.start, end: span.end });
+			continue;
+		}
+		last.end = Math.max(last.end, span.end);
+	}
+	return merged;
 }
 
 function projectText(
@@ -79,11 +100,21 @@ export function findAnchorSearchMatch(
 
 	const projectedHaystack = projectText(
 		haystack,
-		getIgnoredSpans(haystack, options.ignoreInHaystack),
+		normalizeIgnoredSpans(
+			[
+				getIgnoredSpans(haystack, PERIOD_BREAK_MARKER_RE),
+				getIgnoredSpans(haystack, options.ignoreInHaystack),
+			].flat(),
+		),
 	);
 	const projectedNeedle = projectText(
 		needle,
-		getIgnoredSpans(needle, options.ignoreInNeedle),
+		normalizeIgnoredSpans(
+			[
+				getIgnoredSpans(needle, PERIOD_BREAK_MARKER_RE),
+				getIgnoredSpans(needle, options.ignoreInNeedle),
+			].flat(),
+		),
 	);
 
 	if (projectedNeedle.text.length === 0) return null;
@@ -95,7 +126,20 @@ export function findAnchorSearchMatch(
 		? projectedNeedle.text.toLocaleLowerCase()
 		: projectedNeedle.text;
 	const projectedIndex = projectedHaystackText.indexOf(projectedNeedleText);
-	if (projectedIndex < 0) return null;
+	if (projectedIndex < 0) {
+		PERIOD_DASH_TOKEN_RE.lastIndex = 0;
+		if (!PERIOD_DASH_TOKEN_RE.test(needle)) return null;
+		PERIOD_DASH_TOKEN_RE.lastIndex = 0;
+		const newlineNeedle = needle.replace(PERIOD_DASH_TOKEN_RE, "\n");
+		const newlineMatch = findAnchorSearchMatch(
+			haystack,
+			newlineNeedle,
+			options,
+		);
+		if (newlineMatch) return newlineMatch;
+		const collapsedNeedle = needle.replace(PERIOD_DASH_TOKEN_RE, "");
+		return findAnchorSearchMatch(haystack, collapsedNeedle, options);
+	}
 
 	const start = projectedHaystack.sourceIndexes[projectedIndex];
 	const lastProjectedIndex = projectedIndex + projectedNeedle.text.length - 1;

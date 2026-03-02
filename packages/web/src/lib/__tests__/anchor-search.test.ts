@@ -31,4 +31,60 @@ describe("findAnchorSearchMatch", () => {
 		});
 		expect(match).toEqual({ index: 6, matchedText: "Beta" });
 	});
+
+	it("matches across codification paragraph breaks for period-dash anchors", () => {
+		const match = findAnchorSearchMatch(
+			'by striking "BENEFITS.\nNo deduction"',
+			'by striking "BENEFITS.\u2014No deduction"',
+			{
+				caseInsensitive: true,
+			},
+		);
+		expect(match).toEqual({
+			index: 0,
+			matchedText: 'by striking "BENEFITS.\nNo deduction"',
+		});
+	});
+
+	it("matches across underscore placeholder after period", () => {
+		const match = findAnchorSearchMatch(
+			'by striking "BENEFITS._No deduction"',
+			'by striking "BENEFITS.\u2014No deduction"',
+			{
+				caseInsensitive: true,
+			},
+		);
+		expect(match).toEqual({
+			index: 0,
+			matchedText: 'by striking "BENEFITS._No deduction"',
+		});
+	});
+
+	it("matches across paragraph separator after period", () => {
+		const match = findAnchorSearchMatch(
+			'by striking "BENEFITS.\u2029No deduction"',
+			'by striking "BENEFITS.\u2014No deduction"',
+			{
+				caseInsensitive: true,
+			},
+		);
+		expect(match).toEqual({
+			index: 0,
+			matchedText: 'by striking "BENEFITS.\u2029No deduction"',
+		});
+	});
+
+	it("matches .— against plain paragraph newline without period", () => {
+		const match = findAnchorSearchMatch(
+			'by striking "BENEFITS\nNo deduction"',
+			'by striking "BENEFITS.\u2014No deduction"',
+			{
+				caseInsensitive: true,
+			},
+		);
+		expect(match).toEqual({
+			index: 0,
+			matchedText: 'by striking "BENEFITS\nNo deduction"',
+		});
+	});
 });
