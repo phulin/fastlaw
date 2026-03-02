@@ -13,6 +13,7 @@ import {
 	type InstructionSemanticTree,
 	LocationRestrictionKind,
 	ScopeKind,
+	SearchTargetKind,
 	SemanticNodeType,
 	type StructuralReference,
 	textFromEditTarget,
@@ -334,6 +335,9 @@ export function appendScopeContextText(
 }
 
 function targetPathFromEditTarget(target: EditTarget): HierarchyLevel[] | null {
+	if ("kind" in target && target.kind === SearchTargetKind.Text) {
+		return target.atEndOf ? refToHierarchyPath(target.atEndOf) : null;
+	}
 	if ("ref" in target) {
 		return refToHierarchyPath(target.ref);
 	}

@@ -232,6 +232,7 @@ export interface TextSearchTarget {
 	text: TextWithProvenance;
 	eachPlaceItAppears?: boolean;
 	atEnd?: boolean;
+	atEndOf?: StructuralReference;
 }
 
 export interface StructuralEditTarget {

@@ -845,6 +845,48 @@ describe("translateInstructionAstToEditTree", () => {
 		expect(strikeTarget.atEnd).toBe(true);
 	});
 
+	it("preserves at-end structural context for text strike targets", () => {
+		const ast = parseInstructionAst(
+			"Section 101 of title 10, United States Code, is amended by striking “or” at the end of subsection (a).",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+		const queue = [...result.tree.children];
+		let strikeEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.Strike
+			) {
+				strikeEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!strikeEdit || strikeEdit.edit.kind !== UltimateEditKind.Strike) {
+			throw new Error("Expected strike edit node.");
+		}
+		const strikeTarget = strikeEdit.edit.target;
+		if (
+			!("kind" in strikeTarget) ||
+			strikeTarget.kind !== SearchTargetKind.Text
+		) {
+			throw new Error("Expected text strike target.");
+		}
+		expect(strikeTarget.text.text).toBe("or");
+		expect(strikeTarget.atEnd).toBe(true);
+		expect(strikeTarget.atEndOf?.path).toEqual([
+			{ kind: ScopeKind.Section, label: "101" },
+			{ kind: ScopeKind.Subsection, label: "a" },
+		]);
+	});
+
 	it("parses structural through endpoints for strike edits", () => {
 		const ast = parseInstructionAst(
 			"Section 17 of the Mineral Leasing Act (30 U.S.C. 226), as amended by subsection (a), is amended by striking the section designation and all that follows through the end of subsection (a).",

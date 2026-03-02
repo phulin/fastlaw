@@ -84,7 +84,16 @@ export function inferMarkerTypeFromContext(
 	}
 
 	if (/^[A-Z]$/.test(label)) return "subparagraph";
-	if (/^[A-Z]+$/.test(label)) return "item";
+	if (/^[A-Z]+$/.test(label)) {
+		if (
+			previousType !== undefined &&
+			getMarkerHierarchyRank(previousType) >=
+				getMarkerHierarchyRank("subclause")
+		) {
+			return "item";
+		}
+		return indentationHint > 5 ? "item" : "subparagraph";
+	}
 	return "item";
 }
 

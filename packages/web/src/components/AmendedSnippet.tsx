@@ -102,6 +102,16 @@ export function AmendedSnippet(props: AmendedSnippetProps) {
 								class="pdf-amended-snippet-failed-reason markdown"
 								innerHTML={renderMarkdown(item.reason)}
 							/>
+							{item.reasonDetail ? (
+								<>
+									<div class="pdf-amended-snippet-replacement-label">
+										Resolved path
+									</div>
+									<div class="pdf-amended-snippet-failed-target">
+										{humanTargetPath(item.reasonDetail)}
+									</div>
+								</>
+							) : null}
 						</article>
 					))}
 				</div>

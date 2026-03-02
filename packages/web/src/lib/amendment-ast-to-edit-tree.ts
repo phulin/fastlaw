@@ -529,6 +529,32 @@ function parseStrikingTarget(
 	const atEnd =
 		strikingLocation?.text.includes("at the end") ||
 		node.text.includes("at the end");
+	const atEndOf =
+		(strikingLocation
+			? parseStructuralReferenceFromNode(
+					findChild(strikingLocation, GrammarAstNodeType.SubLocationOrSub),
+					context,
+				)
+			: undefined) ??
+		(strikingLocation
+			? parseStructuralReferenceFromNode(
+					findChild(strikingLocation, GrammarAstNodeType.SubLocation),
+					context,
+				)
+			: undefined) ??
+		parseStructuralReferenceFromNode(
+			findChild(node, GrammarAstNodeType.SubLocationOrSub),
+			context,
+		) ??
+		parseStructuralReferenceFromNode(
+			findChild(node, GrammarAstNodeType.SubLocation),
+			context,
+		);
+	const fallbackAtEndOf = parseAtEndStructuralReferenceFromText(
+		strikingLocation?.text ?? node.text,
+		context,
+	);
+	const resolvedAtEndOf = atEndOf ?? fallbackAtEndOf;
 	if (strikingSearch) {
 		const inline = findChild(strikingSearch, GrammarAstNodeType.Inline);
 		const appearances = findChild(
@@ -543,6 +569,7 @@ function parseStrikingTarget(
 					sourceLocation: strikingSearch.sourceLocation,
 				},
 				atEnd,
+				atEndOf: resolvedAtEndOf ?? undefined,
 			};
 		}
 		return {
@@ -553,6 +580,7 @@ function parseStrikingTarget(
 					appearances.text.includes("both places it appears")
 				: undefined,
 			atEnd,
+			atEndOf: resolvedAtEndOf ?? undefined,
 		};
 	}
 
@@ -579,12 +607,36 @@ function parseStrikingTarget(
 			kind: SearchTargetKind.Text,
 			text: extractInlineContent(inline),
 			atEnd,
+			atEndOf: resolvedAtEndOf ?? undefined,
 		};
 
 	return {
 		kind: SearchTargetKind.Text,
 		text: { text: node.text.trim(), sourceLocation: node.sourceLocation },
 		atEnd,
+		atEndOf: resolvedAtEndOf ?? undefined,
+	};
+}
+
+function parseAtEndStructuralReferenceFromText(
+	text: string,
+	context: TranslationContext,
+): StructuralReference | null {
+	const atEndMatch = text.match(
+		/at the end of (subsection|paragraph|subparagraph|clause|subclause|item|subitem)\s+\(([A-Za-z0-9]+)\)/i,
+	);
+	if (!atEndMatch) return null;
+	const kindText = atEndMatch[1];
+	const label = atEndMatch[2];
+	if (!kindText || !label) return null;
+	const kind = scopeKindFromText(kindText);
+	if (!kind) return null;
+	const normalizedLabel = normalizeSubId(`(${label})`);
+	return {
+		kind,
+		path: mergeScopePaths(context.scopePath, [
+			{ kind, label: normalizedLabel },
+		]),
 	};
 }
 

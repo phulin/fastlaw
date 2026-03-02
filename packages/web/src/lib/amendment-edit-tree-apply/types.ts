@@ -40,6 +40,18 @@ export interface AmendmentEffectDebug {
 export type ApplyFailureReasonKind =
 	| "target_unresolved"
 	| "target_ambiguous"
+	| "through_target_unresolved"
+	| "through_target_ambiguous"
+	| "anchor_target_unresolved"
+	| "anchor_target_ambiguous"
+	| "matter_preceding_target_unresolved"
+	| "matter_preceding_target_ambiguous"
+	| "matter_following_target_unresolved"
+	| "matter_following_target_ambiguous"
+	| "move_from_unresolved"
+	| "move_from_ambiguous"
+	| "move_anchor_unresolved"
+	| "move_anchor_ambiguous"
 	| "scope_unresolved"
 	| "no_match";
 

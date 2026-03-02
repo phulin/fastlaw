@@ -668,7 +668,10 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.applySummary.partiallyApplied).toBe(true);
 		expect(effect.applySummary.failedItems).toHaveLength(1);
 		expect(effect.applySummary.failedItems[0]?.reasonKind).toBe(
-			"target_unresolved",
+			"anchor_target_unresolved",
+		);
+		expect(effect.applySummary.failedItems[0]?.reasonDetail).toBe(
+			"paragraph:88",
 		);
 	});
 
@@ -728,6 +731,56 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(effect.renderModel.plainText).toBe("This is old text.\nnew text");
 		expect(effect.deleted).toEqual([]);
 		expect(effect.inserted).toEqual(["\nnew text"]);
+	});
+
+	it("scopes at-end text strike-insert to the referenced structural target", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "1",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Paragraph, label: "2" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: {
+									kind: SearchTargetKind.Text,
+									text: tp("or"),
+									atEnd: true,
+									atEndOf: {
+										kind: ScopeKind.Subparagraph,
+										path: [{ kind: ScopeKind.Subparagraph, label: "B" }],
+									},
+								},
+								insert: tp("; and"),
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const sectionBody = [
+			"(1) unchanged.",
+			"(2) list—",
+			"(A) first or",
+			"(B) second or",
+		].join("\n");
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/1/1",
+			sectionBody,
+			instructionText:
+				'Section 1 is amended in paragraph (2), by striking "or" at the end of subparagraph (B) and inserting "; and".',
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.applySummary.partiallyApplied).toBe(false);
+		expect(effect.renderModel.plainText).toContain("(A) first or");
+		expect(effect.renderModel.plainText).toContain("(B) second or; and");
 	});
 
 	it("formats multiline Insert edits as quoted block content", () => {

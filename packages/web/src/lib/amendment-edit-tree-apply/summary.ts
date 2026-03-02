@@ -25,20 +25,95 @@ function mapIssueToFailureReason(
 	if (issue) {
 		const hasCandidates =
 			issue.candidateNodeIds !== undefined && issue.candidateNodeIds.length > 0;
-		if (issue.kind.endsWith("_ambiguous")) {
-			return {
-				reasonKind: "target_ambiguous",
-				reason: "Target path was ambiguous.",
-				reasonDetail: hasCandidates
-					? `${issue.path} [candidates=${issue.candidateNodeIds?.join(", ")}]`
-					: issue.path,
-			};
+		const detail = hasCandidates
+			? `${issue.path} [candidates=${issue.candidateNodeIds?.join(", ")}]`
+			: issue.path;
+		switch (issue.kind) {
+			case "target_ambiguous":
+				return {
+					reasonKind: "target_ambiguous",
+					reason: "Target path was ambiguous.",
+					reasonDetail: detail,
+				};
+			case "target_unresolved":
+				return {
+					reasonKind: "target_unresolved",
+					reason: "Target path did not resolve.",
+					reasonDetail: issue.path,
+				};
+			case "through_target_ambiguous":
+				return {
+					reasonKind: "through_target_ambiguous",
+					reason: "Through-target path was ambiguous.",
+					reasonDetail: detail,
+				};
+			case "through_target_unresolved":
+				return {
+					reasonKind: "through_target_unresolved",
+					reason: "Through-target path did not resolve.",
+					reasonDetail: issue.path,
+				};
+			case "anchor_target_ambiguous":
+				return {
+					reasonKind: "anchor_target_ambiguous",
+					reason: "Anchor path was ambiguous.",
+					reasonDetail: detail,
+				};
+			case "anchor_target_unresolved":
+				return {
+					reasonKind: "anchor_target_unresolved",
+					reason: "Anchor path did not resolve.",
+					reasonDetail: issue.path,
+				};
+			case "matter_preceding_target_ambiguous":
+				return {
+					reasonKind: "matter_preceding_target_ambiguous",
+					reason: "Matter-preceding path was ambiguous.",
+					reasonDetail: detail,
+				};
+			case "matter_preceding_target_unresolved":
+				return {
+					reasonKind: "matter_preceding_target_unresolved",
+					reason: "Matter-preceding path did not resolve.",
+					reasonDetail: issue.path,
+				};
+			case "matter_following_target_ambiguous":
+				return {
+					reasonKind: "matter_following_target_ambiguous",
+					reason: "Matter-following path was ambiguous.",
+					reasonDetail: detail,
+				};
+			case "matter_following_target_unresolved":
+				return {
+					reasonKind: "matter_following_target_unresolved",
+					reason: "Matter-following path did not resolve.",
+					reasonDetail: issue.path,
+				};
+			case "move_from_ambiguous":
+				return {
+					reasonKind: "move_from_ambiguous",
+					reason: "Move source path was ambiguous.",
+					reasonDetail: detail,
+				};
+			case "move_from_unresolved":
+				return {
+					reasonKind: "move_from_unresolved",
+					reason: "Move source path did not resolve.",
+					reasonDetail: issue.path,
+				};
+			case "move_anchor_ambiguous":
+				return {
+					reasonKind: "move_anchor_ambiguous",
+					reason: "Move anchor path was ambiguous.",
+					reasonDetail: detail,
+				};
+			case "move_anchor_unresolved":
+				return {
+					reasonKind: "move_anchor_unresolved",
+					reason: "Move anchor path did not resolve.",
+					reasonDetail: issue.path,
+				};
 		}
-		return {
-			reasonKind: "target_unresolved",
-			reason: "Target path did not resolve.",
-			reasonDetail: issue.path,
-		};
 	}
 	if (outcome === "scope_unresolved") {
 		return {
