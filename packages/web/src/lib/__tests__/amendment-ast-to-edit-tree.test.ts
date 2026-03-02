@@ -570,6 +570,78 @@ describe("translateInstructionAstToEditTree", () => {
 		).toEqual(["a", "b", "c"]);
 	});
 
+	it("applies direct subinstruction subscope to child edits", () => {
+		const ast = parseInstructionAst(
+			"Section 132(f)(2) of the Internal Revenue Code of 1986 is amended—\n(1) in paragraph (2), by striking subparagraph (C).",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		let node = result.tree.children[0];
+		if (!node || node.type !== SemanticNodeType.Scope) {
+			throw new Error("Expected section scope.");
+		}
+		node = node.children[0];
+		if (!node || node.type !== SemanticNodeType.Scope) {
+			throw new Error("Expected subsection scope.");
+		}
+		node = node.children[0];
+		if (!node || node.type !== SemanticNodeType.Scope) {
+			throw new Error("Expected paragraph scope.");
+		}
+		expect(node.scope).toEqual({ kind: ScopeKind.Paragraph, label: "2" });
+
+		const editNode = node.children[0];
+		if (!editNode || editNode.type !== SemanticNodeType.Edit) {
+			throw new Error("Expected edit node.");
+		}
+		if (editNode.edit.kind !== UltimateEditKind.Strike) {
+			throw new Error("Expected strike edit.");
+		}
+		if (!("ref" in editNode.edit.target)) {
+			throw new Error("Expected structural strike target.");
+		}
+		expect(editNode.edit.target.ref.path).toEqual([
+			{ kind: ScopeKind.Subparagraph, label: "C" },
+		]);
+	});
+
+	it("keeps container path for singular structural targets", () => {
+		const ast = parseInstructionAst(
+			"Section 132(f)(2) of the Internal Revenue Code of 1986 is amended by striking subparagraph (D) of paragraph (1).",
+		);
+		const result = translateInstructionAstToEditTree(ast);
+
+		const queue = [...result.tree.children];
+		let strikeEdit: Extract<
+			(typeof queue)[number],
+			{ type: SemanticNodeType.Edit }
+		> | null = null;
+		while (queue.length > 0) {
+			const current = queue.shift();
+			if (!current) continue;
+			if (
+				current.type === SemanticNodeType.Edit &&
+				current.edit.kind === UltimateEditKind.Strike
+			) {
+				strikeEdit = current;
+				break;
+			}
+			if (current.type !== SemanticNodeType.Edit) {
+				queue.push(...current.children);
+			}
+		}
+		if (!strikeEdit || strikeEdit.edit.kind !== UltimateEditKind.Strike) {
+			throw new Error("Expected strike edit node.");
+		}
+		if (!("ref" in strikeEdit.edit.target)) {
+			throw new Error("Expected singular structural target.");
+		}
+		expect(strikeEdit.edit.target.ref.path).toEqual([
+			{ kind: ScopeKind.Paragraph, label: "1" },
+			{ kind: ScopeKind.Subparagraph, label: "D" },
+		]);
+	});
+
 	it("keeps plural structural strike targets for strike-insert edits", () => {
 		const ast = parseInstructionAst(
 			"Section 101 of title 10, United States Code, is amended by striking subsections (a) and (b) and inserting the following: “(a) New A. (b) New B.”.",

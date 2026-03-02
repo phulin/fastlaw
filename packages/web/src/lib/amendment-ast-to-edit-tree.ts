@@ -174,6 +174,9 @@ function translateSubinstruction(
 			}
 		}
 	}
+	const directScoped = parseSubscopeWrappers(node, localContext);
+	localWrappers.push(...directScoped.wrappers);
+	localContext = directScoped.context;
 
 	const wrappers = [...inheritedWrappers, ...localWrappers];
 	const nestedSubinstructions = findChild(
@@ -745,7 +748,7 @@ function parseTextLocation(
 }
 
 function parseSubscopeWrappers(
-	node: RuleAst<GrammarAstNodeType.SubHead>,
+	node: RuleAst,
 	context: TranslationContext,
 ): { wrappers: WrapperSpec[]; context: TranslationContext } {
 	const wrappers: WrapperSpec[] = [];
@@ -758,8 +761,9 @@ function parseSubscopeWrappers(
 			GrammarAstNodeType.SubLocationOrSub,
 		).map((child) => parseSubLocationOrSub(child, context));
 		const concrete = refs.filter((ref): ref is StructuralReference => !!ref);
-		if (concrete.length > 0) {
-			const mergedPath = mergeScopePaths(context.scopePath, concrete[0].path);
+		const scopedRef = mergeReferenceWithOptionalContainer(concrete);
+		if (scopedRef) {
+			const mergedPath = mergeScopePaths(context.scopePath, scopedRef.path);
 			const appended = mergedPath.slice(context.scopePath.length);
 			for (const selector of appended) {
 				wrappers.push({
@@ -777,7 +781,7 @@ function parseSubscopeWrappers(
 
 	const subscopePlural = findChild(node, GrammarAstNodeType.SubscopePlural);
 	if (subscopePlural) {
-		const refs = parsePluralScopeList(subscopePlural, context);
+		const refs = parsePluralScopeList(subscopePlural, nextContext);
 		if (refs.length > 0) {
 			const restriction: LocationRestriction = {
 				kind: LocationRestrictionKind.In,
@@ -942,14 +946,25 @@ function parseSubLocationOrPlural(
 	node: RuleAst<GrammarAstNodeType.SubLocationOrPlural>,
 	context: TranslationContext,
 ): StructuralReference[] {
-	const direct = parseStructuralReferenceFromNode(
-		findChild(node, GrammarAstNodeType.SubLocation),
-		context,
-	);
-	if (direct) return [direct];
+	const subLocations = findChildren(node, GrammarAstNodeType.SubLocation)
+		.map((subLocation) =>
+			parseStructuralReferenceFromNode(subLocation, context),
+		)
+		.filter((ref): ref is StructuralReference => !!ref);
 
 	const plural = findChild(node, GrammarAstNodeType.SubLocationsPlural);
-	if (!plural) return [];
+	if (!plural) {
+		const direct = subLocations[0];
+		if (!direct) return [];
+		const container = subLocations[1];
+		if (!container) return [direct];
+		return [
+			{
+				kind: direct.kind,
+				path: mergeScopePaths(container.path, direct.path),
+			},
+		];
+	}
 	const pluralKindNode = findChild(plural, GrammarAstNodeType.SubNamePlural);
 	const kind = pluralKindNode
 		? scopeKindFromPluralText(pluralKindNode.text)
@@ -963,15 +978,25 @@ function parseSubLocationOrPlural(
 		kind,
 		path: [{ kind, label }],
 	}));
-	const container = parseStructuralReferenceFromNode(
-		findChild(node, GrammarAstNodeType.SubLocation),
-		context,
-	);
+	const container = subLocations[0];
 	if (!container) return refs;
 	return refs.map((ref) => ({
 		kind: ref.kind,
 		path: mergeScopePaths(container.path, ref.path),
 	}));
+}
+
+function mergeReferenceWithOptionalContainer(
+	refs: StructuralReference[],
+): StructuralReference | null {
+	const target = refs[0];
+	if (!target) return null;
+	const container = refs[1];
+	if (!container) return target;
+	return {
+		kind: target.kind,
+		path: mergeScopePaths(container.path, target.path),
+	};
 }
 
 function expandPluralIds(
