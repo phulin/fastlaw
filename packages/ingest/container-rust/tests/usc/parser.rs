@@ -82,6 +82,46 @@ fn inserts_line_break_before_nested_outline_marker_after_colon() {
 }
 
 #[test]
+fn preserves_double_letter_subparagraph_markers_under_numbered_paragraphs() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t99">
+            <main>
+                <title identifier="/us/usc/t99">
+                    <section identifier="/us/usc/t99/s6724">
+                        <num value="6724">§ 6724.</num>
+                        <heading>Waiver; definitions and special rules</heading>
+                        <subsection identifier="/us/usc/t99/s6724/d">
+                            <num value="d">(d)</num>
+                            <paragraph identifier="/us/usc/t99/s6724/d/2">
+                                <num value="2">(2)</num>
+                                <heading>Payee statement</heading>
+                                <chapeau>The term “payee statement” means any statement required to be furnished under—</chapeau>
+                                <subparagraph identifier="/us/usc/t99/s6724/d/2/JJ">
+                                    <num value="JJ">(JJ)</num>
+                                    <content> section 6226(a)(2) (relating to statements relating to alternative to payment of imputed underpayment by partnership),</content>
+                                </subparagraph>
+                                <subparagraph identifier="/us/usc/t99/s6724/d/2/KK">
+                                    <num value="KK">(KK)</num>
+                                    <content> subsection (a)(2), (b)(2), or (c)(2) of section 6050Y (relating to returns relating to certain life insurance contract transactions).</content>
+                                </subparagraph>
+                            </paragraph>
+                        </subsection>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "99", "");
+    let section = result.sections.first().expect("section should exist");
+
+    assert!(section.body.contains("**(JJ)** section 6226(a)(2)"));
+    assert!(section
+        .body
+        .contains("**(KK)** subsection (a)(2), (b)(2), or (c)(2)"));
+    assert!(!section.body.contains("**(JJ)** 2 section"));
+}
+
+#[test]
 fn does_not_bold_internal_cross_references() {
     let xml = r#"<?xml version="1.0"?>
         <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t42">
@@ -92,7 +132,7 @@ fn does_not_bold_internal_cross_references() {
                         <heading>Test section</heading>
                         <subsection>
                             <num>(a)</num>
-                            <content>The plan shall comply with clause (B) and subsection (a) of this section.</content>
+                            <content>The plan shall comply with clause (B) and subsection (a) of this section, and section 6045(a) or (d).</content>
                         </subsection>
                     </section>
                 </title>
@@ -102,8 +142,34 @@ fn does_not_bold_internal_cross_references() {
     let result = parse_usc_xml(xml, "42", "");
     let section = result.sections.first().expect("section should exist");
     assert!(section.body.contains("clause (B) and subsection (a)"));
+    assert!(section.body.contains("section 6045(a) or (d)."));
     assert!(!section.body.contains("clause **(B)**"));
     assert!(!section.body.contains("subsection **(a)**"));
+    assert!(!section.body.contains("or **(d)**"));
+}
+
+#[test]
+fn excludes_footnote_ref_numbers_from_body_text() {
+    let xml = r#"<?xml version="1.0"?>
+        <uscDoc xmlns="http://xml.house.gov/schemas/uslm/1.0" identifier="/us/usc/t42">
+            <main>
+                <title identifier="/us/usc/t42">
+                    <section identifier="/us/usc/t42/s303">
+                        <num value="303">§ 303.</num>
+                        <heading>Test section</heading>
+                        <subsection>
+                            <num>(a)</num>
+                            <content>Alpha,<ref class="footnoteRef" idref="fn1">1</ref><note type="footnote" id="fn1"><num>1</num> So in original.</note> and Beta.</content>
+                        </subsection>
+                    </section>
+                </title>
+            </main>
+        </uscDoc>"#;
+
+    let result = parse_usc_xml(xml, "42", "");
+    let section = result.sections.first().expect("section should exist");
+    assert!(section.body.contains("Alpha, and Beta."));
+    assert!(!section.body.contains("Alpha,1"));
 }
 
 #[test]

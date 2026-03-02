@@ -84,6 +84,7 @@ export interface Env {
 	AI: Ai;
 	VECTOR_SEARCH_INDEX: Vectorize;
 	USC_DOWNLOAD_BASE: string;
+	GOVINFO_API_KEY: string;
 	CALLBACK_SECRET: string;
 	VECTOR_WORKFLOW: Workflow<VectorWorkflowParams>;
 	// CGA/MGL adapters (unhooked from worker, kept for future use)

@@ -10,6 +10,7 @@ pub mod mgl;
 pub mod nh;
 pub mod rigl;
 pub mod usc;
+pub mod uspl;
 pub mod vt;
 
 #[async_trait]
@@ -45,5 +46,6 @@ pub fn adapter_for(source: SourceKind) -> &'static (dyn SourceAdapter + Send + S
         SourceKind::Nh => &nh::adapter::NH_ADAPTER,
         SourceKind::Rigl => &rigl::adapter::RIGL_ADAPTER,
         SourceKind::Vt => &vt::adapter::VT_ADAPTER,
+        SourceKind::Uspl => &uspl::adapter::USPL_ADAPTER,
     }
 }

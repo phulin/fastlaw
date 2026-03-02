@@ -19,6 +19,8 @@ static LEVEL_NAME_PREFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+static CONJUNCTION_PREFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(and|or)\s+$").unwrap());
 static STANDALONE_BOLD_MARKER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\*\*\([^)]+\)\*\*$").unwrap());
 static LEVEL_SEGMENT_RE: LazyLock<Regex> =
@@ -261,9 +263,11 @@ enum AttrName {
     Topic = 2,
     Role = 3,
     Href = 4,
+    Type = 5,
+    Class = 6,
 }
 
-const ATTR_COUNT: usize = 5;
+const ATTR_COUNT: usize = 7;
 
 fn classify_attr(name: &[u8]) -> Option<AttrName> {
     match name {
@@ -272,6 +276,8 @@ fn classify_attr(name: &[u8]) -> Option<AttrName> {
         b"topic" => Some(AttrName::Topic),
         b"role" => Some(AttrName::Role),
         b"href" => Some(AttrName::Href),
+        b"type" => Some(AttrName::Type),
+        b"class" => Some(AttrName::Class),
         _ => None,
     }
 }
@@ -291,7 +297,8 @@ impl<'a> Attributes<'a> {
 
     fn load(&self) -> &[Option<Cow<'a, [u8]>>; ATTR_COUNT] {
         self.values.get_or_init(|| {
-            let mut values: [Option<Cow<'a, [u8]>>; ATTR_COUNT] = [None, None, None, None, None];
+            let mut values: [Option<Cow<'a, [u8]>>; ATTR_COUNT] =
+                [None, None, None, None, None, None, None];
             for attr in self.event.attributes().flatten() {
                 if let Some(name) = classify_attr(attr.key.as_ref()) {
                     values[name as usize] = Some(attr.value);
@@ -332,6 +339,7 @@ struct ParserState {
     // normalize_text), so the next text node knows to insert a space even if it has
     // no leading whitespace itself.
     text_had_trailing_ws: bool,
+    suppressed_text_depths: Vec<usize>,
 }
 
 impl ParserState {
@@ -349,6 +357,7 @@ impl ParserState {
             section_path_counts: HashMap::new(),
             section_key_counts: HashMap::new(),
             text_had_trailing_ws: false,
+            suppressed_text_depths: Vec::new(),
         }
     }
 
@@ -533,13 +542,26 @@ fn handle_start(state: &mut ParserState, e: &BytesStart<'_>) {
         }
 
         if current_tag == Some(Tag::Note) && mask & bit(Tag::QuotedContent) == 0 {
-            section.active_notes.push(ActiveNote {
-                depth: state.tag_stack.len(),
-                topic: attrs.get(AttrName::Topic),
-                role: attrs.get(AttrName::Role),
-                heading: String::new(),
-                text: String::new(),
-            });
+            let is_footnote = attrs
+                .get(AttrName::Type)
+                .is_some_and(|value| value.eq_ignore_ascii_case("footnote"));
+            if !is_footnote {
+                section.active_notes.push(ActiveNote {
+                    depth: state.tag_stack.len(),
+                    topic: attrs.get(AttrName::Topic),
+                    role: attrs.get(AttrName::Role),
+                    heading: String::new(),
+                    text: String::new(),
+                });
+            }
+        }
+
+        if current_tag == Some(Tag::Ref)
+            && attrs
+                .get(AttrName::Class)
+                .is_some_and(|value| value.eq_ignore_ascii_case("footnoteRef"))
+        {
+            state.suppressed_text_depths.push(state.tag_stack.len());
         }
 
         if current_tag == Some(Tag::Ref) {
@@ -607,6 +629,14 @@ fn handle_text<F>(state: &mut ParserState, raw_text: &str, emit: &mut F)
 where
     F: FnMut(USCStreamEvent),
 {
+    if state
+        .suppressed_text_depths
+        .last()
+        .is_some_and(|depth| state.tag_stack.len() >= *depth)
+    {
+        return;
+    }
+
     let text = normalize_text(raw_text);
     if text.is_empty() {
         return;
@@ -683,6 +713,13 @@ where
 
     if let Some(section) = &mut state.active_section {
         if current_tag == Some(Tag::Ref) {
+            if state
+                .suppressed_text_depths
+                .last()
+                .is_some_and(|depth| *depth == state.tag_stack.len())
+            {
+                state.suppressed_text_depths.pop();
+            }
             if let Some(open_ref) = state.open_refs.last() {
                 if open_ref.depth == state.tag_stack.len() {
                     let open_ref = state.open_refs.pop().unwrap();
@@ -1086,6 +1123,9 @@ fn normalize_body_fragment(text: &str) -> String {
             let open_paren_start = full.start() + prefix.as_str().len();
 
             if LEVEL_NAME_PREFIX_RE.is_match(&cleaned[..open_paren_start]) {
+                return full.as_str().to_string();
+            }
+            if CONJUNCTION_PREFIX_RE.is_match(&cleaned[..open_paren_start]) {
                 return full.as_str().to_string();
             }
 

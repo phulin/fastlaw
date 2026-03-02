@@ -103,3 +103,4 @@ CREATE INDEX IF NOT EXISTS idx_ingest_job_units_job
 
 -- Add FK from source_versions.root_node_id after nodes table exists
 -- (SQLite doesn't enforce FKs by default anyway)
+

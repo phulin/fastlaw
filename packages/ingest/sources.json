@@ -47,6 +47,14 @@
 			"doc_type": "statute",
 			"description": "Vermont state statutory law",
 			"root_url": "https://legislature.vermont.gov/statutes/"
+		},
+		"uspl": {
+			"name": "U.S. Public Laws",
+			"jurisdiction": "federal",
+			"region": "US",
+			"doc_type": "session_law",
+			"description": "United States Statutes at Large — public laws enacted by Congress",
+			"root_url": "https://api.govinfo.gov/collections/STATUTE/1999-01-01T00%3A00%3A00Z"
 		}
 	}
 }

@@ -9,6 +9,7 @@ pub enum SourceKind {
     Nh,
     Rigl,
     Vt,
+    Uspl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

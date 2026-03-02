@@ -417,9 +417,11 @@ app.post("/api/ingest/:source", async (c) => {
 						sourceId,
 						selectors: unitSelectors.length > 0 ? unitSelectors : undefined,
 						manualStartUrl:
-							manualStartUrl && manualStartUrl.length > 0
-								? manualStartUrl
-								: undefined,
+							sourceCode === "uspl"
+								? c.env.GOVINFO_API_KEY
+								: manualStartUrl && manualStartUrl.length > 0
+									? manualStartUrl
+									: undefined,
 						callbackBase,
 						callbackToken,
 					}),
