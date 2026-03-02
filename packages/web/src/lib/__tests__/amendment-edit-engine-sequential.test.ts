@@ -178,6 +178,26 @@ describe("sequential amendment edit engine", () => {
 			expectEffectToContainMarkedText(effect, "++new ++term appears");
 		});
 
+		it("supports Insert before anchor text with case-insensitive match", () => {
+			const tree: InstructionSemanticTree = {
+				type: SemanticNodeType.InstructionRoot,
+				targetSection: "1",
+				children: [
+					{
+						type: SemanticNodeType.Edit,
+						edit: {
+							kind: UltimateEditKind.Insert,
+							content: tp("new "),
+							before: { kind: SearchTargetKind.Text, text: tp("term") },
+						},
+					},
+				],
+			};
+			const effect = apply(tree, "TERM appears");
+			expect(effect.status).toBe("ok");
+			expectEffectToContainMarkedText(effect, "++new ++TERM appears");
+		});
+
 		it("supports StrikeInsert", () => {
 			const tree: InstructionSemanticTree = {
 				type: SemanticNodeType.InstructionRoot,
@@ -196,6 +216,35 @@ describe("sequential amendment edit engine", () => {
 			const effect = apply(tree, "old value");
 			expect(effect.status).toBe("ok");
 			expectEffectToContainMarkedText(effect, "~~old~~++new++ value");
+		});
+
+		it("supports StrikeInsert with case-insensitive strike match", () => {
+			const tree: InstructionSemanticTree = {
+				type: SemanticNodeType.InstructionRoot,
+				targetSection: "1",
+				children: [
+					{
+						type: SemanticNodeType.Edit,
+						edit: {
+							kind: UltimateEditKind.StrikeInsert,
+							strike: {
+								kind: SearchTargetKind.Text,
+								text: tp("2018 THROUGH 2025"),
+							},
+							insert: tp("BEGINNING AFTER 2017"),
+						},
+					},
+				],
+			};
+			const effect = apply(
+				tree,
+				"(j) Modifications for taxable years 2018 through 2025",
+			);
+			expect(effect.status).toBe("ok");
+			expectEffectToContainMarkedText(
+				effect,
+				"(j) Modifications for taxable years ~~2018 through 2025~~++BEGINNING AFTER 2017++",
+			);
 		});
 
 		it("supports Rewrite", () => {

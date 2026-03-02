@@ -24,4 +24,11 @@ describe("findAnchorSearchMatch", () => {
 		});
 		expect(match).toEqual({ index: 0, matchedText: "taxpayer" });
 	});
+
+	it("matches case-insensitively when requested", () => {
+		const match = findAnchorSearchMatch("Alpha Beta", "beta", {
+			caseInsensitive: true,
+		});
+		expect(match).toEqual({ index: 6, matchedText: "Beta" });
+	});
 });

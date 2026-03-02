@@ -348,6 +348,140 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 		expect(patches[0]?.insertedPlain).toContain("(a) Revised.");
 	});
 
+	it("plans text strikes through a structural target range", () => {
+		const model = buildCanonicalDocument(
+			"(a) for—alpha.\n(1) beta.\n(2) gamma.",
+		);
+		const nodes = [...model.nodesById.values()];
+		const aId =
+			nodes.find(
+				(node) =>
+					node.kind === "subsection" &&
+					node.label === "a" &&
+					node.path.length === 1,
+			)?.id ?? null;
+		const paragraph2Id =
+			nodes.find(
+				(node) =>
+					node.kind === "paragraph" &&
+					node.label === "2" &&
+					node.path.length === 2,
+			)?.id ?? null;
+		if (!aId || !paragraph2Id)
+			throw new Error("Expected subsection and paragraph targets.");
+
+		const operation: ResolvedInstructionOperation = {
+			operationIndex: 0,
+			nodeText:
+				'by striking "for—" and all that follows through the period at the end of paragraph (2)',
+			originalNodeText: null,
+			scopeContextTexts: [],
+			edit: {
+				kind: UltimateEditKind.Strike,
+				target: { kind: SearchTargetKind.Text, text: tp("for—") },
+				through: {
+					ref: {
+						kind: ScopeKind.Paragraph,
+						path: [{ kind: ScopeKind.Paragraph, label: "2" }],
+					},
+				},
+			},
+			addAtEnd: false,
+			redesignateMappingIndex: 0,
+			sentenceOrdinal: null,
+			atEndOnly: false,
+			hasMatterPrecedingTarget: false,
+			hasMatterFollowingTarget: false,
+			matterPrecedingRefKind: null,
+			matterPrecedingRefLabel: null,
+			matterFollowingRefKind: null,
+			matterFollowingRefLabel: null,
+			hasExplicitTargetPath: true,
+			targetPathText: "subsection:a",
+			resolvedTargetId: aId,
+			resolvedMatterPrecedingTargetId: null,
+			resolvedMatterFollowingTargetId: null,
+			resolvedThroughTargetId: paragraph2Id,
+			structuralStrikeMode: null,
+			resolvedStructuralTargetIds: [],
+			resolvedAnchorTargetId: null,
+			resolvedMoveFromIds: [],
+			resolvedMoveAnchorId: null,
+		};
+
+		const { patches } = planEdits(model, [operation], []);
+		expect(patches).toHaveLength(1);
+		expect(patches[0]?.deletedPlain).toBe("for—alpha.\n(1) beta.\n(2) gamma.");
+	});
+
+	it("plans text strike-insert through a structural target range", () => {
+		const model = buildCanonicalDocument(
+			"(a) for—alpha.\n(1) beta.\n(2) gamma.",
+		);
+		const nodes = [...model.nodesById.values()];
+		const aId =
+			nodes.find(
+				(node) =>
+					node.kind === "subsection" &&
+					node.label === "a" &&
+					node.path.length === 1,
+			)?.id ?? null;
+		const paragraph2Id =
+			nodes.find(
+				(node) =>
+					node.kind === "paragraph" &&
+					node.label === "2" &&
+					node.path.length === 2,
+			)?.id ?? null;
+		if (!aId || !paragraph2Id)
+			throw new Error("Expected subsection and paragraph targets.");
+
+		const operation: ResolvedInstructionOperation = {
+			operationIndex: 0,
+			nodeText:
+				'by striking "for—" and all that follows through the period at the end of paragraph (2) and inserting "for enabling revised policy."',
+			originalNodeText: null,
+			scopeContextTexts: [],
+			edit: {
+				kind: UltimateEditKind.StrikeInsert,
+				strike: { kind: SearchTargetKind.Text, text: tp("for—") },
+				through: {
+					ref: {
+						kind: ScopeKind.Paragraph,
+						path: [{ kind: ScopeKind.Paragraph, label: "2" }],
+					},
+				},
+				insert: tp("for enabling revised policy."),
+			},
+			addAtEnd: false,
+			redesignateMappingIndex: 0,
+			sentenceOrdinal: null,
+			atEndOnly: false,
+			hasMatterPrecedingTarget: false,
+			hasMatterFollowingTarget: false,
+			matterPrecedingRefKind: null,
+			matterPrecedingRefLabel: null,
+			matterFollowingRefKind: null,
+			matterFollowingRefLabel: null,
+			hasExplicitTargetPath: true,
+			targetPathText: "subsection:a",
+			resolvedTargetId: aId,
+			resolvedMatterPrecedingTargetId: null,
+			resolvedMatterFollowingTargetId: null,
+			resolvedThroughTargetId: paragraph2Id,
+			structuralStrikeMode: null,
+			resolvedStructuralTargetIds: [],
+			resolvedAnchorTargetId: null,
+			resolvedMoveFromIds: [],
+			resolvedMoveAnchorId: null,
+		};
+
+		const { patches } = planEdits(model, [operation], []);
+		expect(patches).toHaveLength(1);
+		expect(patches[0]?.deletedPlain).toBe("for—alpha.\n(1) beta.\n(2) gamma.");
+		expect(patches[0]?.insertedPlain).toContain("for enabling revised policy.");
+	});
+
 	it("applies StrikeInsert edits at each place when requested", () => {
 		const tree: InstructionSemanticTree = {
 			type: SemanticNodeType.InstructionRoot,
@@ -2971,6 +3105,56 @@ describe("applyAmendmentEditTreeToSection integration", () => {
 		expect(
 			applied.plainText.slice(headingSpan?.start ?? 0, headingSpan?.end ?? 0),
 		).toBe("(c) Enforcement");
+	});
+
+	it("inserts a single boundary space after trailing punctuation before word text", () => {
+		const punctuation = [",", ";", ":", ".", "!", "?"];
+		for (const mark of punctuation) {
+			const model: CanonicalDocument = {
+				plainText: "AlphaBeta",
+				spans: [{ type: "paragraph", start: 0, end: 9 }],
+				rootRange: { start: 0, end: 9, indent: null },
+				nodesById: new Map(),
+				rootNodeIds: [],
+				paragraphs: [],
+			};
+			const patch: PlannedPatch = {
+				operationIndex: 0,
+				start: 5,
+				end: 5,
+				insertAt: 5,
+				deletedPlain: "",
+				insertedPlain: mark,
+				insertedSpans: [],
+			};
+			const applied = applyPlannedPatchesTransaction(model, [patch]);
+			expect(applied.plainText).toBe(`Alpha${mark} Beta`);
+		}
+	});
+
+	it("does not insert boundary spaces before closing punctuation", () => {
+		const punctuation = [",", ";", ":", ".", "!", "?"];
+		for (const mark of punctuation) {
+			const model: CanonicalDocument = {
+				plainText: "Alpha)",
+				spans: [{ type: "paragraph", start: 0, end: 6 }],
+				rootRange: { start: 0, end: 6, indent: null },
+				nodesById: new Map(),
+				rootNodeIds: [],
+				paragraphs: [],
+			};
+			const patch: PlannedPatch = {
+				operationIndex: 0,
+				start: 5,
+				end: 5,
+				insertAt: 5,
+				deletedPlain: "",
+				insertedPlain: mark,
+				insertedSpans: [],
+			};
+			const applied = applyPlannedPatchesTransaction(model, [patch]);
+			expect(applied.plainText).toBe(`Alpha${mark})`);
+		}
 	});
 
 	it("applies HR1 sec. 10103 and 10104 semantic trees against the USC 7/2014 markdown fixture", () => {

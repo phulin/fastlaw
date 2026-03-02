@@ -49,6 +49,15 @@ interface StrikeHandlerArgs {
 		strikeText: string,
 		classificationOverrides?: ClassificationOverride[],
 	) => RegExp | null;
+	findAnchorSearchMatch: (
+		haystack: string,
+		needle: string,
+		options?: {
+			ignoreInHaystack?: RegExp;
+			ignoreInNeedle?: RegExp;
+			caseInsensitive?: boolean;
+		},
+	) => { index: number; matchedText: string } | null;
 	findAllOccurrences: (haystack: string, needle: string) => number[];
 	normalizeInlineDeletionRange: (
 		text: string,
@@ -73,6 +82,7 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 		findPunctuationIndexAtEnd,
 		resolveInnerLocationRangeInScope,
 		computeFallbackRegexSearch,
+		findAnchorSearchMatch,
 		findAllOccurrences,
 		normalizeInlineDeletionRange,
 	} = args;
@@ -94,6 +104,10 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 		operation.edit.through && "punctuation" in operation.edit.through
 			? operation.edit.through.punctuation
 			: undefined;
+	const hasStructuralThroughTarget =
+		operation.resolvedThroughTargetId !== null &&
+		throughContent === null &&
+		throughPunctuation === undefined;
 
 	if (!strikingContent && strikePunctuation && !throughContent) {
 		const punctuation = punctuationText(strikePunctuation);
@@ -181,11 +195,37 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 		return;
 	}
 
-	let localStart =
+	const findFirstMatch = (
+		needle: string,
+		fromIndex = 0,
+	): { index: number; matchedText: string } | null => {
+		const searchText = scopedText.slice(fromIndex);
+		const match = findAnchorSearchMatch(searchText, needle, {
+			caseInsensitive: true,
+		});
+		return match
+			? { index: fromIndex + match.index, matchedText: match.matchedText }
+			: null;
+	};
+	const findLastMatch = (
+		needle: string,
+	): { index: number; matchedText: string } | null => {
+		let fromIndex = 0;
+		let lastMatch: { index: number; matchedText: string } | null = null;
+		while (fromIndex < scopedText.length) {
+			const match = findFirstMatch(needle, fromIndex);
+			if (!match) break;
+			lastMatch = match;
+			fromIndex = match.index + 1;
+		}
+		return lastMatch;
+	};
+	const strikeMatch =
 		operation.atEndOnly || atEndSearch
-			? scopedText.lastIndexOf(strikingContent)
-			: scopedText.indexOf(strikingContent);
-	let resolvedStrikingContent = strikingContent;
+			? findLastMatch(strikingContent)
+			: findFirstMatch(strikingContent);
+	let localStart = strikeMatch?.index ?? -1;
+	let resolvedStrikingContent = strikeMatch?.matchedText ?? strikingContent;
 
 	if (
 		localStart < 0 &&
@@ -212,7 +252,12 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 	attempt.searchIndex = localStart >= 0 ? range.start + localStart : null;
 	if (localStart < 0) return;
 
-	if (eachPlaceItAppears && !throughContent && !throughPunctuation) {
+	if (
+		eachPlaceItAppears &&
+		!throughContent &&
+		!throughPunctuation &&
+		!hasStructuralThroughTarget
+	) {
 		for (const occurrenceIndex of findAllOccurrences(
 			scopedText,
 			resolvedStrikingContent,
@@ -232,13 +277,14 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 	}
 
 	let localEnd = localStart + resolvedStrikingContent.length;
+	let structuralThroughEnd: number | null = null;
 	if (throughContent) {
-		const throughStart = scopedText.indexOf(
+		const throughMatch = findFirstMatch(
 			throughContent,
 			localStart + resolvedStrikingContent.length,
 		);
-		if (throughStart < 0) return;
-		localEnd = throughStart + throughContent.length;
+		if (!throughMatch) return;
+		localEnd = throughMatch.index + throughMatch.matchedText.length;
 	}
 	if (throughPunctuation) {
 		const punctuation = punctuationText(throughPunctuation);
@@ -249,10 +295,21 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 		if (punctuationIndex < 0) return;
 		localEnd = punctuationIndex + punctuation.length;
 	}
+	if (hasStructuralThroughTarget) {
+		const throughRange = getScopeRangeFromNodeId(
+			model,
+			operation.resolvedThroughTargetId,
+		);
+		if (!throughRange) return;
+		structuralThroughEnd = throughRange.end;
+	}
 
 	let patchStart = range.start + localStart;
-	let patchEnd = range.start + localEnd;
-	if (throughContent || throughPunctuation) {
+	let patchEnd =
+		structuralThroughEnd !== null
+			? Math.max(range.start + localEnd, structuralThroughEnd)
+			: range.start + localEnd;
+	if (throughContent || throughPunctuation || structuralThroughEnd !== null) {
 		const beforeChar = plainText[patchStart - 1] ?? "";
 		const afterChar = plainText[patchEnd] ?? "";
 		if (patchStart === 0 && afterChar === " ") {

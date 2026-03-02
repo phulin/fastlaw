@@ -1086,6 +1086,7 @@ function planPatchForOperation(
 				formatReplacementContent,
 				boundaryAwareReplacementSuffix,
 				computeFallbackRegexSearch,
+				findAnchorSearchMatch,
 				findAllOccurrences,
 			});
 			break;
@@ -1123,6 +1124,7 @@ function planPatchForOperation(
 				findPunctuationIndexAtEnd,
 				resolveInnerLocationRangeInScope,
 				computeFallbackRegexSearch,
+				findAnchorSearchMatch,
 				findAllOccurrences,
 				normalizeInlineDeletionRange,
 			});

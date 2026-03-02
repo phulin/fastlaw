@@ -40,6 +40,7 @@ interface InsertHandlerArgs {
 		options?: {
 			ignoreInHaystack?: RegExp;
 			ignoreInNeedle?: RegExp;
+			caseInsensitive?: boolean;
 		},
 	) => { index: number; matchedText: string } | null;
 	computeFallbackAnchorRegexSearch: (anchorText: string) => RegExp | null;
@@ -93,7 +94,11 @@ export function handleInsertEdit(args: InsertHandlerArgs): void {
 		let anchorStart: number | null = null;
 		let resolvedAnchor: string | null = translatedAnchor;
 		if (translatedAnchor) {
-			let localIndex = scopedText.indexOf(translatedAnchor);
+			const baseMatch = findAnchorSearchMatch(scopedText, translatedAnchor, {
+				caseInsensitive: true,
+			});
+			let localIndex = baseMatch?.index ?? -1;
+			if (baseMatch) resolvedAnchor = baseMatch.matchedText;
 			if (localIndex < 0) {
 				const ignoredTextMatch = findAnchorSearchMatch(
 					scopedText,
@@ -101,6 +106,7 @@ export function handleInsertEdit(args: InsertHandlerArgs): void {
 					{
 						ignoreInHaystack: INSIDE_WORD_HYPHEN_RE,
 						ignoreInNeedle: INSIDE_WORD_HYPHEN_RE,
+						caseInsensitive: true,
 					},
 				);
 				if (ignoredTextMatch) {
@@ -130,8 +136,11 @@ export function handleInsertEdit(args: InsertHandlerArgs): void {
 		} else {
 			const extracted = extractAnchor(operation.nodeText, "before");
 			if (extracted) {
-				const localIndex = scopedText.indexOf(extracted);
-				attempt.searchText = extracted;
+				const match = findAnchorSearchMatch(scopedText, extracted, {
+					caseInsensitive: true,
+				});
+				const localIndex = match?.index ?? -1;
+				attempt.searchText = match?.matchedText ?? extracted;
 				attempt.searchTextKind = "anchor_before";
 				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
 				if (localIndex >= 0) anchorStart = range.start + localIndex;
@@ -166,7 +175,11 @@ export function handleInsertEdit(args: InsertHandlerArgs): void {
 		let anchorEnd: number | null = null;
 		let resolvedAnchor: string | null = translatedAnchor;
 		if (translatedAnchor) {
-			let localIndex = scopedText.indexOf(translatedAnchor);
+			const baseMatch = findAnchorSearchMatch(scopedText, translatedAnchor, {
+				caseInsensitive: true,
+			});
+			let localIndex = baseMatch?.index ?? -1;
+			if (baseMatch) resolvedAnchor = baseMatch.matchedText;
 			if (localIndex < 0) {
 				const ignoredTextMatch = findAnchorSearchMatch(
 					scopedText,
@@ -174,6 +187,7 @@ export function handleInsertEdit(args: InsertHandlerArgs): void {
 					{
 						ignoreInHaystack: INSIDE_WORD_HYPHEN_RE,
 						ignoreInNeedle: INSIDE_WORD_HYPHEN_RE,
+						caseInsensitive: true,
 					},
 				);
 				if (ignoredTextMatch) {
@@ -208,8 +222,11 @@ export function handleInsertEdit(args: InsertHandlerArgs): void {
 		} else {
 			const extracted = extractAnchor(operation.nodeText, "after");
 			if (extracted) {
-				const localIndex = scopedText.indexOf(extracted);
-				attempt.searchText = extracted;
+				const match = findAnchorSearchMatch(scopedText, extracted, {
+					caseInsensitive: true,
+				});
+				const localIndex = match?.index ?? -1;
+				attempt.searchText = match?.matchedText ?? extracted;
 				attempt.searchTextKind = "anchor_after";
 				attempt.searchIndex = localIndex >= 0 ? range.start + localIndex : null;
 				if (localIndex >= 0) {

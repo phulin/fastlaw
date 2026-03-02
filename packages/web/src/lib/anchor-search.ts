@@ -6,6 +6,7 @@ export interface AnchorSearchMatch {
 export interface AnchorSearchOptions {
 	ignoreInHaystack?: RegExp;
 	ignoreInNeedle?: RegExp;
+	caseInsensitive?: boolean;
 }
 
 interface ProjectedText {
@@ -87,7 +88,13 @@ export function findAnchorSearchMatch(
 
 	if (projectedNeedle.text.length === 0) return null;
 
-	const projectedIndex = projectedHaystack.text.indexOf(projectedNeedle.text);
+	const projectedHaystackText = options.caseInsensitive
+		? projectedHaystack.text.toLocaleLowerCase()
+		: projectedHaystack.text;
+	const projectedNeedleText = options.caseInsensitive
+		? projectedNeedle.text.toLocaleLowerCase()
+		: projectedNeedle.text;
+	const projectedIndex = projectedHaystackText.indexOf(projectedNeedleText);
 	if (projectedIndex < 0) return null;
 
 	const start = projectedHaystack.sourceIndexes[projectedIndex];

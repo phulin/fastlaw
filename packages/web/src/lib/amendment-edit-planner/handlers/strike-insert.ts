@@ -70,6 +70,15 @@ interface StrikeInsertHandlerArgs {
 		strikeText: string,
 		classificationOverrides?: ClassificationOverride[],
 	) => RegExp | null;
+	findAnchorSearchMatch: (
+		haystack: string,
+		needle: string,
+		options?: {
+			ignoreInHaystack?: RegExp;
+			ignoreInNeedle?: RegExp;
+			caseInsensitive?: boolean;
+		},
+	) => { index: number; matchedText: string } | null;
 	findAllOccurrences: (haystack: string, needle: string) => number[];
 }
 
@@ -93,6 +102,7 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		formatReplacementContent,
 		boundaryAwareReplacementSuffix,
 		computeFallbackRegexSearch,
+		findAnchorSearchMatch,
 		findAllOccurrences,
 	} = args;
 	if (!range) return;
@@ -123,6 +133,10 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		operation.edit.through && "punctuation" in operation.edit.through
 			? operation.edit.through.punctuation
 			: undefined;
+	const hasStructuralThroughTarget =
+		operation.resolvedThroughTargetId !== null &&
+		throughContent === null &&
+		throughPunctuation === undefined;
 	const normalizeBoundaryNewlines = (
 		insertedText: string,
 		start: number,
@@ -282,11 +296,37 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		return;
 	}
 
-	let localIndex =
+	const findFirstMatch = (
+		needle: string,
+		fromIndex = 0,
+	): { index: number; matchedText: string } | null => {
+		const searchText = scopedText.slice(fromIndex);
+		const match = findAnchorSearchMatch(searchText, needle, {
+			caseInsensitive: true,
+		});
+		return match
+			? { index: fromIndex + match.index, matchedText: match.matchedText }
+			: null;
+	};
+	const findLastMatch = (
+		needle: string,
+	): { index: number; matchedText: string } | null => {
+		let fromIndex = 0;
+		let lastMatch: { index: number; matchedText: string } | null = null;
+		while (fromIndex < scopedText.length) {
+			const match = findFirstMatch(needle, fromIndex);
+			if (!match) break;
+			lastMatch = match;
+			fromIndex = match.index + 1;
+		}
+		return lastMatch;
+	};
+	const strikeMatch =
 		operation.atEndOnly || atEndSearch
-			? scopedText.lastIndexOf(strikingContent)
-			: scopedText.indexOf(strikingContent);
-	let resolvedStrikingContent = strikingContent;
+			? findLastMatch(strikingContent)
+			: findFirstMatch(strikingContent);
+	let localIndex = strikeMatch?.index ?? -1;
+	let resolvedStrikingContent = strikeMatch?.matchedText ?? strikingContent;
 	let resolvedReplacementContentText = replacementContent.text;
 
 	if (localIndex < 0 && strikingContent) {
@@ -327,7 +367,12 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		text: resolvedReplacementContentText,
 	};
 
-	if (eachPlaceItAppears && !throughContent && !throughPunctuation) {
+	if (
+		eachPlaceItAppears &&
+		!throughContent &&
+		!throughPunctuation &&
+		!hasStructuralThroughTarget
+	) {
 		for (const occurrenceIndex of findAllOccurrences(
 			scopedText,
 			resolvedStrikingContent,
@@ -363,13 +408,15 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 
 	const patchStart = range.start + localIndex;
 	let patchEnd = patchStart + resolvedStrikingContent.length;
+	let structuralThroughEnd: number | null = null;
 	if (throughContent) {
-		const throughStart = scopedText.indexOf(
+		const throughMatch = findFirstMatch(
 			throughContent,
 			localIndex + resolvedStrikingContent.length,
 		);
-		if (throughStart < 0) return;
-		patchEnd = range.start + throughStart + throughContent.length;
+		if (!throughMatch) return;
+		patchEnd =
+			range.start + throughMatch.index + throughMatch.matchedText.length;
 	}
 	if (throughPunctuation) {
 		const punctuation = punctuationText(throughPunctuation);
@@ -379,6 +426,15 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		);
 		if (punctuationIndex < 0) return;
 		patchEnd = range.start + punctuationIndex + punctuation.length;
+	}
+	if (hasStructuralThroughTarget) {
+		const throughRange = getScopeRangeFromNodeId(
+			model,
+			operation.resolvedThroughTargetId,
+		);
+		if (!throughRange) return;
+		structuralThroughEnd = throughRange.end;
+		patchEnd = Math.max(patchEnd, structuralThroughEnd);
 	}
 	const formattedReplacement = formatStrikeInsertReplacementText({
 		model,

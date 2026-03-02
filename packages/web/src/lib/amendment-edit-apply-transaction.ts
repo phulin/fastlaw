@@ -17,6 +17,7 @@ const CLOSING_PUNCTUATION = new Set([
 	"]",
 	"}",
 ]);
+const TRAILING_SPACE_PUNCTUATION = new Set([",", ";", ":", ".", "!", "?"]);
 
 function isWordLike(value: string): boolean {
 	return /^[A-Za-z0-9]$/.test(value);
@@ -50,30 +51,31 @@ function shouldInsertPrefixSpace(
 	leftChar: string | null,
 	insertedFirstChar: string | null,
 ): boolean {
-	if (!leftChar || !insertedFirstChar) return false;
-	if (CLOSING_PUNCTUATION.has(insertedFirstChar)) return false;
-	if (OPENING_PUNCTUATION.has(leftChar)) return false;
-	if (
-		(isWordLike(leftChar) || leftChar === ")") &&
-		isWordLike(insertedFirstChar)
-	) {
-		return true;
-	}
-	if (insertedFirstChar === "(" && (isWordLike(leftChar) || leftChar === ")")) {
-		return true;
-	}
-	return false;
+	return shouldInsertBoundarySpace(leftChar, insertedFirstChar);
 }
 
 function shouldInsertSuffixSpace(
 	insertedLastChar: string | null,
 	rightChar: string | null,
 ): boolean {
-	if (!insertedLastChar || !rightChar) return false;
+	return shouldInsertBoundarySpace(insertedLastChar, rightChar);
+}
+
+function shouldInsertBoundarySpace(
+	leftChar: string | null,
+	rightChar: string | null,
+): boolean {
+	if (!leftChar || !rightChar) return false;
 	if (CLOSING_PUNCTUATION.has(rightChar)) return false;
-	if (OPENING_PUNCTUATION.has(insertedLastChar)) return false;
+	if (OPENING_PUNCTUATION.has(leftChar)) return false;
+	if (
+		TRAILING_SPACE_PUNCTUATION.has(leftChar) &&
+		(isWordLike(rightChar) || rightChar === "(")
+	) {
+		return true;
+	}
 	return (
-		(isWordLike(insertedLastChar) || insertedLastChar === ")") &&
+		(isWordLike(leftChar) || leftChar === ")") &&
 		(isWordLike(rightChar) || rightChar === "(")
 	);
 }
