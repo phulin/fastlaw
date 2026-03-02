@@ -131,7 +131,10 @@ fn parses_section_heading() {
         r#"<section><num>1.</num><heading>Short Title</heading><content>This Act may be cited as the Test Act.</content></section>"#,
     );
     let law = parse_single(&xml).expect("law");
-    let heading = law.blocks.iter().find(|b| matches!(b, Block::Heading { .. }));
+    let heading = law
+        .blocks
+        .iter()
+        .find(|b| matches!(b, Block::Heading { .. }));
     assert!(heading.is_some(), "should have a heading block");
     if let Some(Block::Heading { level, inlines }) = heading {
         assert_eq!(*level, 3);
@@ -154,7 +157,10 @@ fn parses_subsection_as_outline() {
         r#"<subsection><num>(a)</num><content>General rule.</content></subsection>"#,
     );
     let law = parse_single(&xml).expect("law");
-    let outline = law.blocks.iter().find(|b| matches!(b, Block::Outline { .. }));
+    let outline = law
+        .blocks
+        .iter()
+        .find(|b| matches!(b, Block::Outline { .. }));
     assert!(outline.is_some(), "should have an outline block");
     if let Some(Block::Outline { marker, .. }) = outline {
         assert_eq!(marker, "(a)");
@@ -180,10 +186,15 @@ fn converts_usc_ref_to_link() {
     let law = parse_single(&xml).expect("law");
     let has_link = law.blocks.iter().any(|b| {
         let inlines = match b {
-            Block::Para(i) | Block::Heading { inlines: i, .. } | Block::Outline { inlines: i, .. } | Block::Action(i) => i,
+            Block::Para(i)
+            | Block::Heading { inlines: i, .. }
+            | Block::Outline { inlines: i, .. }
+            | Block::Action(i) => i,
             Block::Quoted(_) => return false,
         };
-        inlines.iter().any(|i| matches!(i, Inline::Link { href, .. } if href == "/usc/title-5/section-552"))
+        inlines
+            .iter()
+            .any(|i| matches!(i, Inline::Link { href, .. } if href == "/usc/title-5/section-552"))
     });
     assert!(has_link, "should convert USC href to internal link");
 }
@@ -197,7 +208,10 @@ fn non_usc_ref_becomes_text() {
     let law = parse_single(&xml).expect("law");
     let has_any_link = law.blocks.iter().any(|b| {
         let inlines = match b {
-            Block::Para(i) | Block::Heading { inlines: i, .. } | Block::Outline { inlines: i, .. } | Block::Action(i) => i,
+            Block::Para(i)
+            | Block::Heading { inlines: i, .. }
+            | Block::Outline { inlines: i, .. }
+            | Block::Action(i) => i,
             Block::Quoted(_) => return false,
         };
         inlines.iter().any(|i| matches!(i, Inline::Link { .. }))
@@ -217,26 +231,30 @@ fn skips_legislative_history() {
         .blocks
         .iter()
         .flat_map(|b| match b {
-            Block::Para(i) | Block::Heading { inlines: i, .. } | Block::Outline { inlines: i, .. } | Block::Action(i) => {
-                i.iter().map(|inline| match inline {
+            Block::Para(i)
+            | Block::Heading { inlines: i, .. }
+            | Block::Outline { inlines: i, .. }
+            | Block::Action(i) => i
+                .iter()
+                .map(|inline| match inline {
                     Inline::Text(t) => t.clone(),
                     Inline::Link { text, .. } => text.clone(),
-                }).collect::<Vec<_>>()
-            }
+                })
+                .collect::<Vec<_>>(),
             Block::Quoted(_) => vec![],
         })
         .collect();
-    assert!(!all_text.contains("This should be ignored"), "legislativeHistory should be skipped");
+    assert!(
+        !all_text.contains("This should be ignored"),
+        "legislativeHistory should be skipped"
+    );
 }
 
 // ── Markdown rendering ────────────────────────────────────────────────────────
 
 #[test]
 fn renders_para_as_plain_text() {
-    let xml = wrap_law(
-        "",
-        r#"<enactingFormula>Be it enacted.</enactingFormula>"#,
-    );
+    let xml = wrap_law("", r#"<enactingFormula>Be it enacted.</enactingFormula>"#);
     let law = parse_single(&xml).expect("law");
     let md = law_to_markdown(&law);
     assert!(md.contains("Be it enacted."), "md: {md}");
@@ -244,10 +262,7 @@ fn renders_para_as_plain_text() {
 
 #[test]
 fn renders_heading_level_3() {
-    let xml = wrap_law(
-        "",
-        r#"<section><heading>My Section</heading></section>"#,
-    );
+    let xml = wrap_law("", r#"<section><heading>My Section</heading></section>"#);
     let law = parse_single(&xml).expect("law");
     let md = law_to_markdown(&law);
     assert!(md.contains("### My Section"), "md: {md}");

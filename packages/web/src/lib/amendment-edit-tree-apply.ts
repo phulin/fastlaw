@@ -124,6 +124,7 @@ export function applyAmendmentEditTreeToSection(
 	return {
 		status: "ok",
 		sectionPath: args.sectionPath,
+		finalDocument: execution.document,
 		renderModel,
 		segments: [{ kind: "unchanged", text: workingText }],
 		changes,

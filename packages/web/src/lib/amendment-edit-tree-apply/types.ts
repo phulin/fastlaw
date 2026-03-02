@@ -79,6 +79,8 @@ export interface AmendmentApplySummary {
 export interface AmendmentEffect {
 	status: "ok" | "unsupported";
 	sectionPath: string;
+	/** The canonical document after applying this instruction's edits. Present only when status is "ok". */
+	finalDocument?: CanonicalDocument;
 	renderModel: {
 		plainText: string;
 		spans: FormattingSpan[];

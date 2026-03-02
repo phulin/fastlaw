@@ -94,11 +94,12 @@ const sectionKeyForCache = (
 
 const instructionKeyForCache = (args: {
 	sectionPath: string;
+	basePlainText: string;
 	instructionText: string;
 	treeSignature: string;
 	sourceVersionId: string;
 }): string =>
-	`${args.sectionPath}\u0000${normalizeInstructionText(args.instructionText)}\u0000${args.treeSignature}\u0000${args.sourceVersionId}`;
+	`${args.sectionPath}\u0000${args.basePlainText}\u0000${normalizeInstructionText(args.instructionText)}\u0000${args.treeSignature}\u0000${args.sourceVersionId}`;
 
 export const buildPageItemsFromParagraphs = async ({
 	paragraphs,
@@ -116,6 +117,7 @@ export const buildPageItemsFromParagraphs = async ({
 	const defaultCodeReferenceByParagraph =
 		discoverTitleScopedCodeReferenceDefaults(paragraphs);
 	const sectionPathByInstructionIndex = new Map<number, string>();
+	const instructionCountBySectionPath = new Map<string, number>();
 	const unresolvedPaths: string[] = [];
 	const translatedEditTreeByInstructionIndex = new Map<
 		number,
@@ -148,6 +150,10 @@ export const buildPageItemsFromParagraphs = async ({
 		);
 		if (!sectionPath) continue;
 		sectionPathByInstructionIndex.set(index, sectionPath);
+		instructionCountBySectionPath.set(
+			sectionPath,
+			(instructionCountBySectionPath.get(sectionPath) ?? 0) + 1,
+		);
 		if (!sectionBodyCache.has(sectionPath)) {
 			unresolvedPaths.push(sectionPath);
 		}
@@ -183,6 +189,11 @@ export const buildPageItemsFromParagraphs = async ({
 		}
 	}
 
+	// Tracks the latest post-amendment canonical document for each section, so
+	// that multiple instructions targeting the same section apply on top of each
+	// other in document order rather than each starting from the original text.
+	const accumulatedDocBySectionPath = new Map<string, CanonicalDocument>();
+
 	const pageItems: { item: PageItem; pageNumber: number }[] = [];
 	for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
 		if (instructionParagraphIndexes.has(paragraphIndex)) {
@@ -217,41 +228,57 @@ export const buildPageItemsFromParagraphs = async ({
 				const treeSignature =
 					treeSignatureByInstructionIndex.get(instructionIndex) ??
 					JSON.stringify(translatedEditTree.tree);
+				// Sections targeted by multiple instructions use the accumulated doc
+				// as base, so their cache key must include the base text to stay
+				// coherent. Single-instruction sections are unaffected.
+				const hasMultipleInstructions =
+					(instructionCountBySectionPath.get(sectionPath) ?? 0) > 1;
+				const accumulatedDoc = accumulatedDocBySectionPath.get(sectionPath);
+				const basePlainText = accumulatedDoc?.plainText ?? sectionBodyText;
 				const instructionCacheKey = instructionKeyForCache({
 					sectionPath,
+					basePlainText,
 					instructionText,
 					treeSignature,
 					sourceVersionId,
 				});
 				const cachedEffect =
-					caches?.amendmentEffectByInstructionKey?.get(instructionCacheKey);
+					!hasMultipleInstructions || !accumulatedDoc
+						? caches?.amendmentEffectByInstructionKey?.get(instructionCacheKey)
+						: undefined;
 				if (cachedEffect) {
 					amendmentEffect = cachedEffect;
 					if (perfStats) perfStats.effectCacheHits += 1;
 				} else {
 					if (perfStats) perfStats.effectCacheMisses += 1;
-					const sectionCacheKey = sectionKeyForCache(
-						sectionPath,
-						sectionBodyText,
-					);
-					let initialDocument =
-						caches?.canonicalDocumentBySectionKey?.get(sectionCacheKey);
-					if (!initialDocument) {
-						initialDocument = buildCanonicalDocument(sectionBodyText);
-						caches?.canonicalDocumentBySectionKey?.set(
-							sectionCacheKey,
-							initialDocument,
+					let initialDocument: CanonicalDocument;
+					if (accumulatedDoc) {
+						initialDocument = accumulatedDoc;
+					} else {
+						const sectionCacheKey = sectionKeyForCache(
+							sectionPath,
+							sectionBodyText,
 						);
-						if (perfStats) perfStats.canonicalCacheMisses += 1;
-					} else if (perfStats) {
-						perfStats.canonicalCacheHits += 1;
+						const cachedDoc =
+							caches?.canonicalDocumentBySectionKey?.get(sectionCacheKey);
+						if (cachedDoc) {
+							initialDocument = cachedDoc;
+							if (perfStats) perfStats.canonicalCacheHits += 1;
+						} else {
+							initialDocument = buildCanonicalDocument(sectionBodyText);
+							caches?.canonicalDocumentBySectionKey?.set(
+								sectionCacheKey,
+								initialDocument,
+							);
+							if (perfStats) perfStats.canonicalCacheMisses += 1;
+						}
 					}
 
 					const start = performance.now();
 					amendmentEffect = applyAmendmentEditTreeToSection({
 						tree: translatedEditTree.tree,
 						sectionPath,
-						sectionBody: sectionBodyText,
+						sectionBody: basePlainText,
 						initialDocument,
 						instructionText,
 						classificationOverrides,
@@ -260,10 +287,21 @@ export const buildPageItemsFromParagraphs = async ({
 						perfStats.applyCallCount += 1;
 						perfStats.applyTotalMs += performance.now() - start;
 					}
-					caches?.amendmentEffectByInstructionKey?.set(
-						instructionCacheKey,
-						amendmentEffect,
-					);
+					if (
+						amendmentEffect.status === "ok" &&
+						amendmentEffect.finalDocument
+					) {
+						accumulatedDocBySectionPath.set(
+							sectionPath,
+							amendmentEffect.finalDocument,
+						);
+					}
+					if (!hasMultipleInstructions || !accumulatedDoc) {
+						caches?.amendmentEffectByInstructionKey?.set(
+							instructionCacheKey,
+							amendmentEffect,
+						);
+					}
 				}
 			} else if (sectionPath && sectionBodyText.length > 0) {
 				amendmentEffect = buildUnsupportedEffect(sectionPath, sectionBodyText);

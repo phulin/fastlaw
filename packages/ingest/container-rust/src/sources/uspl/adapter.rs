@@ -208,4 +208,3 @@ fn congress_years(congress: u32) -> String {
     let start = 1787 + congress as u32 * 2;
     format!("{}–{}", start, start + 1)
 }
-
