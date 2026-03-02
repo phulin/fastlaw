@@ -355,7 +355,7 @@ function materializeEditsFromPatches(
 		const insertAt = patch.insertAt;
 
 		if (totalInsertedLength > 0) {
-			workingText = `${workingText.slice(0, insertAt)}${outsidePrefixPlain}${insertedPrefixPlain}${insertedPlain}${insertedSuffixPlain}${outsideSuffixPlain}${workingText.slice(insertAt)}`;
+			const rightContextTextBeforeInsert = workingText.slice(insertAt);
 			const insertedHasParagraphs = insertedSpans.some(
 				(span) => span.type === "paragraph",
 			);
@@ -368,6 +368,10 @@ function materializeEditsFromPatches(
 					(left, right) => left.start - right.start || left.end - right.end,
 				);
 			const firstInsertedParagraph = insertedParagraphs[0];
+			const lastInsertedParagraph =
+				insertedParagraphs.length > 0
+					? insertedParagraphs[insertedParagraphs.length - 1]
+					: undefined;
 			const firstInsertedParagraphText =
 				firstInsertedParagraph &&
 				firstInsertedParagraph.end > firstInsertedParagraph.start
@@ -384,6 +388,21 @@ function materializeEditsFromPatches(
 				firstInsertedParagraph?.start === 0 &&
 				firstInsertedParagraphText.trim().length > 0 &&
 				!isStructuralMarkerParagraph(firstInsertedParagraphText);
+			const rightContextLeadingChar = rightContextTextBeforeInsert[0] ?? "";
+			const rightContextStartsWithStructuralMarker =
+				/^\s*\([A-Za-z0-9ivxIVX]+\)/.test(rightContextTextBeforeInsert);
+			const replacementStartsAtLineBoundary =
+				deletedLength > 0 && startsAtLineBoundary(workingText, deleteStart);
+			const preserveTrailingContinuationInLastInsertedParagraph =
+				insertedHasParagraphs &&
+				replacementStartsAtLineBoundary &&
+				insertedPlain.length > 0 &&
+				!insertedPlain.endsWith("\n") &&
+				rightContextLeadingChar.length > 0 &&
+				rightContextLeadingChar !== "\n" &&
+				lastInsertedParagraph !== undefined &&
+				!rightContextStartsWithStructuralMarker;
+			workingText = `${workingText.slice(0, insertAt)}${outsidePrefixPlain}${insertedPrefixPlain}${insertedPlain}${insertedSuffixPlain}${outsideSuffixPlain}${workingText.slice(insertAt)}`;
 			workingSpans = shouldSplitContainerSpans
 				? splitContainerSpansAroundInsertion(
 						workingSpans,
@@ -429,6 +448,26 @@ function materializeEditsFromPatches(
 				workingSpans.push(
 					...shiftInsertedSpans(effectiveInsertedSpans, shiftedInsertStart),
 				);
+				if (
+					preserveTrailingContinuationInLastInsertedParagraph &&
+					lastInsertedParagraph !== undefined
+				) {
+					const mergedParagraphStart =
+						shiftedInsertStart + lastInsertedParagraph.start;
+					const insertionBoundary = shiftedInsertStart + insertedTotalLength;
+					const rightBoundaryMax = insertAt + totalInsertedLength;
+					workingSpans = workingSpans.map((span) => {
+						if (
+							(span.type === "paragraph" || span.type === "heading") &&
+							span.start >= insertionBoundary &&
+							span.start <= rightBoundaryMax &&
+							span.end > span.start
+						) {
+							return { ...span, start: mergedParagraphStart };
+						}
+						return span;
+					});
+				}
 				workingSpans.push({
 					type: "insertion",
 					start: insertAt + outsidePrefixPlain.length,

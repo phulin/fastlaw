@@ -284,6 +284,21 @@ function boundaryAwareReplacementSuffix(
 	text: string,
 	rangeEnd: number,
 ): string {
+	const nextChar = text[rangeEnd] ?? "";
+	if (
+		inserted.text.includes("\n") &&
+		nextChar.length > 0 &&
+		nextChar !== "\n"
+	) {
+		const trailingHostText = text.slice(rangeEnd).trimStart();
+		const hostContinuesWithStructuralMarker = /^\([A-Za-z0-9ivxIVX]+\)/.test(
+			trailingHostText,
+		);
+		if (hostContinuesWithStructuralMarker) {
+			return inserted.text.endsWith("\n") ? "" : "\n";
+		}
+		return "";
+	}
 	if (deleted.endsWith("\n") && !inserted.text.endsWith("\n")) {
 		return "\n";
 	}

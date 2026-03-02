@@ -123,6 +123,29 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		operation.edit.through && "punctuation" in operation.edit.through
 			? operation.edit.through.punctuation
 			: undefined;
+	const normalizeBoundaryNewlines = (
+		insertedText: string,
+		start: number,
+		end: number,
+	): string => {
+		const startsMidLine = start > 0 && plainText[start - 1] !== "\n";
+		const nextChar = plainText[end] ?? "";
+		const endsMidLine = nextChar.length > 0 && nextChar !== "\n";
+		let normalized = insertedText;
+		if (startsMidLine) {
+			normalized = normalized.replace(/^\n+/, "");
+		}
+		if (endsMidLine) {
+			const trailingHostText = plainText.slice(end).trimStart();
+			const hostContinuesWithStructuralMarker = /^\([A-Za-z0-9ivxIVX]+\)/.test(
+				trailingHostText,
+			);
+			if (!hostContinuesWithStructuralMarker) {
+				normalized = normalized.replace(/\n+$/, "");
+			}
+		}
+		return normalized;
+	};
 
 	if (!strikingContent && strikePunctuation) {
 		const punctuation = punctuationText(strikePunctuation);
@@ -310,17 +333,29 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 			resolvedStrikingContent,
 		)) {
 			const patchStart = range.start + occurrenceIndex;
+			const patchEnd = patchStart + resolvedStrikingContent.length;
 			const formattedReplacement = formatStrikeInsertReplacementText({
 				model,
 				content: resolvedReplacementContent,
 				insertStart: patchStart,
 				fallbackIndent: range.indent ?? 0,
 			});
+			const normalizedReplacement = normalizeBoundaryNewlines(
+				formattedReplacement,
+				patchStart,
+				patchEnd,
+			);
 			pushPatch({
 				start: patchStart,
-				end: patchStart + resolvedStrikingContent.length,
+				end: patchEnd,
 				deleted: resolvedStrikingContent,
-				inserted: formattedReplacement,
+				inserted: normalizedReplacement,
+				insertedSuffixPlain: boundaryAwareReplacementSuffix(
+					{ ...resolvedReplacementContent, text: normalizedReplacement },
+					resolvedStrikingContent,
+					plainText,
+					patchEnd,
+				),
 			});
 		}
 		return;
@@ -351,10 +386,22 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		insertStart: patchStart,
 		fallbackIndent: range.indent ?? 0,
 	});
+	const normalizedReplacement = normalizeBoundaryNewlines(
+		formattedReplacement,
+		patchStart,
+		patchEnd,
+	);
+	const deletedText = plainText.slice(patchStart, patchEnd);
 	pushPatch({
 		start: patchStart,
 		end: patchEnd,
-		deleted: plainText.slice(patchStart, patchEnd),
-		inserted: formattedReplacement,
+		deleted: deletedText,
+		inserted: normalizedReplacement,
+		insertedSuffixPlain: boundaryAwareReplacementSuffix(
+			{ ...resolvedReplacementContent, text: normalizedReplacement },
+			deletedText,
+			plainText,
+			patchEnd,
+		),
 	});
 }

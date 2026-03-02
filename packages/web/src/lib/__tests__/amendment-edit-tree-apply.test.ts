@@ -2208,6 +2208,84 @@ describe("applyAmendmentEditTreeToSection unit", () => {
 					paragraph.quoteDepth > 0,
 			),
 		).toBe(true);
+		expect(effect.renderModel.plainText).not.toContain(
+			"(bb) 7 of the previous 8 consecutive\nweeks during",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"(bb) 7 of the previous 8 consecutive weeks during",
+		);
+	});
+
+	it("keeps inline continuation after marker-led strike-insert at line start", () => {
+		const tree: InstructionSemanticTree = {
+			type: SemanticNodeType.InstructionRoot,
+			targetSection: "6506a",
+			children: [
+				{
+					type: SemanticNodeType.Scope,
+					scope: { kind: ScopeKind.Subsection, label: "l" },
+					children: [
+						{
+							type: SemanticNodeType.Edit,
+							edit: {
+								kind: UltimateEditKind.StrikeInsert,
+								strike: {
+									kind: SearchTargetKind.Text,
+									text: tp("All receipts from"),
+								},
+								insert: tp(
+									"(1) IN GENERAL.—Except as provided in paragraph (2), all receipts from",
+								),
+							},
+						},
+					],
+				},
+			],
+		};
+
+		const effect = applyAmendmentEditTreeToSection({
+			tree,
+			sectionPath: "/statutes/usc/section/42/6506a",
+			sectionBody:
+				"(l) Receipts\nAll receipts from sales, rentals, bonuses, and royalties on leases issued pursuant to this section shall be paid.",
+			instructionText:
+				'(1) by striking "All receipts from" and inserting the following: "(1) IN GENERAL.—Except as provided in paragraph (2), all receipts from"; and',
+		});
+
+		expect(effect.status).toBe("ok");
+		expect(effect.renderModel.plainText).not.toContain(
+			"all receipts from\nsales, rentals",
+		);
+		expect(effect.renderModel.plainText).toContain(
+			"all receipts from sales, rentals",
+		);
+		const insertionSpan = effect.renderModel.spans.find(
+			(span) => span.type === "insertion",
+		);
+		expect(insertionSpan).toBeDefined();
+		const paragraphSpans = effect.renderModel.spans.filter(
+			(span) => span.type === "paragraph",
+		);
+		const paragraphAtInsertionEnd = paragraphSpans.find(
+			(span) =>
+				insertionSpan !== undefined &&
+				span.start <= insertionSpan.end &&
+				span.end > insertionSpan.end,
+		);
+		expect(paragraphAtInsertionEnd).toBeDefined();
+		expect(
+			effect.renderModel.plainText.slice(
+				paragraphAtInsertionEnd?.start ?? 0,
+				paragraphAtInsertionEnd?.end ?? 0,
+			),
+		).toContain("all receipts from sales, rentals");
+		expect(
+			paragraphSpans.some((span) =>
+				effect.renderModel.plainText
+					.slice(span.start, span.end)
+					.startsWith(" sales, rentals"),
+			),
+		).toBe(false);
 	});
 
 	it("does not widen strike-insert replacement to ancestor scope when replacing a single paragraph", () => {
