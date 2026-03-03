@@ -295,6 +295,9 @@ export function handleStrikeEdit(args: StrikeHandlerArgs): void {
 		if (punctuationIndex < 0) return;
 		localEnd = punctuationIndex + punctuation.length;
 	}
+	if (operation.edit.throughEnd) {
+		localEnd = scopedText.length;
+	}
 	if (hasStructuralThroughTarget) {
 		const throughRange = getScopeRangeFromNodeId(
 			model,

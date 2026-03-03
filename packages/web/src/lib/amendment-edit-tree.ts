@@ -267,6 +267,8 @@ export interface StrikeEdit {
 	kind: UltimateEditKind.Strike;
 	target: EditTarget;
 	through?: EditTarget;
+	/** True when "and all that follows" is present without a "through" clause. */
+	throughEnd?: boolean;
 	structuralMode?: "discrete" | "range";
 }
 
@@ -282,6 +284,8 @@ export interface StrikeInsertEdit {
 	kind: UltimateEditKind.StrikeInsert;
 	strike: EditTarget;
 	through?: EditTarget;
+	/** True when "and all that follows" is present without a "through" clause. */
+	throughEnd?: boolean;
 	insert: TextWithProvenance;
 }
 

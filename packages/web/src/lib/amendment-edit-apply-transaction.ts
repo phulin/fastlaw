@@ -382,9 +382,11 @@ function materializeEditsFromPatches(
 							firstInsertedParagraph.end,
 						)
 					: "";
+			const insertionContextStart =
+				deletedLength > 0 ? deleteStart : insertAt;
 			const preserveLeadingContinuationInLeftParagraph =
 				insertedHasParagraphs &&
-				!startsAtLineBoundary(workingText, insertAt) &&
+				!startsAtLineBoundary(workingText, insertionContextStart) &&
 				insertedPlain.length > 0 &&
 				!insertedPlain.startsWith("\n") &&
 				firstInsertedParagraph?.start === 0 &&

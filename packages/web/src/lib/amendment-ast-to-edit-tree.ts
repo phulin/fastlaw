@@ -317,11 +317,13 @@ function parseEdit(
 					context,
 				)
 			: undefined;
+		const throughEnd = followingSpec !== null && through === undefined;
 		if (insertingSpec) {
 			return {
 				kind: UltimateEditKind.StrikeInsert,
 				strike: target,
 				through,
+				...(throughEnd ? { throughEnd } : {}),
 				insert: extractContent(insertingSpec),
 			};
 		}
@@ -333,6 +335,7 @@ function parseEdit(
 			kind: UltimateEditKind.Strike,
 			target,
 			through,
+			...(throughEnd ? { throughEnd } : {}),
 			...(structuralMode ? { structuralMode } : {}),
 		};
 	}

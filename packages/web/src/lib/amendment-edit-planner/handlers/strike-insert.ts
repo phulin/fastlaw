@@ -427,6 +427,9 @@ export function handleStrikeInsertEdit(args: StrikeInsertHandlerArgs): void {
 		if (punctuationIndex < 0) return;
 		patchEnd = range.start + punctuationIndex + punctuation.length;
 	}
+	if (operation.edit.throughEnd) {
+		patchEnd = range.end;
+	}
 	if (hasStructuralThroughTarget) {
 		const throughRange = getScopeRangeFromNodeId(
 			model,
