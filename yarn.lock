@@ -835,7 +835,7 @@ __metadata:
     hono: "npm:^4.6.4"
     htmlparser2: "npm:^9.1.0"
     vitest: "npm:^3.0.0"
-    wrangler: "npm:^4.65.0"
+    wrangler: "npm:^4.75.0"
     xxhash-wasm: "npm:^1.1.0"
   languageName: unknown
   linkType: soft
