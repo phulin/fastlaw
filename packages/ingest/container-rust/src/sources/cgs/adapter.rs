@@ -1,5 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::sources::cgs::cross_references::inline_section_cross_references;
 use crate::sources::cgs::discover::{
     extract_chapter_urls, extract_title_name_from_html, parse_chapter_id_from_url,
@@ -21,11 +20,11 @@ pub const CGS_ADAPTER: CgsAdapter = CgsAdapter;
 impl SourceAdapter for CgsAdapter {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         url: &str,
         _manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String> {
-        crate::sources::cgs::discover::discover_cgs_root(fetcher, url).await
+        crate::sources::cgs::discover::discover_cgs_root(cache, url).await
     }
 
     async fn process_url(

@@ -1,5 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::types::{DiscoveryResult, SourceKind};
 use async_trait::async_trait;
 
@@ -17,7 +16,7 @@ pub mod vt;
 pub trait SourceAdapter: Send + Sync {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         url: &str,
         manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String>;

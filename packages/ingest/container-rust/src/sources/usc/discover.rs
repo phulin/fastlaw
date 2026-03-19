@@ -9,12 +9,12 @@ const SOURCE_CODE: &str = "usc";
 const SOURCE_NAME: &str = "United States Code";
 
 pub async fn discover_usc_root(
-    fetcher: &dyn crate::runtime::fetcher::Fetcher,
+    cache: &dyn crate::runtime::types::Cache,
     _download_base: &str,
     manual_start_url: Option<&str>,
 ) -> Result<DiscoveryResult, String> {
     let start_url = manual_start_url.unwrap_or(USC_DOWNLOAD_PAGE_URL);
-    let html = fetcher.fetch(start_url).await?;
+    let html = cache.fetch_cached(start_url, "usc/download.shtml", None).await?;
     let hrefs = extract_href_links(&html);
 
     let base_url = Url::parse(start_url)

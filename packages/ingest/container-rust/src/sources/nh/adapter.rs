@@ -1,5 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::sources::common::{body_block, push_block};
 use crate::sources::nh::parser::{
     inline_nh_cross_references, normalize_designator, parse_chapter_index,
@@ -18,11 +17,11 @@ pub const NH_ADAPTER: NhAdapter = NhAdapter;
 impl SourceAdapter for NhAdapter {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         _url: &str,
         manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String> {
-        crate::sources::nh::discover::discover_nh_root(fetcher, manual_start_url).await
+        crate::sources::nh::discover::discover_nh_root(cache, manual_start_url).await
     }
 
     async fn process_url(

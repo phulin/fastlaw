@@ -1,5 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::sources::common::body_block;
 use crate::sources::mgl::cross_references::inline_section_cross_references;
 use crate::sources::mgl::parser::{
@@ -19,11 +18,11 @@ pub const MGL_ADAPTER: MglAdapter = MglAdapter;
 impl SourceAdapter for MglAdapter {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         url: &str,
         _manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String> {
-        crate::sources::mgl::discover::discover_mgl_root(fetcher, url).await
+        crate::sources::mgl::discover::discover_mgl_root(cache, url).await
     }
 
     async fn process_url(

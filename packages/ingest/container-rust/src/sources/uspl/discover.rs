@@ -1,4 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
+use crate::runtime::types::Cache;
 use crate::types::{DiscoveryResult, NodeMeta, UnitRoot};
 use serde::Deserialize;
 
@@ -54,7 +54,7 @@ fn with_api_key(url: &str, api_key: &str) -> String {
 
 /// Fetches all STATUTE packages from the govinfo collections API for congress >= MIN_CONGRESS.
 pub async fn discover_uspl_root(
-    fetcher: &dyn Fetcher,
+    cache: &dyn Cache,
     collections_url: &str,
     api_key: &str,
 ) -> Result<DiscoveryResult, String> {
@@ -69,9 +69,12 @@ pub async fn discover_uspl_root(
         api_key,
     );
     let mut next_url: Option<String> = Some(first_url);
+    let mut page: u32 = 0;
 
     while let Some(url) = next_url {
-        let body = fetcher.fetch(&url).await?;
+        let cache_key = format!("uspl/collections/page-{}.json", page);
+        let body = cache.fetch_cached(&url, &cache_key, None).await?;
+        page += 1;
         let resp: CollectionsResponse = serde_json::from_str(&body).map_err(|e| {
             format!(
                 "Failed to parse collections response: {e}\nBody: {}",
@@ -117,7 +120,8 @@ pub async fn discover_uspl_root(
             ),
             api_key,
         );
-        let body = fetcher.fetch(&detail_url).await?;
+        let cache_key = format!("uspl/packages/{}/summary.json", pkg.package_id);
+        let body = cache.fetch_cached(&detail_url, &cache_key, None).await?;
         let detail: PackageDetail = serde_json::from_str(&body)
             .map_err(|e| format!("Failed to parse package detail for {}: {e}", pkg.package_id))?;
 

@@ -1,5 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::sources::common::{body_block, push_block};
 use crate::sources::vt::discover::title_display_num_from_code;
 use crate::sources::vt::parser::{
@@ -19,11 +18,11 @@ pub const VT_ADAPTER: VtAdapter = VtAdapter;
 impl SourceAdapter for VtAdapter {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         _url: &str,
         manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String> {
-        crate::sources::vt::discover::discover_vt_root(fetcher, manual_start_url).await
+        crate::sources::vt::discover::discover_vt_root(cache, manual_start_url).await
     }
 
     async fn process_url(

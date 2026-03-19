@@ -4,7 +4,6 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-const CGS_TITLES_PAGE_URL: &str = "https://www.cgs.ct.gov/current/pub/titles.htm";
 const SOURCE_CODE: &str = "cgs";
 const SOURCE_NAME: &str = "Connecticut General Statutes";
 
@@ -28,10 +27,10 @@ static VERSION_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 });
 
 pub async fn discover_cgs_root(
-    fetcher: &dyn crate::runtime::fetcher::Fetcher,
+    cache: &dyn crate::runtime::types::Cache,
     start_url: &str,
 ) -> Result<DiscoveryResult, String> {
-    let html = fetcher.fetch(start_url).await?;
+    let html = cache.fetch_cached(start_url, "cgs/titles.htm", None).await?;
     let version_id = extract_version_id(&html);
     let title_urls = extract_title_urls(&html, start_url)?;
 
@@ -111,10 +110,6 @@ pub fn extract_title_urls(html: &str, base_url: &str) -> Result<Vec<String>, Str
         }
     }
     Ok(urls)
-}
-
-pub fn cgs_titles_page_url() -> &'static str {
-    CGS_TITLES_PAGE_URL
 }
 
 pub struct ChapterUrl {

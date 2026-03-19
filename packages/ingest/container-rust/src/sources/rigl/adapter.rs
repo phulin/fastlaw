@@ -1,5 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::sources::cgs::cross_references::extract_section_cross_references;
 use crate::sources::common::{body_block, push_block};
 use crate::sources::rigl::parser::{
@@ -18,11 +17,11 @@ pub const RIGL_ADAPTER: RiglAdapter = RiglAdapter;
 impl SourceAdapter for RiglAdapter {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         _url: &str,
         manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String> {
-        crate::sources::rigl::discover::discover_rigl_root(fetcher, manual_start_url).await
+        crate::sources::rigl::discover::discover_rigl_root(cache, manual_start_url).await
     }
 
     async fn process_url(

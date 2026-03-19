@@ -2,7 +2,6 @@ use crate::runtime::cache::ensure_cached;
 use crate::runtime::callbacks::{
     post_ensure_source_version, post_node_batch, post_unit_progress, post_unit_start,
 };
-use crate::runtime::fetcher::HttpFetcher;
 use crate::runtime::logging::{log_event_with_callback, LogLevel};
 use crate::runtime::types::{
     BlobStore, BuildContext, Cache, IngestContext, Logger, NodeStore, QueueItem, UrlQueue,
@@ -316,9 +315,12 @@ pub async fn ingest_source(config: IngestConfig) -> Result<(), String> {
             .expect("Missing root URL in sources.json")
             .to_string();
 
-        let fetcher = HttpFetcher::new(client.clone());
         let discovery = adapter
-            .discover(&fetcher, &root_url, config.manual_start_url.as_deref())
+            .discover(
+                cache_store.as_ref(),
+                &root_url,
+                config.manual_start_url.as_deref(),
+            )
             .await?;
 
         let full_version_id = format!("{}-{}", config.source_id, discovery.version_id);

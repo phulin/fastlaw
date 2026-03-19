@@ -1,6 +1,5 @@
 use crate::info;
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::sources::common::{body_block, capitalize_first};
 use crate::sources::SourceAdapter;
 use crate::types::{ContentBlock, DiscoveryResult, NodeMeta, NodePayload, SectionContent};
@@ -20,11 +19,11 @@ pub const USC_ADAPTER: UscAdapter = UscAdapter;
 impl SourceAdapter for UscAdapter {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         url: &str,
         manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String> {
-        crate::sources::usc::discover::discover_usc_root(fetcher, url, manual_start_url).await
+        crate::sources::usc::discover::discover_usc_root(cache, url, manual_start_url).await
     }
 
     async fn process_url(

@@ -36,15 +36,15 @@ static COPYRIGHT_YEAR_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 pub async fn discover_mgl_root(
-    fetcher: &dyn crate::runtime::fetcher::Fetcher,
+    cache: &dyn crate::runtime::types::Cache,
     parts_url: &str,
 ) -> Result<DiscoveryResult, String> {
     let start_url = format!("{}{}", MGL_BASE_URL, MGL_START_PATH);
-    let root_html = fetcher.fetch(&start_url).await?;
+    let root_html = cache.fetch_cached(&start_url, "mgl/root.html", None).await?;
     let version_id = extract_version_id_from_landing_html(&root_html);
 
     // Fetch parts list from API
-    let parts_json = fetcher.fetch(&parts_url).await?;
+    let parts_json = cache.fetch_cached(parts_url, "mgl/parts.json", None).await?;
     let parts: Vec<MglApiPartSummary> = serde_json::from_str(&parts_json)
         .map_err(|e| format!("Failed to parse MGL parts list: {e}"))?;
 

@@ -1,5 +1,4 @@
-use crate::runtime::fetcher::Fetcher;
-use crate::runtime::types::{IngestContext, QueueItem};
+use crate::runtime::types::{Cache, IngestContext, QueueItem};
 use crate::sources::uspl::discover::{discover_uspl_root, VolumeMetadata};
 use crate::sources::uspl::markdown::law_to_markdown;
 use crate::sources::uspl::parser::parse_uslm_volume;
@@ -18,12 +17,12 @@ pub const USPL_ADAPTER: UsplAdapter = UsplAdapter;
 impl SourceAdapter for UsplAdapter {
     async fn discover(
         &self,
-        fetcher: &dyn Fetcher,
+        cache: &dyn Cache,
         url: &str,
         manual_start_url: Option<&str>,
     ) -> Result<DiscoveryResult, String> {
         let api_key = manual_start_url.unwrap_or_default();
-        discover_uspl_root(fetcher, url, api_key).await
+        discover_uspl_root(cache, url, api_key).await
     }
 
     async fn process_url(
