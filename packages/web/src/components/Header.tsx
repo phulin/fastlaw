@@ -8,7 +8,12 @@ interface HeaderProps {
 
 export function Header(props: HeaderProps) {
 	return (
-		<header class="site-header">
+		<header
+			classList={{
+				"site-header": true,
+				"site-header-centered": !props.heading,
+			}}
+		>
 			<div class="site-header-left">
 				<a href="/" class="logo">
 					fast.law
@@ -17,20 +22,9 @@ export function Header(props: HeaderProps) {
 			<Show when={props.heading}>
 				<h2 class="site-header-heading">{props.heading}</h2>
 			</Show>
-			<div class="site-header-right">
-				<Show
-					when={props.rightContent}
-					fallback={
-						<nav class="nav">
-							<a href="/statutes/cgs">CGA</a>
-							<a href="/statutes/usc">USC</a>
-							<a href="/ingest/jobs">Ingest</a>
-						</nav>
-					}
-				>
-					{props.rightContent}
-				</Show>
-			</div>
+			<Show when={props.rightContent}>
+				<div class="site-header-right">{props.rightContent}</div>
+			</Show>
 		</header>
 	);
 }

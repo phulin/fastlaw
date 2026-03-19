@@ -20,15 +20,17 @@ export default function App(props: AppProps) {
 	const jobId = parseIngestJobId(props.pathname);
 	const isFoundDocument =
 		isDocumentRoute(props.pathname) && props.pageData?.status === "found";
+	const searchPageData =
+		props.pageData?.status === "search" ? props.pageData : null;
 
 	return (
 		<MetaProvider>
 			<Switch fallback={<NotFoundPage pathname={props.pathname} />}>
 				<Match when={props.pathname === "/"}>
-					<SearchPage />
+					<SearchPage sources={searchPageData?.sources ?? []} />
 				</Match>
 				<Match when={props.pathname === "/search"}>
-					<SearchPage />
+					<SearchPage sources={searchPageData?.sources ?? []} />
 				</Match>
 				<Match when={props.pathname === "/deepsearch"}>
 					<DeepSearchPage />

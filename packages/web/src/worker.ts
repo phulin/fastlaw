@@ -13,6 +13,7 @@ import {
 	getNodeContent,
 	getSiblingNodes,
 	getSourceByCode,
+	getSources,
 	getSourceVersionById,
 	listIngestJobs,
 	listIngestJobUnits,
@@ -238,6 +239,14 @@ app.get("*", async (c) => {
 	}
 
 	let pageData: PageData | null = null;
+
+	if (url.pathname === "/" || url.pathname === "/search") {
+		pageData = {
+			status: "search",
+			path: url.pathname,
+			sources: await getSources(),
+		};
+	}
 
 	if (isDocumentRoute(url.pathname)) {
 		const path = url.pathname;

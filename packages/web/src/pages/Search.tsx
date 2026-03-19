@@ -1,6 +1,7 @@
 import { Title } from "@solidjs/meta";
 import { createSignal, For, Show } from "solid-js";
 import { Header } from "~/components/Header";
+import type { SourceRecord } from "~/lib/types";
 
 interface SearchResult {
 	id: string;
@@ -13,17 +14,6 @@ interface SearchResult {
 	title_id: string | null;
 	text: string | null;
 }
-
-const SOURCE_LINKS = [
-	{
-		label: "Connecticut General Statutes",
-		href: "/statutes/cgs",
-	},
-	{
-		label: "United States Code",
-		href: "/statutes/usc",
-	},
-];
 
 const SEARCH_TYPES = [
 	{
@@ -56,7 +46,11 @@ const buildSectionHref = (sectionId: string | null): string | null => {
 	return `/statutes/cgs/section/${title}/${suffix}`;
 };
 
-export default function SearchPage() {
+interface SearchPageProps {
+	sources: SourceRecord[];
+}
+
+export default function SearchPage(props: SearchPageProps) {
 	const [query, setQuery] = createSignal("");
 	const [searchType, setSearchType] =
 		createSignal<(typeof SEARCH_TYPES)[number]["value"]>("auto");
@@ -169,10 +163,10 @@ export default function SearchPage() {
 					<section class="search-sources">
 						<p class="search-sources-title">Sources</p>
 						<ul class="search-sources-list">
-							<For each={SOURCE_LINKS}>
+							<For each={props.sources}>
 								{(source) => (
 									<li>
-										<a href={source.href}>{source.label}</a>
+										<a href={`/statutes/${source.id}`}>{source.name}</a>
 									</li>
 								)}
 							</For>

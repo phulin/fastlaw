@@ -96,6 +96,11 @@ export interface NodeWithSource extends NodeRecord {
 export type PageData =
 	| { status: "missing"; path: string }
 	| {
+			status: "search";
+			path: string;
+			sources: SourceRecord[];
+	  }
+	| {
 			status: "found";
 			path: string;
 			statuteRoutePrefix: string;
