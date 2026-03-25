@@ -2,7 +2,7 @@
   <title id="title">fast.law</title>
   <desc id="desc">The fast.law wordmark rendered in Newsreader using the web package ink color.</desc>
   <style>
-    @import url("https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&amp;display=swap");
+    @import url("https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500");
 
     text {
       fill: #141210;
