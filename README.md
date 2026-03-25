@@ -3,7 +3,7 @@
 </p>
 
 # fast.law
-This is the source code for [fast.law], an in-progress repository of legal information and tools. There are two main features right now: automated scraping and congressional redlines. The bulk of the code is written in TypeScript; the scrapers are written in Rust to take advantage of `quick_xml` and otherwise go at native speed.
+This is the source code for [fast.law](), an in-progress repository of legal information and tools. There are two main features right now: automated scraping and congressional redlines. The bulk of the code is written in TypeScript; the scrapers are written in Rust to take advantage of `quick_xml` and otherwise go at native speed.
 
 ## Automated Scraping
 
