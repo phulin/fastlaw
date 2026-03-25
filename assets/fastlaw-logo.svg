@@ -12,7 +12,12 @@
       text-anchor: middle;
       dominant-baseline: central;
     }
+
+    @media (prefers-color-scheme: dark) {
+      text {
+        fill: #f4efe6;
+      }
+    }
   </style>
-  <rect width="1200" height="240" fill="white"/>
   <text x="600" y="126">fast.law</text>
 </svg>
