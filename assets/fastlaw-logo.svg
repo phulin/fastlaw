@@ -1,0 +1,18 @@
+<svg width="1200" height="240" viewBox="0 0 1200 240" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">fast.law</title>
+  <desc id="desc">The fast.law wordmark rendered in Newsreader using the web package ink color.</desc>
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&display=swap");
+
+    text {
+      fill: #141210;
+      font-family: "Newsreader", Georgia, "Times New Roman", serif;
+      font-size: 112px;
+      font-weight: 500;
+      text-anchor: middle;
+      dominant-baseline: central;
+    }
+  </style>
+  <rect width="1200" height="240" fill="white"/>
+  <text x="600" y="126">fast.law</text>
+</svg>

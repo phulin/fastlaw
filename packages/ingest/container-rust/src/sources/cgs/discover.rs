@@ -30,7 +30,9 @@ pub async fn discover_cgs_root(
     cache: &dyn crate::runtime::types::Cache,
     start_url: &str,
 ) -> Result<DiscoveryResult, String> {
-    let html = cache.fetch_cached(start_url, "cgs/titles.htm", None).await?;
+    let html = cache
+        .fetch_cached(start_url, "cgs/titles.htm", None)
+        .await?;
     let version_id = extract_version_id(&html);
     let title_urls = extract_title_urls(&html, start_url)?;
 

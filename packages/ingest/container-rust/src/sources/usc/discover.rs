@@ -14,7 +14,9 @@ pub async fn discover_usc_root(
     manual_start_url: Option<&str>,
 ) -> Result<DiscoveryResult, String> {
     let start_url = manual_start_url.unwrap_or(USC_DOWNLOAD_PAGE_URL);
-    let html = cache.fetch_cached(start_url, "usc/download.shtml", None).await?;
+    let html = cache
+        .fetch_cached(start_url, "usc/download.shtml", None)
+        .await?;
     let hrefs = extract_href_links(&html);
 
     let base_url = Url::parse(start_url)

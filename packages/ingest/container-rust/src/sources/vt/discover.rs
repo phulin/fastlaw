@@ -12,7 +12,9 @@ pub async fn discover_vt_root(
     start_url: Option<&str>,
 ) -> Result<DiscoveryResult, String> {
     let start_url = start_url.unwrap_or(DEFAULT_START_URL);
-    let html = cache.fetch_cached(start_url, "vt/statutes.html", None).await?;
+    let html = cache
+        .fetch_cached(start_url, "vt/statutes.html", None)
+        .await?;
     let version_id =
         extract_version_id_from_landing_html(&html).unwrap_or_else(|| fallback_version_id(&html));
     let title_links = parse_title_links(&html, start_url)?;
