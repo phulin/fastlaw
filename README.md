@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/fastlaw-logo.svg" alt="fast.law" width="720" />
+  <img src="assets/fastlaw-logo.svg" alt="fast.law" width="720" />
 </p>
 
 # fast.law
