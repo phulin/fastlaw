@@ -1046,6 +1046,108 @@ app.get("/api/ingest/vector/workflow/:instanceId", async (c) => {
 });
 
 // ──────────────────────────────────────────────────────────────
+// Test cache UI
+// ──────────────────────────────────────────────────────────────
+
+app.get("/api/test-cache", async (c) => {
+	const token = await signCallbackToken(
+		{ jobId: "test", sourceId: "test", sourceVersionId: "" },
+		c.env.CALLBACK_SECRET,
+	);
+	const baseUrl = new URL(c.req.url).origin;
+
+	return c.html(/* html */ `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cache Proxy Tester</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  input, select { width: 100%; padding: 0.4rem; margin-top: 0.25rem; box-sizing: border-box; font-family: monospace; }
+  button { margin-top: 1rem; padding: 0.5rem 1.5rem; }
+  pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .meta { color: #666; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>Cache Proxy Tester</h1>
+
+<label>URL to fetch &amp; cache
+  <input id="url" placeholder="https://example.com/file.xml" />
+</label>
+
+<label>Cache key
+  <input id="cacheKey" placeholder="test/my-key" />
+</label>
+
+<label>Throttle (requests/sec, optional)
+  <input id="throttle" type="number" placeholder="e.g. 33" />
+</label>
+
+<label>Endpoint
+  <select id="endpoint">
+    <option value="cache">POST /api/proxy/cache (metadata only)</option>
+    <option value="cache-read">POST /api/proxy/cache-read (return body)</option>
+  </select>
+</label>
+
+<button onclick="doFetch()">Fetch</button>
+
+<h2>Response</h2>
+<p class="meta" id="meta"></p>
+<pre id="output">(nothing yet)</pre>
+
+<script>
+const TOKEN = ${JSON.stringify(token)};
+const BASE = ${JSON.stringify(baseUrl)};
+
+async function doFetch() {
+  const url = document.getElementById("url").value.trim();
+  const cacheKey = document.getElementById("cacheKey").value.trim();
+  const throttle = document.getElementById("throttle").value.trim();
+  const endpoint = document.getElementById("endpoint").value;
+
+  if (!url || !cacheKey) { alert("URL and cache key are required"); return; }
+
+  const body = { url, cacheKey };
+  if (throttle) body.throttleRequestsPerSecond = Number(throttle);
+
+  document.getElementById("output").textContent = "Loading…";
+  document.getElementById("meta").textContent = "";
+
+  try {
+    const resp = await fetch(BASE + "/api/proxy/" + endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + TOKEN,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const ct = resp.headers.get("content-type") || "";
+    const status = resp.status + " " + resp.statusText;
+    const cacheHeader = resp.headers.get("x-cache-key") || "";
+    document.getElementById("meta").textContent =
+      status + (cacheHeader ? "  •  X-Cache-Key: " + cacheHeader : "");
+
+    if (ct.includes("json")) {
+      document.getElementById("output").textContent = JSON.stringify(await resp.json(), null, 2);
+    } else {
+      const text = await resp.text();
+      document.getElementById("output").textContent = text.slice(0, 200_000);
+    }
+  } catch (e) {
+    document.getElementById("output").textContent = "Error: " + e.message;
+  }
+}
+</script>
+</body>
+</html>`);
+});
+
+// ──────────────────────────────────────────────────────────────
 // Export
 // ──────────────────────────────────────────────────────────────
 
