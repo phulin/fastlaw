@@ -85,6 +85,14 @@ impl Cache for MockCache {
             .cloned()
             .ok_or_else(|| format!("No fixture for URL: {}", url))
     }
+
+    async fn fetch_uncached(
+        &self,
+        url: &str,
+        _throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String> {
+        self.fetch_cached(url, "", None).await
+    }
 }
 
 pub struct MockFetcher {

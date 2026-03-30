@@ -40,9 +40,10 @@ export async function* streamXmlFromZipStream(
 	} finally {
 		// Cancel the stream to stop the ZipReaderStream pipe chain from
 		// continuing to process remaining ZIP entries in the background.
-		// Without this, errors in background processing become unhandled
-		// rejections that crash the worker (Cloudflare error 1101).
-		await reader.cancel().catch(() => {});
+		// Do not await cancellation here: on Workers, streamed ZIP reads can
+		// leave cancel() pending forever, which makes the request appear hung.
+		// Catch in the background so teardown errors stay contained.
+		void reader.cancel().catch(() => {});
 	}
 }
 

@@ -38,7 +38,7 @@ impl SourceAdapter for UscAdapter {
             "title" => {
                 let title_num = metadata["title_num"].as_str().unwrap_or_default();
                 let version_id = &context.build.source_version_id;
-                let cache_key = format!("usc/{}/title-{}.xml", version_id, title_num);
+                let cache_key = format!("usc/{}/title-{}.zip", version_id, title_num);
                 let xml = context.cache.fetch_cached(url, &cache_key, Some(1)).await?;
 
                 let mut seen_level_ids: HashSet<String> = HashSet::new();

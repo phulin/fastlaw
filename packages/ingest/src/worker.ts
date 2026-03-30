@@ -25,7 +25,6 @@ import {
 	getOrCreateSource,
 	insertNodes,
 } from "./lib/versioning";
-import { streamXmlFromZipStream } from "./lib/zip-utils";
 import type {
 	Env,
 	IngestNode,
@@ -730,47 +729,116 @@ function concatChunks(chunks: Uint8Array[], totalSize: number): Uint8Array {
 	return combined;
 }
 
-async function uploadMultipartFromChunks(
+async function uploadMultipartFromStream(
 	bucket: R2Bucket,
 	key: string,
-	chunks: AsyncGenerator<Uint8Array, void, void>,
+	stream: ReadableStream<Uint8Array>,
 ): Promise<number> {
 	const upload = await bucket.createMultipartUpload(key);
 	type UploadedPart = Awaited<ReturnType<R2MultipartUpload["uploadPart"]>>;
 	const uploadedParts: UploadedPart[] = [];
+	const reader = stream.getReader();
+	const pendingChunks: Uint8Array[] = [];
+	let pendingSize = 0;
 	let partNumber = 1;
 	let totalSize = 0;
-	let pendingChunks: Uint8Array[] = [];
-	let pendingSize = 0;
 
-	const flushPart = async (force: boolean): Promise<void> => {
-		if (pendingSize === 0) return;
-		if (!force && pendingSize < R2_MULTIPART_PART_SIZE) return;
-		const partData = concatChunks(pendingChunks, pendingSize);
-		const uploadedPart = await upload.uploadPart(partNumber, partData);
+	const enqueuePending = (chunk: Uint8Array): void => {
+		pendingChunks.push(chunk);
+		pendingSize += chunk.byteLength;
+	};
+
+	const shiftPending = (targetSize: number): Uint8Array => {
+		const partChunks: Uint8Array[] = [];
+		let remaining = targetSize;
+
+		while (remaining > 0) {
+			const chunk = pendingChunks[0];
+			if (!chunk) {
+				throw new Error("Invariant violation: missing pending chunk");
+			}
+			if (chunk.byteLength <= remaining) {
+				partChunks.push(chunk);
+				pendingChunks.shift();
+				remaining -= chunk.byteLength;
+				continue;
+			}
+
+			partChunks.push(chunk.subarray(0, remaining));
+			pendingChunks[0] = chunk.subarray(remaining);
+			remaining = 0;
+		}
+
+		pendingSize -= targetSize;
+		return concatChunks(partChunks, targetSize);
+	};
+
+	const uploadPart = async (partData: Uint8Array): Promise<void> => {
+		const currentPartNumber = partNumber;
+		let uploadedPart: UploadedPart;
+		try {
+			uploadedPart = await upload.uploadPart(currentPartNumber, partData);
+		} catch (error) {
+			const message =
+				error instanceof Error
+					? error.message
+					: "unknown multipart uploadPart error";
+			throw new Error(
+				`Multipart upload failed for ${key} at part ${currentPartNumber} (${partData.byteLength} bytes, ${totalSize} bytes uploaded so far): ${message}`,
+			);
+		}
 		uploadedParts.push(uploadedPart);
 		partNumber += 1;
 		totalSize += partData.byteLength;
-		pendingChunks = [];
-		pendingSize = 0;
 	};
 
 	try {
-		for await (const chunk of chunks) {
-			pendingChunks.push(chunk);
-			pendingSize += chunk.byteLength;
-			await flushPart(false);
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			enqueuePending(value);
+			while (pendingSize >= R2_MULTIPART_PART_SIZE) {
+				await uploadPart(shiftPending(R2_MULTIPART_PART_SIZE));
+			}
 		}
-		await flushPart(true);
+
+		if (pendingSize > 0) {
+			await uploadPart(shiftPending(pendingSize));
+		}
+
 		if (uploadedParts.length === 0) {
 			await bucket.put(key, new Uint8Array(0));
 			return 0;
 		}
-		await upload.complete(uploadedParts);
+
+		try {
+			await upload.complete(uploadedParts);
+		} catch (error) {
+			const message =
+				error instanceof Error
+					? error.message
+					: "unknown multipart complete error";
+			throw new Error(
+				`Multipart completion failed for ${key} after ${uploadedParts.length} parts and ${totalSize} bytes: ${message}`,
+			);
+		}
 		return totalSize;
 	} catch (error) {
-		await upload.abort();
-		throw error;
+		const abortError = await upload.abort().catch((abortError) => abortError);
+		if (abortError instanceof Error) {
+			console.error(
+				`Failed to abort multipart upload for ${key}: ${abortError.message}`,
+			);
+		}
+		if (error instanceof Error) {
+			console.error(error.message);
+			throw error;
+		}
+		throw new Error(`Multipart upload failed for ${key}: unknown error`);
+	} finally {
+		reader.releaseLock();
 	}
 }
 
@@ -821,8 +889,7 @@ async function populateCacheObject(
 	if (!response.ok) {
 		throw new Error(`Failed to fetch ${url}: ${response.status}`);
 	}
-	const responseBody = response.body;
-	if (!responseBody) {
+	if (!response.body) {
 		throw new Error("empty_response_body");
 	}
 
@@ -832,12 +899,12 @@ async function populateCacheObject(
 	}
 
 	if (extractZip) {
-		const totalSize = await uploadMultipartFromChunks(
+		const totalSize = await uploadMultipartFromStream(
 			bucket,
 			r2Key,
-			streamXmlFromZipStream(responseBody as ReadableStream<Uint8Array>),
+			response.body,
 		);
-		console.log(`Cached ${url} → ${r2Key} (${totalSize} bytes, multipart)`);
+		console.log(`Cached ZIP ${url} → ${r2Key} (${totalSize} bytes, multipart)`);
 		return { r2Key, totalSize };
 	}
 

@@ -1,5 +1,29 @@
 use crate::runtime::callbacks::callback_fetch;
 use reqwest::Client;
+use std::io::{Cursor, Read};
+
+fn extract_xml_from_zip(file_bytes: &[u8], url: &str) -> Result<String, String> {
+    let cursor = Cursor::new(file_bytes);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Failed to open ZIP from {url}: {e}"))?;
+
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|e| format!("Failed to read ZIP entry {index} from {url}: {e}"))?;
+
+        if !file.name().to_ascii_lowercase().ends_with(".xml") {
+            continue;
+        }
+
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .map_err(|e| format!("Failed to read XML entry {} from {url}: {e}", file.name()))?;
+        return Ok(content);
+    }
+
+    Err(format!("No XML entry found in ZIP from {url}"))
+}
 
 pub async fn ensure_cached(
     client: &Client,
@@ -55,8 +79,12 @@ pub async fn ensure_cached(
         .await
         .map_err(|e| format!("Failed to read file bytes: {e}"))?;
 
-    let content = String::from_utf8(file_bytes.to_vec())
-        .map_err(|e| format!("File bytes are not valid UTF-8: {e}"))?;
+    let content = if extract_zip {
+        extract_xml_from_zip(&file_bytes, url)?
+    } else {
+        String::from_utf8(file_bytes.to_vec())
+            .map_err(|e| format!("File bytes are not valid UTF-8: {e}"))?
+    };
 
     Ok(Some(content))
 }

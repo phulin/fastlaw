@@ -29,6 +29,12 @@ pub trait Cache: Send + Sync {
         key: &str,
         throttle_requests_per_second: Option<u32>,
     ) -> Result<String, String>;
+
+    async fn fetch_uncached(
+        &self,
+        url: &str,
+        throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String>;
 }
 
 #[derive(Debug, Clone)]

@@ -400,6 +400,14 @@ impl Cache for NoopCache {
             Err(format!("NoopCache cannot fetch: {}", url))
         }
     }
+
+    async fn fetch_uncached(
+        &self,
+        url: &str,
+        _throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String> {
+        self.fetch_cached(url, "", None).await
+    }
 }
 
 struct ConsoleLogger;

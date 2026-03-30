@@ -121,6 +121,31 @@ impl Cache for HttpCache {
             )
         })
     }
+
+    async fn fetch_uncached(
+        &self,
+        url: &str,
+        _throttle_requests_per_second: Option<u32>,
+    ) -> Result<String, String> {
+        let response = self
+            .client
+            .get(url)
+            .header("User-Agent", "fastlaw-ingest/1.0")
+            .send()
+            .await
+            .map_err(|e| format!("Direct request to {url} failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("Direct request failed: {status} {text}"));
+        }
+
+        response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read direct response text from {url}: {e}"))
+    }
 }
 
 struct HttpLogger {
