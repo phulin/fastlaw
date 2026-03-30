@@ -689,10 +689,6 @@ app.post("/api/callback/progress", async (c) => {
 
 const CACHE_R2_PREFIX = "cache/";
 const R2_MULTIPART_PART_SIZE = 8 * 1024 * 1024;
-const cacheWriteInFlight = new Map<
-	string,
-	Promise<{ r2Key: string; totalSize: number }>
->();
 const requestRateLimiters = new Map<
 	number,
 	{ nextAllowedAtMs: number; throttleChain: Promise<void> }
@@ -866,21 +862,7 @@ async function ensureCachedObject(
 		return { r2Key, totalSize: head.size };
 	}
 
-	let inFlight = cacheWriteInFlight.get(r2Key);
-	if (!inFlight) {
-		inFlight = populateCacheObject(
-			bucket,
-			url,
-			r2Key,
-			extractZip,
-			throttleRps,
-		).finally(() => {
-			cacheWriteInFlight.delete(r2Key);
-		});
-		cacheWriteInFlight.set(r2Key, inFlight);
-	}
-
-	return inFlight;
+	return populateCacheObject(bucket, url, r2Key, extractZip, throttleRps);
 }
 
 app.post("/api/proxy/cache", async (c) => {
