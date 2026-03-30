@@ -38,7 +38,11 @@ export async function* streamXmlFromZipStream(
 		}
 		console.warn("ZIP parse failed: no XML entry found");
 	} finally {
-		reader.releaseLock();
+		// Cancel the stream to stop the ZipReaderStream pipe chain from
+		// continuing to process remaining ZIP entries in the background.
+		// Without this, errors in background processing become unhandled
+		// rejections that crash the worker (Cloudflare error 1101).
+		await reader.cancel().catch(() => {});
 	}
 }
 
