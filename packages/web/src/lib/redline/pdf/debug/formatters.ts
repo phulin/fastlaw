@@ -4,11 +4,11 @@ import {
 	type LocationRestrictionNode,
 	type ScopeNode,
 	SemanticNodeType,
-} from "../amendment-edit-tree";
+} from "../../../amendment-edit-tree";
 import type {
 	ParsedInstruction,
 	RuleAst,
-} from "../handcrafted-instruction-parser";
+} from "../../amendment-parser/handcrafted-instruction-parser";
 
 const previewDebugText = (value: string) => value.replace(/\s+/g, " ").trim();
 

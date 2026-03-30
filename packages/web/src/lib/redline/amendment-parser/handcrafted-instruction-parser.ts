@@ -1,4 +1,4 @@
-import { ParagraphRange } from "./types";
+import { ParagraphRange } from "../../types";
 
 type GrammarNode =
 	| { type: "literal"; value: string }

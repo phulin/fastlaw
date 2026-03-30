@@ -1,13 +1,7 @@
 import { createEffect, createMemo, For, Show } from "solid-js";
 import { renderMarkdown } from "../lib/markdown";
+import type { InstructionPageItem, PageItem } from "../lib/redline/pdf/models";
 import { AmendedSnippet } from "./AmendedSnippet";
-import type { InstructionPageItem, PageItem } from "./PageRow";
-
-export interface PageLayout {
-	pageOffset: number;
-	pageHeight: number;
-	pageWidth: number;
-}
 
 interface AnnotationLayerProps {
 	items: { item: PageItem; globalTop: number; pageNumber: number }[];

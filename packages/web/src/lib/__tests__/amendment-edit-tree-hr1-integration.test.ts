@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import type { FormattingSpan } from "../amendment-edit-engine-types";
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
-import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
+import { createHandcraftedInstructionParser } from "../redline/amendment-parser/create-handcrafted-instruction-parser";
 import { type Paragraph, ParagraphRange } from "../types";
 import { createParagraph, expectEffectToContainMarkedText } from "./test-utils";
 

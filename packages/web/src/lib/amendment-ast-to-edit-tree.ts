@@ -25,7 +25,7 @@ import {
 	type InstructionAst,
 	type ResolutionAst,
 	type RuleAst,
-} from "./handcrafted-instruction-parser";
+} from "./redline/amendment-parser/handcrafted-instruction-parser";
 import { ParagraphRange } from "./types";
 
 type TreeChild = ScopeNode | LocationRestrictionNode | EditNode;

@@ -1,8 +1,11 @@
 import { For, Show } from "solid-js";
 import { renderMarkdown } from "../lib/markdown";
-import { formatEditTree, formatParseTree } from "../lib/pdf/debug-formatters";
+import {
+	formatEditTree,
+	formatParseTree,
+} from "../lib/redline/pdf/debug/formatters";
+import type { InstructionPageItem } from "../lib/redline/pdf/models";
 import "../styles/pdf-instruction-modal.css";
-import type { InstructionPageItem } from "./PageRow";
 
 interface InstructionDebugModalProps {
 	item: InstructionPageItem | null;

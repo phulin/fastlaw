@@ -1,19 +1,19 @@
 import * as pdfjsLib from "pdfjs-dist";
-import type { ClassificationOverride } from "../amendment-edit-engine-types";
-import { LruCache } from "../lru-cache";
-import { extractParagraphs } from "../text-extract";
-import type { NodeContent, Paragraph } from "../types";
+import type { ClassificationOverride } from "../../../amendment-edit-engine-types";
+import { LruCache } from "../../../lru-cache";
+import { extractParagraphs } from "../../../text-extract";
+import type { NodeContent, Paragraph } from "../../../types";
 import {
 	type AmendmentPipelineCaches,
 	type AmendmentPipelinePerfStats,
 	buildPageItemsFromParagraphs,
-} from "./page-items";
+} from "./build-page-items";
 
 import type {
 	ProcessingWorkerRequest,
 	ProcessingWorkerResponse,
 	WorkerPageItemsPayload,
-} from "./processing-worker-types";
+} from "./worker-types";
 
 interface SectionBodiesResponse {
 	results: Array<

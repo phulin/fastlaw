@@ -1,48 +1,10 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { createEffect, createSignal, onCleanup } from "solid-js";
-import type { Paragraph } from "~/lib/types";
-import type { TranslationResult } from "../lib/amendment-ast-to-edit-tree";
-import type { AmendmentEffect } from "../lib/amendment-edit-tree-apply";
-import type { ParsedInstruction } from "../lib/handcrafted-instruction-parser";
 
-export interface InstructionWorkflowDebug {
-	sectionText: string;
-	splitLines: string[];
-	parsedInstruction: ParsedInstruction | null;
-	translatedEditTree: TranslationResult | null;
-}
-
-export interface ParsedInstructionAnnotation {
-	billSection: string | null;
-	target: string;
-	uscCitation: string | null;
-	text: string;
-	paragraphs: Paragraph[];
-	startPage: number;
-	endPage: number;
-	targetScopePath: string;
-}
-
-export type PageItem =
-	| {
-			type: "paragraph";
-			text: string;
-			isBold: boolean;
-			colorIndex: number | null;
-			level: number | null;
-			topPercent: number;
-	  }
-	| {
-			type: "instruction";
-			instruction: ParsedInstructionAnnotation;
-			amendmentEffect: AmendmentEffect | null;
-			sectionPath: string | null;
-			workflowDebug: InstructionWorkflowDebug;
-			colorIndex: number;
-			topPercent: number;
-	  };
-
-export type InstructionPageItem = Extract<PageItem, { type: "instruction" }>;
+export type {
+	InstructionPageItem,
+	PageItem,
+} from "../lib/redline/pdf/models";
 
 interface PageRowProps {
 	pageNumber: number;

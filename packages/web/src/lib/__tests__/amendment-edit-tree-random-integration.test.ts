@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
 import { applyAmendmentEditTreeToSection } from "../amendment-edit-tree-apply";
-import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
+import { createHandcraftedInstructionParser } from "../redline/amendment-parser/create-handcrafted-instruction-parser";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(TEST_DIR, "../../..");

@@ -1,4 +1,4 @@
-import { buildInferredMarkerLevels } from "./marker-level-inference";
+import { buildInferredMarkerLevels } from "../../marker-level-inference";
 
 export interface HierarchyParagraph {
 	index: number;

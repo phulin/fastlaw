@@ -13,7 +13,7 @@ import {
 	TextLocationAnchorKind,
 	UltimateEditKind,
 } from "../amendment-edit-tree";
-import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
+import { createHandcraftedInstructionParser } from "../redline/amendment-parser/create-handcrafted-instruction-parser";
 import { parseFixtureParagraphs } from "./test-utils";
 
 function parseInstructionAst(input: string) {

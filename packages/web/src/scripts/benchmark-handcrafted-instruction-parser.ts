@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
-import { createHandcraftedInstructionParserFromSource } from "../lib/handcrafted-instruction-parser";
+import { createHandcraftedInstructionParserFromSource } from "../lib/redline/amendment-parser/handcrafted-instruction-parser";
 
 interface BenchmarkConfig {
 	filePath: string;

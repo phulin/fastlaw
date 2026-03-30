@@ -1,7 +1,7 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { For, Show } from "solid-js";
+import type { InstructionPageItem, PageItem } from "../lib/redline/pdf/models";
 import { AnnotationLayer } from "./AnnotationLayer";
-import type { InstructionPageItem, PageItem } from "./PageRow";
 import { PageRow } from "./PageRow";
 import "../styles/pdf-annotations.css";
 import "../styles/pdf-virtualizer.css";

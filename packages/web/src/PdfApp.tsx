@@ -11,15 +11,18 @@ import {
 	onMount,
 	Show,
 } from "solid-js";
-import type { PageLayout } from "./components/AnnotationLayer";
 import { Header } from "./components/Header";
-import type { InstructionPageItem, PageItem } from "./components/PageRow";
 import { PdfUploadDropzone } from "./components/PdfUploadDropzone";
 import { PdfWorkspace } from "./components/PdfWorkspace";
+import type {
+	InstructionPageItem,
+	PageItem,
+	PageLayout,
+} from "./lib/redline/pdf/models";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/pdf-base.css";
-import ProcessingWorker from "./lib/pdf/processing.worker?worker";
-import type { ProcessingWorkerResponse } from "./lib/pdf/processing-worker-types";
+import ProcessingWorker from "./lib/redline/pdf/processing/worker?worker";
+import type { ProcessingWorkerResponse } from "./lib/redline/pdf/processing/worker-types";
 import type { SourceVersionRecord } from "./lib/types";
 
 const HASH_PREFIX_LENGTH = 8;

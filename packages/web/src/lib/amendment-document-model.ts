@@ -18,7 +18,7 @@ import {
 	extractLeadingLabels,
 	type HierarchyNode,
 	type ParsedParagraph,
-} from "./markdown-hierarchy-parser";
+} from "./redline/amendment-parser/markdown-hierarchy-parser";
 
 const parseProcessor = unified().use(remarkParse).use(remarkGfm);
 

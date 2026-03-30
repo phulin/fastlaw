@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { FailedApplyItem } from "../lib/amendment-edit-tree-apply";
-import { buildPageItemsFromParagraphs } from "../lib/pdf/page-items";
+import { buildPageItemsFromParagraphs } from "../lib/redline/pdf/processing/build-page-items";
 import { extractParagraphs } from "../lib/text-extract";
 import type { NodeContent } from "../lib/types";
 

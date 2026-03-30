@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	findHierarchyNodeByMarkerPath,
 	parseMarkdownHierarchy,
-} from "../markdown-hierarchy-parser";
+} from "../redline/amendment-parser/markdown-hierarchy-parser";
 
 describe("parseMarkdownHierarchy", () => {
 	it("parses heading, sublevels, and footing segments", () => {

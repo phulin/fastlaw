@@ -1,15 +1,15 @@
-import type { PageItem } from "../../components/PageRow";
-import { translateInstructionAstToEditTree } from "../amendment-ast-to-edit-tree";
-import { buildCanonicalDocument } from "../amendment-document-model";
+import { translateInstructionAstToEditTree } from "../../../amendment-ast-to-edit-tree";
+import { buildCanonicalDocument } from "../../../amendment-document-model";
 import type {
 	CanonicalDocument,
 	ClassificationOverride,
-} from "../amendment-edit-engine-types";
+} from "../../../amendment-edit-engine-types";
 import {
 	type AmendmentEffect,
 	applyAmendmentEditTreeToSection,
-} from "../amendment-edit-tree-apply";
-import type { NodeContent, Paragraph } from "../types";
+} from "../../../amendment-edit-tree-apply";
+import type { NodeContent, Paragraph } from "../../../types";
+import type { PageItem } from "../models";
 import {
 	discoverParsedInstructionSpans,
 	discoverTitleScopedCodeReferenceDefaults,

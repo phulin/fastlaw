@@ -9,7 +9,7 @@ import type {
 	FormattingSpan,
 	PlannedPatch,
 } from "./amendment-edit-engine-types";
-import { extractLeadingLabels } from "./markdown-hierarchy-parser";
+import { extractLeadingLabels } from "./redline/amendment-parser/markdown-hierarchy-parser";
 
 interface CanonicalRenderOffsetMap {
 	toRenderPoint(canonicalOffset: number): number;

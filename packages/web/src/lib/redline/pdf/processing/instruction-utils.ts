@@ -1,10 +1,17 @@
+import {
+	ScopeKind,
+	type TargetScopeSegment,
+} from "../../../amendment-edit-tree";
 import amendmentGrammarSource from "../../../amendment-grammar.bnf?raw";
-import { ScopeKind, type TargetScopeSegment } from "../amendment-edit-tree";
+import {
+	type NodeContent,
+	type Paragraph,
+	ParagraphRange,
+} from "../../../types";
 import {
 	HandcraftedInstructionParser,
 	type ParsedInstruction,
-} from "../handcrafted-instruction-parser";
-import { type NodeContent, type Paragraph, ParagraphRange } from "../types";
+} from "../../amendment-parser/handcrafted-instruction-parser";
 
 const CODE_REFERENCE_TITLE_RE = /^(\d+)\s+U\.S\.C\.$/i;
 const EN_DASH = /\u2013/g;

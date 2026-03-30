@@ -26,7 +26,7 @@ import {
 	applyAmendmentEditTreeToSection,
 	walkTree,
 } from "../amendment-edit-tree-apply";
-import { createHandcraftedInstructionParser } from "../create-handcrafted-instruction-parser";
+import { createHandcraftedInstructionParser } from "../redline/amendment-parser/create-handcrafted-instruction-parser";
 import { ParagraphRange } from "../types";
 import {
 	createParagraph,

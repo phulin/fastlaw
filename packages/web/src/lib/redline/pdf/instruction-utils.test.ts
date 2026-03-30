@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { ScopeKind, type TargetScopeSegment } from "../amendment-edit-tree";
-import type { Paragraph } from "../types";
+import { ScopeKind, type TargetScopeSegment } from "../../amendment-edit-tree";
+import type { Paragraph } from "../../types";
 import {
 	discoverParsedInstructionSpans,
 	discoverTitleScopedCodeReferenceDefaults,
 	getUscCitationFromScopePath,
 	getUscSectionPathFromScopePath,
-} from "./instruction-utils";
+} from "./processing/instruction-utils";
 
 describe("getUscSectionPathFromScopePath", () => {
 	it("normalizes en dash in section number before creating section path", () => {

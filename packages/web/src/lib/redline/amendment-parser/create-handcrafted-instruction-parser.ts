@@ -1,4 +1,4 @@
-import amendmentGrammarSource from "../../amendment-grammar.bnf?raw";
+import amendmentGrammarSource from "../../../../amendment-grammar.bnf?raw";
 import {
 	GrammarAstNodeType,
 	HandcraftedInstructionParser,

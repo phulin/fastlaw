@@ -1,5 +1,4 @@
-import type { PageLayout } from "../../components/AnnotationLayer";
-import type { PageItem } from "../../components/PageRow";
+import type { PageItem, PageLayout } from "../models";
 
 export interface WorkerPageItemsPayload {
 	items: { item: PageItem; pageNumber: number }[];
